@@ -99,7 +99,9 @@ export async function resolveLogicalDevice(
   }
   if (actionType === "power.on" || actionType === "power.off" || actionType === "ac.set_temperature") {
     if (!machine.ha_binding_encrypted) return null;
-    return { target: { kind: "facility" as const, id: machine.id, executorKind: "home_assistant" as const }, deviceLabel: machine.name };
+    const ha = await haBinding(c, machine);
+    if (!ha?.entityId) return null;
+    return { target: { kind: "facility" as const, id: ha.entityId, executorKind: "home_assistant" as const }, deviceLabel: machine.name };
   }
   if (!machine.hinata_url_encrypted) return null;
   return { target: { kind: "game_machine" as const, id: machine.id, executorKind: "hinata_io" as const }, deviceLabel: machine.name };
