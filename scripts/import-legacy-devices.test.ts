@@ -51,10 +51,12 @@ describe("importLegacyDevices", () => {
         id: string;
         public_id: string;
         ha_binding_encrypted: string;
+        aliases_json?: string;
       };
       expect(machine.id).toBe(`legacy:ha:${shopId}:switch.mai_left`);
       expect(machine.public_id).toStartWith("legacy-ha-");
       await expect(decryptSecret(machine.ha_binding_encrypted, "test-key")).resolves.toContain("switch.mai_left");
+      if (machine.aliases_json) expect(JSON.parse(machine.aliases_json)).toEqual(["mai"]);
       expect(check.query("SELECT device_id FROM device_commands ORDER BY device_id").all()).toEqual([
         { device_id: machine.id },
         { device_id: machine.id },

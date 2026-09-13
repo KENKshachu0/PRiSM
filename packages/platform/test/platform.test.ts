@@ -96,6 +96,7 @@ beforeAll(async () => {
     await db.prepare(sql).run();
 
   for (const sql of readFileSync(new URL("../../../migrations/0020_mahjong_devices.sql", import.meta.url), "utf8").split(";").filter(s=>s.trim())) await db.prepare(sql).run();
+  for (const sql of readFileSync(new URL("../../../migrations/0021_machine_aliases.sql", import.meta.url), "utf8").split(";").filter(s=>s.trim())) await db.prepare(sql).run();
   await db.prepare("INSERT INTO users(id,role) VALUES ('u','user')").run();
   await db
     .prepare(

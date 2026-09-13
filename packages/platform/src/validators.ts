@@ -74,6 +74,7 @@ export const createMachineSchema = z.object({
   mahjong: z.object({ capacity: z.number().int().min(2).max(8), pricingConfigIds: z.array(z.string().min(1)).max(20) }).nullable().optional(),
   shopId: z.string().min(1),
   name: z.string().trim().min(1).max(80),
+  aliases: z.array(z.string().trim().min(1).max(80)).max(32).default([]),
   hinataUrl: z
     .string()
     .trim()

@@ -36,6 +36,7 @@ type PlannedDevice = {
   publicId: string;
   name: string;
   binding: string;
+  aliases: string[];
   lookupKeys: string[];
 };
 
@@ -150,13 +151,14 @@ async function planDevices(
       publicId,
       name,
       binding,
+      aliases: [...new Set((aliases as string[]).map((alias) => alias.trim()).filter(Boolean))],
       lookupKeys: [...new Set(lookupKeys)],
     });
   }
   return result;
 }
 
-function machineStatement(device: PlannedDevice, shopId: string): string {
+function machineStatement(device: PlannedDevice, shopId: string, hasAliases: boolean): string {
   const columns = [
     "id",
     "public_id",
@@ -168,6 +170,7 @@ function machineStatement(device: PlannedDevice, shopId: string): string {
     "ha_binding_encrypted",
     "coin_key",
     "coin_after_swipe",
+    ...(hasAliases ? ["aliases_json"] : []),
   ];
   const values: Array<string | number | null> = [
     device.id,
@@ -180,9 +183,10 @@ function machineStatement(device: PlannedDevice, shopId: string): string {
     device.binding,
     0,
     0,
+    ...(hasAliases ? [JSON.stringify(device.aliases)] : []),
   ];
   return `INSERT INTO machines (${columns.join(",")}) VALUES (${values.map(sqlLiteral).join(",")}) ` +
-    "ON CONFLICT(public_id) DO UPDATE SET name=excluded.name,ha_binding_encrypted=excluded.ha_binding_encrypted,enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP;";
+    `ON CONFLICT(public_id) DO UPDATE SET name=excluded.name,ha_binding_encrypted=excluded.ha_binding_encrypted${hasAliases ? ",aliases_json=excluded.aliases_json" : ""},enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP;`;
 }
 
 function mapStatement(table: string, column: string, shopId: string, key: string, machineId: string): string {
@@ -209,6 +213,7 @@ export async function importLegacyDevices(
   try {
     db.exec("PRAGMA foreign_keys=ON");
     ensureColumns(db, "machines", requiredMachineColumns);
+    const hasAliases = tableColumns(db, "machines").has("aliases_json");
     const shop = db.query("SELECT id FROM shops WHERE id=?").get(options.shopId) as { id: string } | null;
     if (!shop) throw new Error(`Shop not found: ${options.shopId}`);
     const planned = await planDevices(db, options.shopId, options.encryptionKey);
@@ -229,10 +234,10 @@ export async function importLegacyDevices(
       db.exec("BEGIN");
       for (const device of planned) {
         const existing = db.query("SELECT id FROM machines WHERE public_id=?").get(device.publicId);
-        db.query(
-          "INSERT INTO machines (id,public_id,shop_id,name,hinata_url_encrypted,enabled,kind,ha_binding_encrypted,coin_key,coin_after_swipe) VALUES (?,?,?,?,?,?,?,?,?,?) " +
-            "ON CONFLICT(public_id) DO UPDATE SET name=excluded.name,ha_binding_encrypted=excluded.ha_binding_encrypted,enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP",
-        ).run(
+        const machineSql = hasAliases
+          ? "INSERT INTO machines (id,public_id,shop_id,name,hinata_url_encrypted,enabled,kind,ha_binding_encrypted,coin_key,coin_after_swipe,aliases_json) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(public_id) DO UPDATE SET name=excluded.name,ha_binding_encrypted=excluded.ha_binding_encrypted,aliases_json=excluded.aliases_json,enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP"
+          : "INSERT INTO machines (id,public_id,shop_id,name,hinata_url_encrypted,enabled,kind,ha_binding_encrypted,coin_key,coin_after_swipe) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(public_id) DO UPDATE SET name=excluded.name,ha_binding_encrypted=excluded.ha_binding_encrypted,enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP";
+        const machineArgs = [
           device.id,
           device.publicId,
           options.shopId,
@@ -243,10 +248,12 @@ export async function importLegacyDevices(
           device.binding,
           0,
           0,
-        );
+          ...(hasAliases ? [JSON.stringify(device.aliases)] : []),
+        ];
+        db.query(machineSql).run(...machineArgs);
         if (existing) report.updated += 1;
         else report.imported += 1;
-        statements.push(machineStatement(device, options.shopId));
+        statements.push(machineStatement(device, options.shopId, hasAliases));
         for (const key of device.lookupKeys) {
           report.mapped.deviceCommands += runMapping(db, "device_commands", "device_id", options.shopId, key, device.id);
           report.mapped.deviceStates += runMapping(db, "device_states", "device_id", options.shopId, key, device.id);

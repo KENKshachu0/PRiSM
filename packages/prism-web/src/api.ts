@@ -84,6 +84,7 @@ export type Machine = {
   shopId: string;
   shopPublicId: string;
   name: string;
+  aliases: string[];
   enabled: boolean | number;
   hasPassword?: boolean | number;
 };

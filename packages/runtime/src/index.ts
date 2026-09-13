@@ -38,7 +38,7 @@ import {
   type StaffPricingExtensionRequiredAsset,
 } from "@prism/application";
 import { canStartPriorityTimePricingSession, collectPriorityTimePricingHistoryLookupKeys, createPricingProviderFromConfig, isActiveInWindow, PrismDomainError } from "@prism/core";
-import type { AssetDefinition, AssetEffectProvider, BusinessItem, PricingConfig, PricingProvider } from "@prism/core";
+import type { AssetDefinition, AssetEffectProvider, BusinessItem, DeviceCommandType, DeviceTarget, PricingConfig, PricingProvider } from "@prism/core";
 import type { AssetDefinitionRepository } from "@prism/core";
 import { createPrismApp } from "@prism/server-hono";
 import { createHomeAssistantExecutor, resolveHomeAssistantDeviceRef, type HomeAssistantDeviceConfig } from "./home-assistant-executor";
@@ -76,6 +76,10 @@ export type CreatePrismRuntimeDependenciesInput = {
   coinCooldownMs: number;
   id: () => string;
   now: () => Date;
+  logicalDeviceResolver?: (deviceRef: string, actionType?: DeviceCommandType) => Promise<{
+    target: DeviceTarget;
+    deviceLabel: string;
+  } | null>;
 };
 
 export type PrismRuntimePlugin = {
@@ -124,10 +128,12 @@ export function createPrismRuntimeDependencies(input: CreatePrismRuntimeDependen
   ];
   const resolveFacilityTarget = createDynamicFacilityTargetResolver({
     system: input.repositories.system,
+    logicalDeviceResolver: input.logicalDeviceResolver,
   });
   const resolveGameMachineTarget = createDynamicHinataIoTargetResolver({
     system: input.repositories.system,
     executor: input.deviceActionExecutors?.hinataIo,
+    logicalDeviceResolver: input.logicalDeviceResolver,
   });
   const availableAssets = createAvailableAssetReader({
     assets: input.repositories.assets,
@@ -624,6 +630,7 @@ export type CreatePrismLocalAppInput = {
 export type CreatePrismWorkerAppOptions = {
   shopId?: string;
   plugins?: readonly PrismRuntimePlugin[];
+  logicalDeviceResolver?: CreatePrismRuntimeDependenciesInput["logicalDeviceResolver"];
 };
 
 export function createPrismWorkerApp(env: PrismWorkerEnv, options: CreatePrismWorkerAppOptions = {}): Hono {
@@ -652,6 +659,7 @@ export function createPrismWorkerDependencies(env: PrismWorkerEnv, options: Crea
       plugins: options.plugins ?? runtime.plugins,
       id: runtime.id,
       now: runtime.now,
+      logicalDeviceResolver: options.logicalDeviceResolver,
       }),
       versionInfo: backendVersionInfo,
   };
@@ -858,8 +866,9 @@ function createDynamicHomeAssistantExecutor(input: {
 
 function createDynamicFacilityTargetResolver(input: {
   system: SqlRepositories["system"];
+  logicalDeviceResolver?: CreatePrismRuntimeDependenciesInput["logicalDeviceResolver"];
 }) {
-  return async (deviceRef: string, actionType?: string) => {
+  return async (deviceRef: string, actionType?: DeviceCommandType) => {
     const normalizedRef = typeof deviceRef === "string" ? deviceRef.trim().toLowerCase() : "";
     if (!normalizedRef) {
       throw new PrismDomainError("设备不存在", "DEVICE_NOT_FOUND");
@@ -869,6 +878,12 @@ function createDynamicFacilityTargetResolver(input: {
         target: { kind: "facility", all: true } as const,
         deviceLabel: "所有设备",
       };
+    }
+
+    if (input.logicalDeviceResolver) {
+      const logical = await input.logicalDeviceResolver(deviceRef, actionType);
+      if (logical) return logical as { target: Extract<DeviceTarget, { kind: "facility" }>; deviceLabel: string };
+      throw new PrismDomainError("设备不存在", "DEVICE_NOT_FOUND");
     }
 
     if (actionType === "door.open") {
@@ -985,8 +1000,17 @@ async function syncConfiguredTTLockStates(input: {
 function createDynamicHinataIoTargetResolver(input: {
   system: SqlRepositories["system"];
   executor?: DeviceActionExecutor;
+  logicalDeviceResolver?: CreatePrismRuntimeDependenciesInput["logicalDeviceResolver"];
 }) {
   return async (deviceRef: string) => {
+    if (input.logicalDeviceResolver) {
+      const logical = await input.logicalDeviceResolver(deviceRef, "coin");
+      if (logical?.target.kind === "game_machine") return logical as {
+        target: Extract<DeviceTarget, { kind: "game_machine" }>;
+        deviceLabel: string;
+      };
+      throw new PrismDomainError("设备不存在", "DEVICE_NOT_FOUND");
+    }
     const devices = normalizeHinataIoDeviceConfigs(
       await input.system.getAppSetting("devices.hinata_io"),
     );

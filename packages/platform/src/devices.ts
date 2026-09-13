@@ -1,5 +1,6 @@
 import { mahjongConfig, mahjongState, operateMahjong } from "./mahjong";
 import type { Context, Hono } from "hono";
+import type { DeviceCommandType } from "@prism/core";
 import { z } from "zod";
 import { TTLockClient } from "@prism/runtime";
 import { normalizeTTLockConnectionConfig } from "@prism/application";
@@ -23,6 +24,14 @@ import type { AppBindings, MachineRow } from "./types";
 
 type C = Context<AppBindings>;
 type HA = { url: string; token: string; entityId: string };
+function machineAliases(machine: MachineRow): string[] {
+  try {
+    const aliases = JSON.parse(machine.aliases_json || "[]");
+    return Array.isArray(aliases) ? aliases.filter((v): v is string => typeof v === "string" && Boolean(v.trim())).map((v) => v.trim()) : [];
+  } catch {
+    return [];
+  }
+}
 export async function requireDeviceStaff(c: C, shopId: string, write = false) {
   const user = requireUser(c);
   if (!(await canAccessShop(c, user, shopId)))
@@ -68,6 +77,47 @@ export async function devicePower(
     return "unknown";
   }
 }
+
+export async function resolveLogicalDevice(
+  c: C,
+  shopId: string,
+  ref: string,
+  actionType?: DeviceCommandType,
+) {
+  const normalized = ref.trim().toLowerCase();
+  if (!normalized) return null;
+  const machine = await c.env.DB.prepare(
+    `SELECT machines.* FROM machines
+     WHERE machines.shop_id=? AND (lower(machines.id)=? OR lower(machines.public_id)=? OR lower(machines.name)=?
+       OR EXISTS (SELECT 1 FROM json_each(COALESCE(machines.aliases_json,'[]')) WHERE lower(trim(value))=?))
+     ORDER BY machines.created_at LIMIT 1`,
+  ).bind(shopId, normalized, normalized, normalized, normalized).first<MachineRow>();
+  if (!machine) return null;
+  if (actionType === "door.open") {
+    if (machine.ttlock_lock_id == null) return null;
+    return { target: { kind: "facility" as const, id: machine.id, executorKind: "ttlock" as const }, deviceLabel: machine.name };
+  }
+  if (actionType === "power.on" || actionType === "power.off" || actionType === "ac.set_temperature") {
+    if (!machine.ha_binding_encrypted) return null;
+    return { target: { kind: "facility" as const, id: machine.id, executorKind: "home_assistant" as const }, deviceLabel: machine.name };
+  }
+  if (!machine.hinata_url_encrypted) return null;
+  return { target: { kind: "game_machine" as const, id: machine.id, executorKind: "hinata_io" as const }, deviceLabel: machine.name };
+}
+
+export async function listLogicalDevicePowerStates(c: C, shopId: string) {
+  const rows = await c.env.DB.prepare(
+    "SELECT * FROM machines WHERE shop_id=? AND ha_binding_encrypted IS NOT NULL AND enabled=1 ORDER BY created_at",
+  ).bind(shopId).all<MachineRow>();
+  return Promise.all(rows.results.map(async (machine) => ({
+    deviceId: machine.id,
+    label: machine.name,
+    aliases: machineAliases(machine),
+    targetKind: "facility",
+    executorKind: "home_assistant",
+    state: await devicePower(c, machine),
+  })));
+}
 export async function requirePoweredMachine(c: C, machine: MachineRow) {
   if (!machine.hinata_url_encrypted)
     jsonError(409, "设备不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
@@ -86,6 +136,7 @@ export async function merchantDevice(
     shopId: machine.shop_id,
     shopPublicId: machine.shop_public_id,
     name: machine.name,
+    aliases: machineAliases(machine),
     enabled: !!machine.enabled,
     kind: machine.kind,
     hasHinata: !!machine.hinata_url_encrypted,
@@ -197,6 +248,7 @@ export async function saveDevice(c: C, id?: string) {
   if (body.shopId && body.shopId !== shopId)
     jsonError(400, "设备不能移动到其他店铺");
   const kind = body.kind ?? current?.kind ?? "machine";
+  const aliases = [...new Set((body.aliases ?? (current ? machineAliases(current) : [])).map((v) => v.trim()).filter(Boolean))];
   const url =
     body.hinataUrl === undefined
       ? (current?.hinata_url_encrypted ?? "")
@@ -254,16 +306,17 @@ export async function saveDevice(c: C, id?: string) {
     body.coinKey ?? current?.coin_key ?? 32,
     +coinAfterSwipe,
     mahjong ? JSON.stringify(mahjong) : null,
+    JSON.stringify(aliases),
   ];
   if (id)
     await c.env.DB.prepare(
-      "UPDATE machines SET name=?,hinata_url_encrypted=?,hinata_password_encrypted=?,enabled=?,kind=?,ha_binding_encrypted=?,ttlock_lock_id=?,coin_key=?,coin_after_swipe=?,mahjong_config_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+      "UPDATE machines SET name=?,hinata_url_encrypted=?,hinata_password_encrypted=?,enabled=?,kind=?,ha_binding_encrypted=?,ttlock_lock_id=?,coin_key=?,coin_after_swipe=?,mahjong_config_json=?,aliases_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
     )
       .bind(...values, id)
       .run();
   else
     await c.env.DB.prepare(
-      "INSERT INTO machines(name,hinata_url_encrypted,hinata_password_encrypted,enabled,kind,ha_binding_encrypted,ttlock_lock_id,coin_key,coin_after_swipe,mahjong_config_json,id,public_id,shop_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO machines(name,hinata_url_encrypted,hinata_password_encrypted,enabled,kind,ha_binding_encrypted,ttlock_lock_id,coin_key,coin_after_swipe,mahjong_config_json,aliases_json,id,public_id,shop_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
       .bind(...values, machineId, publicId, shopId)
       .run();

@@ -12,6 +12,7 @@ import {
   buildPriorityTimePricingTimeline,
   buildTimeCapPricingTimeline,
   formatLocalDate,
+  type DeviceCommandType,
   type Session,
   type PricingConfig,
 } from "@prism/core";
@@ -219,9 +220,11 @@ export async function staffPrincipal(
 }
 
 export function dependencies(c: C, shop: BillingShop): PrismAppDependencies {
+  const logicalDeviceResolver = async (ref: string, actionType?: DeviceCommandType) =>
+    (await import("./devices")).resolveLogicalDevice(c, shop.id, ref, actionType);
   const deps = createPrismWorkerDependencies(
     { DB: c.env.DB },
-    { shopId: shop.id },
+    { shopId: shop.id, logicalDeviceResolver } as any,
   );
   const repos = createD1Repositories({
     db: c.env.DB,
@@ -830,6 +833,8 @@ export function registerBillingRoutes(app: Hono<AppBindings>) {
     const token = c.req.header("authorization")?.match(/^Bearer (.+)$/)?.[1];
     if (!token || (await deps.apiTokenAuth?.authenticateApiToken(token))?.role !== "integration")
       jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
+    if (path === "device-states")
+      return c.json({ deviceStates: await (await import("./devices")).listLogicalDevicePowerStates(c, shop.id) });
     if (body) {
       body.autoRegister = !!shop.auto_register;
       body.closeSessionsBeforeBalanceCheck = false;

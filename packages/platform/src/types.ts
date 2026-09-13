@@ -44,6 +44,7 @@ export type MachineRow = {
   shop_id: string;
   shop_public_id: string;
   name: string;
+  aliases_json: string;
   kind: "machine" | "door";
   ha_binding_encrypted: string | null;
   ttlock_lock_id: number | null;

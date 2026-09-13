@@ -308,6 +308,7 @@ function DeviceEditor({ value, done }: { value?: Machine; done: () => void }) {
               )
               .map(([kind, id]) => ({ kind, id })),
             name: f.get("name"),
+            aliases: String(f.get("aliases") ?? "").split(",").map((alias) => alias.trim()).filter(Boolean),
             kind: hasLock ? "door" : "machine",
             mahjong: mahjong ? {capacity:Number(f.get("capacity")),pricingConfigIds:mahjongPricing} : null,
             enabled: f.get("enabled") === "on",
@@ -337,6 +338,14 @@ function DeviceEditor({ value, done }: { value?: Machine; done: () => void }) {
           required
           maxLength={80}
           defaultValue={value?.name}
+        />
+      </Field>
+      <Field label="设备别名">
+        <input
+          className={input}
+          name="aliases"
+          placeholder="用逗号分隔，例如 mai、舞萌"
+          defaultValue={value?.aliases?.join(", ")}
         />
       </Field>
       <fieldset className="grid gap-3">
