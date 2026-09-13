@@ -132,13 +132,13 @@ export function SettingsPage() {
       )}
       {owner && (
         <>
-          <Tokens />
+          <Tokens shopCode={shopCode} />
         </>
       )}
     </div>
   );
 }
-function Tokens() {
+function Tokens({ shopCode }: { shopCode: string }) {
   const { t } = useI18n();
   const request = useStaffApi();
   const tokens = useResource<{ apiTokens: Token[] }>("api-tokens");
@@ -152,6 +152,16 @@ function Tokens() {
         <button className={button} onClick={() => setCreate(true)}>
           {t("创建凭据")}
         </button>
+      </div>
+      <div className="grid gap-3 rounded-lg border border-ink/10 bg-surface p-4">
+        <div>
+          <p className="text-sm font-medium">Koishi / 集成配置</p>
+          <p className="mt-1 text-xs text-ink/60">
+            将下面的店铺编号和正式 API 地址填入 Bot 配置。
+          </p>
+        </div>
+        <CopyValue label="店铺编号" value={shopCode} />
+        <CopyValue label="API 地址" value={window.location.origin} />
       </div>
       {secret && (
         <div role="status" className="rounded border border-ink/15 p-4">
@@ -232,6 +242,25 @@ function Tokens() {
         </Modal>
       )}
     </section>
+  );
+}
+
+function CopyValue({ label, value }: { label: string; value: string }) {
+  const copy = async () => {
+    await navigator.clipboard?.writeText(value);
+  };
+  return (
+    <div className="grid gap-1">
+      <span className="text-xs text-ink/60">{label}</span>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 break-all rounded border border-ink/10 bg-panel px-3 py-2 text-sm">
+          {value}
+        </code>
+        <button className={button} type="button" onClick={copy}>
+          复制
+        </button>
+      </div>
+    </div>
   );
 }
 function TTLockConnection({
