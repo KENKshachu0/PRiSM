@@ -310,16 +310,26 @@ export function DeviceControls({
               </div>
             ) : (
               <>
-                {cap.mahjong && state.mahjong && <section className="grid gap-5">
-                  <h2>{t("麻将桌")}</h2>
-                  <p className="text-center text-sm text-ink/60">{state.mahjong.seats.length} / {state.mahjong.capacity} · {t(state.mahjong.seats.some(s=>s.playing) ? "麻将计费中" : "等待开桌")}</p>
-                  {state.mahjong.seats.length > 0 && <ul className="divide-y divide-ink/10">
-                    {state.mahjong.seats.map((seat,i)=><li className="flex justify-between py-3 text-sm" key={i}><span>{seat.name}</span><span className="text-ink/60">{t(seat.mine ? "你" : seat.playing ? "游玩中" : "等待中")}</span></li>)}
-                  </ul>}
-                  <button className="session-action primary" disabled={!!busy || cardBusy || (!state.mahjong.seats.some(s=>s.mine) && state.mahjong.seats.length>=state.mahjong.capacity)}
-                    onClick={()=>operate(state.mahjong!.seats.some(s=>s.mine) ? "mahjong.leave" : "mahjong.join")}>
-                    {busy.startsWith("mahjong.") && spinner}{t(state.mahjong.seats.some(s=>s.mine) ? "下桌" : "上桌")}
-                  </button>
+                {cap.mahjong && state.mahjong && <section className="mahjong-table">
+                  <header className="mahjong-heading">
+                    <div><h2>{t("麻将桌")}</h2><p>{t(state.mahjong.seats.some(s=>s.playing) ? "麻将计费中" : "等待玩家")}</p></div>
+                    <span className="mahjong-count">{state.mahjong.seats.length}<span> / {state.mahjong.capacity}</span></span>
+                  </header>
+                  <ul className="mahjong-seats">
+                    {Array.from({length: state.mahjong.capacity}, (_,i)=>{
+                      const seat = state.mahjong!.seats[i];
+                      return <li className={`mahjong-seat${seat?.mine ? " is-mine" : ""}${!seat ? " is-empty" : ""}`} key={i}>
+                        <span className="mahjong-seat-name">{seat?.name || t("空位")}</span>
+                        {seat?.mine && <span className="mahjong-self">{t("你")}</span>}
+                      </li>;
+                    })}
+                  </ul>
+                  {!state.mahjong.seats.some(s=>s.mine) && state.mahjong.seats.length >= state.mahjong.capacity
+                    ? <p className="mahjong-full">{t("已满桌")}</p>
+                    : <button className={`session-action${state.mahjong.seats.some(s=>s.mine) ? "" : " primary"}`} disabled={!!busy || cardBusy}
+                        onClick={()=>operate(state.mahjong!.seats.some(s=>s.mine) ? "mahjong.leave" : "mahjong.join")}>
+                        {busy.startsWith("mahjong.") && spinner}{t(state.mahjong.seats.some(s=>s.mine) ? "下桌" : "上桌")}
+                      </button>}
                 </section>}
                 {cap.card && (
                   <section>

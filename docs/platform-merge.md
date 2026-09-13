@@ -160,3 +160,7 @@ Merchant Players requests only the batched player listing and uses its active/un
 ### Bot 兼容检查（2026-09-13）
 
 Koishi 分支已修正 QQ 绑定对 onebot 平台的误拒绝，以及查人时麻将等待席位未计入总人数的问题；混合音游与麻将名单按玩家 ID 去重。插件 48 项测试与 TypeScript 构建通过，平台已有 QQ 绑定隔离与麻将名单接口测试。检查 npm 实际发布包 0.1.38，尚不包含 prism.bind 与 shopCode 路由支持，因此更新后端不能替代升级 Bot 插件。源码测试不代表实际 QQ 群、Bot 框架过滤与运行版本已验收；本次不发布 npm。新平台配置为 baseUrl=https://link-beta.neri.moe，shopCode 为店铺编号，integrationToken 为对应店铺的 Integration 令牌。
+
+Mahjong player controls group the title/status and occupancy count in one header, with a two-column roster including empty seats and a personal-seat marker. Full tables show a quiet status instead of a disabled join action. Shop banners remain unchanged.
+
+麻将人数不足时统一显示“等待玩家”（Waiting for players），保留两列座位布局。

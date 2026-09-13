@@ -665,7 +665,7 @@
   "麻将计费规则": "Mahjong pricing",
   "请选择麻将计费规则": "Select mahjong pricing",
   "麻将计费中": "Mahjong billing active",
-  "等待开桌": "Waiting to start",
+  "等待玩家": "Waiting for players",
   "等待中": "Waiting",
   "游玩中": "Playing",
   "上桌": "Join table",
@@ -708,5 +708,7 @@
   "应付": "Due",
   "玩家资料": "Player profile",
   "项": "items",
-  "入场时间": "Entry time"
+  "入场时间": "Entry time",
+  "空位": "Open seat",
+  "已满桌": "Table full"
 }
