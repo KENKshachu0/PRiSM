@@ -49,6 +49,7 @@ export type Summary = {
   activeSession: { id: string; startedAt: string } | null;
 };
 export type Preview = {
+  timeline?: import("@prism/core").BillTimeline;
   settlementPreview: { total: number };
   chargeItems: { id: string; label: string; amount: number }[];
   adjustments: { id: string; label: string; amount: number }[];

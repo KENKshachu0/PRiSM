@@ -1,4 +1,5 @@
-import type { ChargeItem, PricingConfig, TimeCapPricingWindow } from "@prism/core";
+import { buildBillTimeline } from "./bill-timeline";
+import type { BillTimeline, SettlementAdjustment, ChargeItem, PricingConfig, TimeCapPricingWindow } from "@prism/core";
 import type { StaffActiveSessionListItem, StaffPlayerListItem, StaffQueries } from "./query-contracts";
 
 export type LivePricingChargeView = {
@@ -54,6 +55,7 @@ export type LiveSessionView = {
 };
 
 export type LivePlayerView = {
+  timeline?: BillTimeline;
   identities: StaffPlayerListItem["identities"];
   playerId: string;
   displayName: string;
@@ -66,6 +68,7 @@ export type LivePlayerView = {
 };
 
 export type LiveCheckoutPreview = {
+  adjustments?: SettlementAdjustment[];
   settlementPreview: { total: number };
   sessionPreviews: Array<{
     sessionId: string;
@@ -154,6 +157,13 @@ export function createStaffOperationsService<TCheckoutResult>(
             walletTotal: player?.walletTotal ?? 0,
             stayDurationMinutes: Math.max(...orderedSessions.map((session) => session.elapsedMinutes)),
             estimatedTotal: preview?.settlementPreview.total ?? null,
+            timeline: preview ? buildBillTimeline({
+              at: dependencies.now(),
+              sessions: orderedSessions.map(session => ({ sessionId: session.id, label: session.label ?? null,
+                startedAt: session.startedAt, endedAt: session.endedAt ?? null,
+                chargeItems: previewBySessionId.get(session.id)?.chargeItems ?? [] })),
+              adjustments: preview.adjustments ?? [], globalCapWindows: preview.globalCapWindows ?? [],
+            }) : undefined,
             sessions: orderedSessions.map((session) => {
               const sessionPreview = previewBySessionId.get(session.id);
               return {

@@ -1,3 +1,4 @@
+import { buildBillTimeline } from "@prism/application";
 import type {
   ChargeItem,
   DeviceCommand,
@@ -277,6 +278,7 @@ export function toPlayerCheckoutPreviewView(
   result: PreviewPlayerCheckoutResult,
 ): Record<string, unknown> {
   return {
+    timeline: buildBillTimeline({ at: result.settlementPreview.previewedAt, sessions: result.sessionPreviews, adjustments: result.adjustments, globalCapWindows: result.globalCapWindows }),
     settlementPreview: {
       ...result.settlementPreview,
       previewedAt: result.settlementPreview.previewedAt.toISOString(),
@@ -350,6 +352,8 @@ function toChargeItemView(item: ChargeItem): Record<string, unknown> {
     source: item.source,
     label: item.label,
     amount: item.amount,
+    period: item.period,
+    pricingExplanation: item.pricingExplanation,
   };
 }
 

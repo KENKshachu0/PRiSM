@@ -710,5 +710,8 @@
   "项": "items",
   "入场时间": "Entry time",
   "空位": "Open seat",
-  "已满桌": "Table full"
+  "已满桌": "Table full",
+  "开始计费": "Billing started",
+  "结束计费": "Billing stopped",
+  "切换计费规则": "Pricing rule changed"
 }

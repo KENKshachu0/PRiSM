@@ -225,6 +225,7 @@ export type Player = {
   identities?: { provider: string; subject: string }[];
 };
 export type LivePlayer = {
+  timeline?: import("@prism/core").BillTimeline;
   status: string;
   identities?: { provider: string; subject: string }[];
   playerId: string;
@@ -260,6 +261,7 @@ export type Asset = {
   metadata?: Record<string, unknown> | null;
 };
 export type Preview = {
+  timeline?: import("@prism/core").BillTimeline;
   settlementPreview: { total: number };
   chargeItems: { label: string; amount: number }[];
   adjustments: { label: string; amount: number }[];

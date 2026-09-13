@@ -362,3 +362,25 @@ function normalizeOrder(index: number): number {
 function normalizeCurrencyCode(assetCode: string): string {
   return assetCode.startsWith("currency.") ? assetCode.slice("currency.".length) : assetCode;
 }
+
+export type BillTimeline = {
+  totals: { name: string; amount: number }[];
+  tracks: { id: string; name: string; lane: number; color: number; startedAt: string; endedAt: string }[];
+  events: { at: string; time: string; date: string; entries: BillTimelineEntry[] }[];
+};
+export type BillTimelineEntry = {
+  trackId: string | null;
+  kind: "start" | "end" | "current" | "switch" | "adjustment";
+  name: string;
+  rule: string | null;
+  nextRule: string | null;
+  periodLabel: string | null;
+  amount: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  unitMinutes: number | null;
+  unitPrice: number | null;
+  units: number | null;
+  cap: number | null;
+  paidBefore: number | null;
+};

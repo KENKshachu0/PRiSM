@@ -1933,7 +1933,7 @@ describe("createPrismApp", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       settlementPreview: {
         playerId: "player-1",
         sessionIds: ["session-1"],
@@ -3073,7 +3073,7 @@ describe("createPrismApp", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       players: [
         {
           playerId: "player-1",

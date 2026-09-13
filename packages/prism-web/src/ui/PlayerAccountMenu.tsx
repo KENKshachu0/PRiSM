@@ -1,3 +1,4 @@
+import { BillTotal, BillTimeline } from "./BillTimeline";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Loader2, X } from "lucide-react";
 import { api, playerOperation } from "../api";
@@ -226,8 +227,9 @@ function AccountContent({
     }
   }
   return (
-    <div className="account-content">
+    <div className={`account-content ${section === "账单" ? "account-bill" : ""}`}>
       <div className="account-scroll">
+        {section === "账单" && preview && !done && <BillTotal preview={preview} />}
         {error && (
           <div role="alert" className="text-sm text-coral">
             {error}
@@ -246,23 +248,7 @@ function AccountContent({
           (done ? (
             <p>{t("已结账")}</p>
           ) : preview ? (
-            <>
-              <p className="text-sm text-ink/60">
-                {summary?.activeSession &&
-                  new Date(summary.activeSession.startedAt).toLocaleString()}{" "}
-                – {t("现在")}
-              </p>
-              {[...preview.chargeItems, ...preview.adjustments].map((row, i) => (
-                <div className="account-row" key={row.id || i}>
-                  <span>{row.label}</span>
-                  <span>{row.amount.toFixed(2)}</span>
-                </div>
-              ))}
-              <div className="account-row text-xl font-bold">
-                <span>{t("合计")}</span>
-                <span>{preview.settlementPreview.total.toFixed(2)}</span>
-              </div>
-            </>
+            <BillTimeline preview={preview} />
           ) : (
             !busy && !error && <p>{t("暂无待结账单")}</p>
           ))}
@@ -329,7 +315,7 @@ function AccountContent({
       {section === "账单" && !done && preview && (
         <footer className="account-footer">
           <button
-            className="session-action primary w-full"
+            className="session-action bill-checkout w-full"
             disabled={busy}
             onClick={submit}
           >

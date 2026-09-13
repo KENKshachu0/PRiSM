@@ -54,6 +54,7 @@ export function createPricingProviderFromConfig(config: PricingConfig): PricingP
       return createPriorityTimePricingProvider({
         ...config.provider,
         pricingConfigId: config.id,
+        name: config.name,
       });
     case "time.cap":
       throw new PrismDomainError(

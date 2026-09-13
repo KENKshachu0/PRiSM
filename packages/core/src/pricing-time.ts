@@ -51,6 +51,7 @@ export type TimeCapPricingRule = {
 };
 
 export type PriorityTimePricingProviderConfig = {
+  name?: string;
   id: string;
   pricingConfigId?: string;
   rules: readonly PriorityTimePricingRule[];
@@ -117,6 +118,11 @@ export type PriorityTimePricingTimeline = {
 };
 
 export type PricingSegmentExplanation = {
+  timeZone?: string;
+  planName?: string;
+  pricing?: UnitPricingConfig;
+  paidBefore?: number;
+  units?: number;
   pricingConfigId: string;
   providerId: string;
   ruleId: string;
@@ -209,6 +215,7 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
           paidBefore,
           invalidateFirstGrace,
         );
+        const units = calculateUnits(durationMinutes, rule.pricing, invalidateFirstGrace);
         currentPaidHistory[historyKey] = paidBefore + amount;
         if (amount > 0) {
           invalidateFirstGrace = false;
@@ -232,6 +239,11 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
             amount,
           },
           pricingExplanation: {
+            timeZone,
+            units,
+            planName: config.name,
+            pricing: { ...rule.pricing },
+            paidBefore,
             pricingConfigId: config.pricingConfigId ?? config.id,
             providerId: config.id,
             ruleId: rule.id,
@@ -571,6 +583,10 @@ function calculateRawUnitPrice(
   config: UnitPricingConfig,
   invalidateFirstGrace?: boolean,
 ): number {
+  return Math.min(calculateUnits(durationMinutes, config, invalidateFirstGrace) * config.unitPrice, config.priceCap);
+}
+
+function calculateUnits(durationMinutes: number, config: UnitPricingConfig, invalidateFirstGrace?: boolean): number {
   let units = Math.floor(Math.max(0, durationMinutes) / config.unitMinutes);
   if (durationMinutes % config.unitMinutes > config.roundGraceMinutes) {
     units += 1;
@@ -579,7 +595,7 @@ function calculateRawUnitPrice(
     units = 1;
   }
 
-  return Math.min(units * config.unitPrice, config.priceCap);
+  return units;
 }
 
 function findActiveRule<T extends TimeRuleLike>(

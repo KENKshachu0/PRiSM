@@ -1,3 +1,4 @@
+import { BillTotal, BillTimeline } from "../BillTimeline";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Plus, RefreshCw } from "lucide-react";
@@ -417,23 +418,8 @@ function PlayerDetail({
           label="确认结账"
           submit={() => request(`${base}/checkout/confirm`, "POST", {})}
         >
-          <div className="divide-y divide-ink/10">
-            {[...preview.chargeItems, ...preview.adjustments].map(
-              (row, index) => (
-                <p
-                  key={index}
-                  className="flex justify-between gap-3 py-2 text-sm"
-                >
-                  <span>{row.label}</span>
-                  <span>{money(row.amount)}</span>
-                </p>
-              ),
-            )}
-          </div>
-          <p className="flex justify-between text-xl font-semibold">
-            <span>{t("合计")}</span>
-            {money(preview.settlementPreview.total)}
-          </p>
+          <BillTotal preview={preview} />
+          <BillTimeline preview={preview} />
           <p className="text-sm text-ink/60">
             {t("结账后余额")} {money(preview.wallet.balanceAfter)}
           </p>

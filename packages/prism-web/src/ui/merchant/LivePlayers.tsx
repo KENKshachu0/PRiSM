@@ -1,3 +1,4 @@
+import { BillTotal, BillTimeline } from "../BillTimeline";
 import { useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { ActionForm, Modal, button, input, money, primary, segment, useMerchant, useStaffApi, type LivePlayer, type Preview } from "./shared";
@@ -81,41 +82,13 @@ export function LivePlayers({ players, refresh, onManage }: {
           <div><dt className="text-xs text-ink/60">{t("时长")}</dt><dd className="mt-1 text-2xl font-semibold leading-tight tabular-nums">{stayDuration(selected.stayDurationMinutes)}</dd></div>
           <div className="text-right"><dt className="text-xs text-ink/60">{t("应付")}</dt><dd className="mt-1 break-all text-2xl font-semibold leading-tight tabular-nums">{money(selected.estimatedTotal)}</dd><dd className="mt-1 text-xs text-ink/50">{t("余额")} {money(selected.walletTotal)}</dd></div>
         </dl>
-        {selected.sessions.map(session => <div key={session.id} className="border-b border-ink/10 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div><h4 className="text-sm font-semibold">{title(session)}</h4>
-              <p className="mt-2 flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tabular-nums"><time dateTime={session.startedAt}>{at(session.startedAt)}</time><span className="font-normal text-ink/40">–</span>{session.endedAt ? <time dateTime={session.endedAt}>{at(session.endedAt)}</time> : <span>{t("至今")}</span>}</p>
-              <p className="mt-2 flex items-baseline gap-2"><span className="text-xs text-ink/60">{t("时长")}</span><strong className="text-xl font-semibold tabular-nums">{stayDuration(session.elapsedMinutes)}</strong></p>
-            </div>
-            <div className="text-right"><strong className="text-sm tabular-nums">{money(session.currentImpact)}</strong><p className="mt-1 text-xs text-ink/60">{t(session.status === "active" ? "进行中" : "已停止")}</p></div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60">
-            <span>{[...new Set(session.pricingCharges.map(charge => charge.planName))].join(" + ") || t("暂无计费明细")}</span>
-            {canWrite && session.status === "active" && <button className="focus-ring rounded px-2 py-1 underline underline-offset-4" onClick={() => setStop({ playerId: selected.playerId, session })}>{t("停止计费")}</button>}
-          </div>
-          <details className="mt-2 text-sm">
-            <summary className="focus-ring w-fit cursor-pointer rounded py-1 text-xs">{t("计费明细")}</summary>
-            <div className="mt-2 divide-y divide-ink/10 border-t border-ink/10">
-              {session.pricingSegments.map((part, index) => <div key={index} className="py-3 text-xs">
-                <div className="flex justify-between gap-3"><span className="font-medium">{part.planName} · {part.ruleLabel}</span><strong className="tabular-nums">{money(part.amount)}</strong></div>
-                <p className="mt-2 flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tabular-nums"><time dateTime={part.actualStartedAt}>{at(part.actualStartedAt)}</time><span className="font-normal text-ink/40">–</span><time dateTime={part.actualEndedAt}>{at(part.actualEndedAt)}</time></p>
-                <p className="mt-2 flex items-baseline gap-2"><span className="text-xs text-ink/60">{t("时长")}</span><strong className="text-base font-semibold tabular-nums">{stayDuration((Date.parse(part.actualEndedAt) - Date.parse(part.actualStartedAt)) / 60000)}</strong></p>
-                {part.ruleTimeRange && <p className="mt-1 text-ink/60">{t("规则时段")} {part.ruleTimeRange.start}–{part.ruleTimeRange.end <= part.ruleTimeRange.start ? t("次日") + " " : ""}{part.ruleTimeRange.end}</p>}
-                {part.intervalCapReached && <p className="mt-1 font-medium">{t("已达时段封顶")} {money(part.intervalCap)}</p>}
-              </div>)}
-              {!session.pricingSegments.length && session.pricingCharges.map((charge, index) => <p key={index} className="flex justify-between gap-3 py-2 text-xs"><span>{charge.planName} · {charge.ruleLabel}</span><strong>{money(charge.amount)}</strong></p>)}
-              {!session.pricingCharges.length && !session.pricingSegments.length && <p className="py-2 text-xs text-ink/60">{t("暂无计费明细")}</p>}
-            </div>
-          </details>
-        </div>)}
-        {!!selected.globalCapWindows?.length && <div className="border-b border-ink/10 p-4">
-          <h4 className="mb-2 text-sm font-semibold">{t("跨方案封顶")}</h4>
-          {selected.globalCapWindows.map(window => <details key={window.key} className="py-2 text-xs">
-            <summary className="focus-ring cursor-pointer rounded">{window.ruleLabel} · {money(window.amountApplied)} / {money(window.priceCap)}{window.priceCapReached ? ` · ${t("已封顶")}` : ""}</summary>
-            <p className="mt-2 flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tabular-nums"><time dateTime={window.windowStartedAt}>{at(window.windowStartedAt)}</time><span className="font-normal text-ink/40">–</span><time dateTime={window.windowEndedAt}>{at(window.windowEndedAt)}</time></p>
-            <p className="mt-1 text-ink/60">{t("历史已计入")} {money(window.paidBefore)} · {t("本次参与金额")} {money(window.currentAmount)}</p>
-          </details>)}
-        </div>}
+        <div className="max-h-[60vh] overflow-y-auto p-4">
+          {selected.timeline && <BillTimeline preview={{ settlementPreview: { total: selected.estimatedTotal ?? 0 }, timeline: selected.timeline, chargeItems: [], adjustments: [] }} />}
+          {canWrite && selected.sessions.filter(session => session.status === "active").map(session => <div key={session.id} className="flex items-center justify-between gap-3 border-t border-ink/10 py-3 text-sm">
+            <span>{[...new Set(session.pricingCharges.map(charge => charge.planName))].join(" + ") || title(session)}</span>
+            <button className={button} onClick={() => setStop({ playerId: selected.playerId, session })}>{t("停止计费")}</button>
+          </div>)}
+        </div>
         {(canWrite || error) && <footer className="p-4">
           {error && <p role="alert" className="mb-3 text-sm text-coral">{error}</p>}
           {canWrite && <button className={`${primary} w-full`} disabled={busy} onClick={previewCheckout}>{t(busy ? "正在加载" : "结账")}</button>}
@@ -127,8 +100,8 @@ export function LivePlayers({ players, refresh, onManage }: {
     </ActionForm></Modal>}
     {checkout && <Modal title="结账" close={() => setCheckout(null)}><ActionForm label="确认结账" done={() => { setCheckout(null); refresh(); }} submit={() => request(`players/${segment(checkout.player.playerId)}/checkout/confirm`, "POST", {})}>
       <p className="font-semibold">{checkout.player.displayName}</p>
-      {[...checkout.preview.chargeItems, ...checkout.preview.adjustments].map((item, index) => <p key={index} className="flex justify-between gap-3 text-sm"><span>{item.label}</span><span>{money(item.amount)}</span></p>)}
-      <p className="flex justify-between font-semibold"><span>{t("合计")}</span><span>{money(checkout.preview.settlementPreview.total)}</span></p>
+      <BillTotal preview={checkout.preview} />
+      <BillTimeline preview={checkout.preview} />
       <p className="text-sm text-ink/60">{t("结账后余额")} {money(checkout.preview.wallet.balanceAfter)}</p>
     </ActionForm></Modal>}
   </>;
