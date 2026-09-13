@@ -48,6 +48,30 @@ def digest(db, table, names, shop_id=None):
     return len(rows), hashlib.sha256('\n'.join(sorted(rows)).encode()).hexdigest()
 
 
+def legacy_device_report(db, shop_id):
+    """Report old HA registry rows that still need logical-device import."""
+    row = db.execute(
+        'SELECT value_json FROM app_settings WHERE shop_id=? AND key=?',
+        (shop_id, 'devices.homeassistant'),
+    ).fetchone()
+    logical = db.execute('SELECT COUNT(*) FROM machines WHERE shop_id=?', (shop_id,)).fetchone()[0]
+    result = {'legacyHomeAssistant': 0, 'logicalDevices': logical}
+    if row is None:
+        return result
+    try:
+        devices = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError('Invalid devices.homeassistant JSON for shop ' + shop_id) from error
+    if not isinstance(devices, list):
+        raise ValueError('devices.homeassistant must be an array for shop ' + shop_id)
+    result['legacyHomeAssistant'] = len(devices)
+    if devices and logical == 0:
+        result['requiresFollowUp'] = 'Run scripts/import-legacy-devices.ts before production cutover.'
+    elif devices and logical != len(devices):
+        result['requiresFollowUp'] = 'Review the logical-device mapping before production cutover.'
+    return result
+
+
 def merge(manifest, output):
     output = Path(output).resolve()
     if output.exists():
@@ -86,7 +110,8 @@ def merge(manifest, output):
             if digest(target, destination, names) != expected:
                 raise ValueError('Platform data verification failed for ' + table)
             report['platform'][destination] = expected[0]
-        target.execute('INSERT INTO shop_billing_settings(shop_id,machine_geo) SELECT id,1 FROM shops')
+        # Location checks are opt-in. The owner enables them after reviewing the imported shop.
+        target.execute('INSERT INTO shop_billing_settings(shop_id) SELECT id FROM shops')
         for index, item in enumerate(billing):
             source = first if index == 0 else snapshot(item['database'])
             shop_id = item['shopId']
@@ -120,18 +145,33 @@ def merge(manifest, output):
             raise ValueError('Foreign-key verification failed (%d errors)' % len(errors))
         if target.execute("SELECT 1 FROM sqlite_master WHERE name='d1_migrations'").fetchone():
             for name in ('0016_shop_scoped_billing.sql', '0017_platform_accounts.sql'):
-                target.execute('INSERT INTO d1_migrations(name) VALUES (?)', (name,))
+                target.execute('INSERT OR IGNORE INTO d1_migrations(name) VALUES (?)', (name,))
         target.commit()
         for migration in sorted((ROOT / 'migrations').glob('*.sql')):
             if migration.name < '0018_':
                 continue
             target.executescript(migration.read_text())
             if target.execute("SELECT 1 FROM sqlite_master WHERE name='d1_migrations'").fetchone():
-                target.execute("INSERT INTO d1_migrations(name) VALUES (?)", (migration.name,))
+                target.execute("INSERT OR IGNORE INTO d1_migrations(name) VALUES (?)", (migration.name,))
         report['migrations'] = [p.name for p in sorted((ROOT / 'migrations').glob('*.sql')) if p.name >= '0016_']
         report['unifiedDevices'] = target.execute('SELECT COUNT(*) FROM machines').fetchone()[0]
-        if list(target.execute('PRAGMA foreign_key_check')):
-            raise ValueError('Foreign-key verification failed after device migration')
+        report['legacyDeviceRegistries'] = []
+        for item in report['billing']:
+            device_report = legacy_device_report(target, item['shopId'])
+            item['devices'] = device_report
+            if device_report.get('requiresFollowUp'):
+                report['legacyDeviceRegistries'].append({
+                    'shopId': item['shopId'],
+                    **device_report,
+                })
+        errors = list(target.execute('PRAGMA foreign_key_check'))
+        report['foreignKeyErrors'] = len(errors)
+        if errors:
+            raise ValueError('Foreign-key verification failed after device migration (%d errors)' % len(errors))
+        integrity = target.execute('PRAGMA integrity_check').fetchone()[0]
+        report['integrity'] = integrity
+        if integrity != 'ok':
+            raise ValueError('SQLite integrity check failed: ' + str(integrity))
         target.commit()
         target.close()
         # Atomic creation, refusing to replace a file created while we were running.

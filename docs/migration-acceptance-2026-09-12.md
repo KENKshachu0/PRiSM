@@ -35,11 +35,14 @@ The beta OAuth callback is added to the existing MuNET client without rotating
 its secret. Existing passkeys remain tied to the original relying-party domain;
 use MuNET to sign in on the beta domain.
 
-The nine original HA entries are converted to logical devices using their
-existing encrypted connection configuration. Three existing mahjong tables and
-12 occupied seats are reconstructed from active labeled sessions; their session
-IDs, start times, pricing and amounts are preserved. Mahjong metadata links
-those sessions to the new logical devices. The 18 ordinary active entry sessions
+The nine original HA entries remain in the merged `app_settings` registry until
+the explicit logical-device import is run. `scripts/import-legacy-devices.ts`
+uses their existing connection configuration, encrypts it with the preserved
+URL key, creates deterministic logical devices and maps old command/state
+references. Three existing mahjong tables and 12 occupied seats are reconstructed
+from active labeled sessions as a separate acceptance step; their session IDs,
+start times, pricing and amounts are preserved. Mahjong metadata links those
+sessions to the new logical devices. The 18 ordinary active entry sessions
 continue to match the original standard pricing rule; global caps remain
 automatic. Existing ArcadeLink `/t/:shopCode/:publicId` links reach the Worker
 before SPA asset fallback and continue to create one-time tickets.
