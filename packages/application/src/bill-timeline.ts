@@ -46,19 +46,23 @@ export function buildBillTimeline(input: {
       sorted.forEach((item, index) => {
         const explanation = item.pricingExplanation;
         const period = explanation?.period ?? item.period;
-        const endedAt = new Date(Math.min(period?.endedAt.getTime() ?? end.getTime(), end.getTime()));
+        const periodEnd = period?.endedAt.getTime() ?? end.getTime();
+        const endedAt = new Date(Math.min(periodEnd, end.getTime()));
         const next = sorted[index + 1];
-        const isBoundary = endedAt.getTime() < end.getTime();
-        add(endedAt, {
+        // Active quotes can end at the last whole minute while the preview clock still has seconds.
+        const currentTail = !session.endedAt && !next && endedAt.getTime() < end.getTime();
+        const isBoundary = !currentTail && endedAt.getTime() < end.getTime() && !!next;
+        const eventAt = currentTail ? end : endedAt;
+        add(eventAt, {
           trackId: id, name, kind: isBoundary ? "switch" : session.endedAt ? "end" : "current",
           rule: item.label, nextRule: isBoundary ? next?.label ?? null : null, amount: item.amount,
-          startedAt: period?.startedAt.toISOString() ?? null, endedAt: period ? endedAt.toISOString() : null,
+          startedAt: period?.startedAt.toISOString() ?? null, endedAt: period ? eventAt.toISOString() : null,
           unitMinutes: explanation?.pricing?.unitMinutes ?? null, unitPrice: explanation?.pricing?.unitPrice ?? null,
           units: explanation?.units ?? null, cap: explanation?.intervalCapReached ? explanation.intervalCap : null,
           paidBefore: explanation?.paidBefore ?? null,
         });
       });
-      if (!sorted.some(item => Math.min(item.period?.endedAt.getTime() ?? end.getTime(), end.getTime()) === end.getTime())) {
+      if (session.endedAt && !sorted.some(item => Math.min(item.period?.endedAt.getTime() ?? end.getTime(), end.getTime()) === end.getTime())) {
         add(end, { trackId: id, name, kind: session.endedAt ? "end" : "current" });
       }
     }

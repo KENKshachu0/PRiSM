@@ -38,3 +38,31 @@ test("continuous overnight rule has no midnight node; empty and legacy sessions 
   expect(timeline.events.map(e => e.at)).toEqual([at.toISOString(), start.toISOString()]);
   expect(timeline.events[0]?.entries.find(e => e.name === "Empty")?.kind).toBe("end");
 });
+
+test("active tail rounded before preview time stays current", () => {
+  const startedAt = date("12:45");
+  const previewedAt = new Date("2026-09-13T13:33:42Z");
+  const roundedEnd = new Date("2026-09-13T13:33:00Z");
+  const timeline = buildBillTimeline({
+    at: previewedAt,
+    sessions: [{
+      sessionId: "active",
+      label: "Plan",
+      startedAt,
+      endedAt: null,
+      chargeItems: [{
+        id: "item",
+        sessionId: "active",
+        source: "plan",
+        label: "日间",
+        amount: 2,
+        period: { startedAt, endedAt: roundedEnd },
+      }],
+    }],
+    adjustments: [],
+    globalCapWindows: [],
+  });
+  expect(timeline.events).toHaveLength(2);
+  expect(timeline.events[0]?.at).toBe(previewedAt.toISOString());
+  expect(timeline.events[0]?.entries[0]?.kind).toBe("current");
+});
