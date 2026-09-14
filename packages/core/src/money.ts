@@ -34,6 +34,8 @@
  * the staged plan that this module is stage one of.
  */
 
+import { PrismDomainError } from "./errors";
+
 /** Smallest representable money step. Amounts are modelled in whole cents of yuan. */
 export const CENTS_PER_YUAN = 100;
 
@@ -120,4 +122,298 @@ export function sumMoney(values: Iterable<number>): number {
   let total = 0;
   for (const value of values) total += value;
   return quantizeMoney(total);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stage two: integer units.
+//
+// Everything above works in yuan and relies on tolerance to survive binary
+// floating point. This section removes the tolerance requirement entirely by
+// making the unit explicit in the type system:
+//
+//   Cents — money, an exact integer number of 分 (1/100 yuan)
+//   Units — counts of non-currency holdings (tickets, coupons), exact integers
+//
+// The two brands are deliberately unconvertible. There is no function from
+// `Cents` to `Units` or back, because 1 yuan and 1 ticket are not the same kind
+// of thing, and the compiler refusing to mix them is the entire point of the
+// exercise. Arithmetic on both is exact integer arithmetic, so `a === b` and
+// `a < b` mean what they look like and `MONEY_EPSILON` is no longer involved.
+//
+// Amounts still cross external boundaries in yuan; `centsOf` and `yuanOf` are
+// the only sanctioned way through.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * An exact amount of money, held as a whole number of 分 (1/100 元).
+ *
+ * Branded on purpose: a bare `number` is not assignable to it, so a raw value
+ * cannot drift into money arithmetic by accident. Construct one with `centsOf`
+ * (yuan → cents) or `centsOfInteger` (an already-integral count of cents).
+ */
+export type Cents = number & { readonly __brand: "Cents" };
+
+/**
+ * An exact count of a non-currency holding — tickets, coupons, seats.
+ *
+ * Kept separate from `Cents` even though both are integers, so that "consume one
+ * ticket" can never be written as "subtract one cent".
+ */
+export type Units = number & { readonly __brand: "Units" };
+
+export const ZERO_CENTS = 0 as Cents;
+export const ZERO_UNITS = 0 as Units;
+
+/** How `mulDivRound` resolves an inexact division. There is no default. */
+export type RoundingMode =
+  | "floor" // toward negative infinity
+  | "ceil" // toward positive infinity
+  | "trunc" // toward zero
+  | "half"; // away from zero on an exact half
+
+/**
+ * Converts a yuan amount to exact cents, rounding half away from zero.
+ *
+ * This is the *input* boundary: API payloads, legacy `REAL` columns, parsed
+ * configuration. It always rounds, so a non-cent value such as `10.01001` is
+ * absorbed here rather than propagating (see `docs/money.md`).
+ */
+export function centsOf(yuan: number): Cents {
+  if (!Number.isFinite(yuan)) {
+    throw new PrismDomainError("Money must be a finite number.", "INVALID_MONEY");
+  }
+  const scaled = yuan * CENTS_PER_YUAN;
+  const rounded = scaled < 0 ? -Math.round(-scaled) : Math.round(scaled);
+  // `=== 0` also folds `-0` into `0` so downstream equality stays predictable.
+  return (rounded === 0 ? 0 : rounded) as Cents;
+}
+
+/**
+ * Wraps a value that is already an exact count of cents.
+ *
+ * Use it for values produced by integer arithmetic — never for a yuan amount,
+ * which must go through `centsOf` (that mistake is off by a factor of 100).
+ */
+export function centsOfInteger(value: number): Cents {
+  if (!Number.isInteger(value)) {
+    throw new PrismDomainError("Cents must be a whole number.", "INVALID_MONEY");
+  }
+  return (value === 0 ? 0 : value) as Cents;
+}
+
+/** Converts cents back to yuan for an *output* boundary (API payload, display). */
+export function yuanOf(cents: Cents): number {
+  return cents === 0 ? 0 : cents / CENTS_PER_YUAN;
+}
+
+/** Wraps an exact count of a non-currency holding. */
+export function unitsOf(value: number): Units {
+  if (!Number.isInteger(value)) {
+    throw new PrismDomainError("Units must be a whole number.", "INVALID_UNITS");
+  }
+  return (value === 0 ? 0 : value) as Units;
+}
+
+// ── Money arithmetic ─────────────────────────────────────────────────────────
+
+export function addCents(left: Cents, right: Cents): Cents {
+  return (left + right) as Cents;
+}
+
+export function subCents(left: Cents, right: Cents): Cents {
+  return (left - right) as Cents;
+}
+
+export function negCents(value: Cents): Cents {
+  return (value === 0 ? 0 : -value) as Cents;
+}
+
+export function absCents(value: Cents): Cents {
+  return (value < 0 ? -value : value) as Cents;
+}
+
+export function sumCents(values: Iterable<Cents>): Cents {
+  let total = 0;
+  for (const value of values) total += value;
+  return (total === 0 ? 0 : total) as Cents;
+}
+
+export function isZeroCents(value: Cents): boolean {
+  return value === 0;
+}
+
+export function isPositiveCents(value: Cents): boolean {
+  return value > 0;
+}
+
+export function isNegativeCents(value: Cents): boolean {
+  return value < 0;
+}
+
+export function compareCents(left: Cents, right: Cents): -1 | 0 | 1 {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+export function minCents(left: Cents, right: Cents): Cents {
+  return (left <= right ? left : right) as Cents;
+}
+
+export function maxCents(left: Cents, right: Cents): Cents {
+  return (left >= right ? left : right) as Cents;
+}
+
+/**
+ * Computes `value * numerator / denominator` and rounds the result explicitly.
+ *
+ * The three ratio operations in the domain — percentage discounts, time
+ * proration across cap windows, and splitting a cap across sessions — all
+ * divide by something that does not divide evenly. There is deliberately no
+ * generic `multiply`, and no default rounding mode: every call site has to say
+ * how it wants the remainder resolved, because the choice is a billing decision
+ * and not a numeric detail.
+ *
+ * Computed with `BigInt` so the intermediate product cannot lose precision (a
+ * cent total times a millisecond weight overflows the safe-integer range).
+ */
+export function mulDivRound(
+  value: Cents,
+  numerator: number,
+  denominator: number,
+  mode: RoundingMode,
+): Cents {
+  if (!Number.isInteger(numerator) || !Number.isInteger(denominator)) {
+    throw new PrismDomainError(
+      "mulDivRound expects integer numerator and denominator; scale them first.",
+      "INVALID_MONEY_RATIO",
+    );
+  }
+  if (denominator === 0) {
+    throw new PrismDomainError("Cannot divide money by zero.", "INVALID_MONEY_RATIO");
+  }
+
+  let dividend = BigInt(value) * BigInt(numerator);
+  let divisor = BigInt(denominator);
+  if (divisor < 0n) {
+    dividend = -dividend;
+    divisor = -divisor;
+  }
+
+  const quotient = dividend / divisor; // BigInt division truncates toward zero
+  const remainder = dividend % divisor;
+  if (remainder === 0n) return Number(quotient) as Cents;
+
+  switch (mode) {
+    case "trunc":
+      return Number(quotient) as Cents;
+    case "floor":
+      return Number(remainder < 0n ? quotient - 1n : quotient) as Cents;
+    case "ceil":
+      return Number(remainder > 0n ? quotient + 1n : quotient) as Cents;
+    case "half": {
+      const magnitude = (remainder < 0n ? -remainder : remainder) * 2n;
+      if (magnitude >= divisor) {
+        return Number(remainder < 0n ? quotient - 1n : quotient + 1n) as Cents;
+      }
+      return Number(quotient) as Cents;
+    }
+  }
+}
+
+/**
+ * Splits `total` across `weights` so the parts sum back to `total`, exactly.
+ *
+ * Uses largest-remainder: every bucket gets its floored share, then the residual
+ * cents go to the buckets with the largest fractional remainder (ties broken by
+ * index). Conservation is guaranteed by construction — unlike rounding each
+ * share independently, which silently produces an invoice that does not add up.
+ *
+ * `weights` must be non-negative integers; scale them first if they are not.
+ * A zero-weight sum puts everything on the last bucket, since there is no basis
+ * to split on — the total is still preserved.
+ */
+export function allocate(total: Cents, weights: readonly number[]): Cents[] {
+  if (weights.length === 0) return [];
+  for (const weight of weights) {
+    if (!Number.isInteger(weight) || weight < 0) {
+      throw new PrismDomainError(
+        "allocate expects non-negative integer weights; scale them first.",
+        "INVALID_MONEY_RATIO",
+      );
+    }
+  }
+
+  const divisor = weights.reduce((sum, weight) => sum + BigInt(weight), 0n);
+  if (divisor === 0n) {
+    return weights.map((_, index) => (index === weights.length - 1 ? total : ZERO_CENTS));
+  }
+
+  const dividendTotal = BigInt(total);
+  const floors: bigint[] = [];
+  const remainders: bigint[] = [];
+  let allocated = 0n;
+
+  for (const weight of weights) {
+    const dividend = dividendTotal * BigInt(weight);
+    const quotient = dividend / divisor;
+    const remainder = dividend % divisor;
+    // Floor toward negative infinity so every remainder is in [0, divisor) and
+    // the residual below is never negative — this is what makes it work for
+    // negative totals (refunds, deductions) as well as positive ones.
+    const floored = remainder < 0n ? quotient - 1n : quotient;
+    const normalisedRemainder = remainder < 0n ? remainder + divisor : remainder;
+    floors.push(floored);
+    remainders.push(normalisedRemainder);
+    allocated += floored;
+  }
+
+  let residual = Number(dividendTotal - allocated);
+  const order = remainders
+    .map((remainder, index) => ({ index, remainder }))
+    .sort((a, b) => (b.remainder === a.remainder ? a.index - b.index : b.remainder > a.remainder ? 1 : -1));
+
+  // `floors` holds BigInt values for exact intermediate arithmetic; convert back
+  // to plain numbers before handing them out as `Cents`.
+  const result = floors.map((value) => Number(value) as Cents);
+  let cursor = 0;
+  while (residual > 0) {
+    const target = order[cursor % order.length]!.index;
+    result[target] = ((result[target] as number) + 1) as Cents;
+    residual--;
+    cursor++;
+  }
+  return result;
+}
+
+// ── Count arithmetic ─────────────────────────────────────────────────────────
+
+export function addUnits(left: Units, right: Units): Units {
+  return (left + right) as Units;
+}
+
+export function subUnits(left: Units, right: Units): Units {
+  return (left - right) as Units;
+}
+
+export function sumUnits(values: Iterable<Units>): Units {
+  let total = 0;
+  for (const value of values) total += value;
+  return (total === 0 ? 0 : total) as Units;
+}
+
+export function isZeroUnits(value: Units): boolean {
+  return value === 0;
+}
+
+export function isPositiveUnits(value: Units): boolean {
+  return value > 0;
+}
+
+export function isNegativeUnits(value: Units): boolean {
+  return value < 0;
+}
+
+export function compareUnits(left: Units, right: Units): -1 | 0 | 1 {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
