@@ -214,6 +214,38 @@ export function unitsOf(value: number): Units {
   return (value === 0 ? 0 : value) as Units;
 }
 
+/**
+ * Reads a scaled value as a whole-unit count: divides by 100 and keeps zero
+ * decimals.
+ *
+ * This is the reading half of the pair for count-like assets (tickets,
+ * coupons, seats) — the writing half is `fromInt`. Money uses the other pair,
+ * `centsOf` / `yuanOf`, because a yuan amount carries two decimals.
+ *
+ *   stored 100  ->  intOf  ->  1
+ *   stored  54  ->  intOf  ->  0.54 is not a whole count, so it rounds to 1
+ *
+ * Rounding rather than throwing is deliberate: a count that has picked up
+ * residue should still read as the count it represents, and `Number.isInteger`
+ * belongs to the caller that wants to reject that case.
+ */
+export function intOf(value: Cents): number {
+  const units = value / CENTS_PER_YUAN;
+  const rounded = units < 0 ? -Math.round(-units) : Math.round(units);
+  return rounded === 0 ? 0 : rounded;
+}
+
+/** Wraps a whole-unit count as a scaled value: multiplies by 100. */
+export function fromInt(count: number): Cents {
+  if (!Number.isInteger(count)) {
+    throw new PrismDomainError(
+      "fromInt expects a whole count; use centsOf for a yuan amount.",
+      "INVALID_UNITS",
+    );
+  }
+  return (count === 0 ? 0 : count * CENTS_PER_YUAN) as Cents;
+}
+
 // ── Money arithmetic ─────────────────────────────────────────────────────────
 
 export function addCents(left: Cents, right: Cents): Cents {

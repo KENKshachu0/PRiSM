@@ -23,6 +23,8 @@ import {
   quantizeMoney,
   subCents,
   subUnits,
+  fromInt,
+  intOf,
   sumCents,
   sumMoney,
   sumUnits,
@@ -368,5 +370,41 @@ describe("the two brands do not mix", () => {
     // Widen to number[] so the assertion types do not fight the brands.
     const values: number[] = [rawAsMoney, rawAsCount, moneyAsCount, countAsMoney];
     expect(values).toEqual([1, 1, 100, 1]);
+  });
+});
+
+describe("intOf / fromInt", () => {
+  it("reads a scaled value back as a whole-unit count", () => {
+    expect(intOf(fromInt(1))).toBe(1);
+    expect(intOf(fromInt(2))).toBe(2);
+    expect(intOf(fromInt(0))).toBe(0);
+    expect(intOf(fromInt(-3))).toBe(-3);
+    // The stored form of one coupon is 100.
+    expect(intOf(centsOfInteger(100))).toBe(1);
+  });
+
+  it("wraps a whole count as the scaled value", () => {
+    expect(n(fromInt(1))).toBe(100);
+    expect(n(fromInt(0))).toBe(0);
+    expect(n(fromInt(-3))).toBe(-300);
+  });
+
+  it("is the count counterpart of the yuan pair", () => {
+    // Money: yuan in, cents stored, yuan out.
+    expect(n(centsOf(1.01))).toBe(101);
+    expect(yuanOf(centsOf(1.01))).toBe(1.01);
+    // Counts: units in, hundredths stored, units out.
+    expect(n(fromInt(1))).toBe(100);
+    expect(intOf(fromInt(1))).toBe(1);
+  });
+
+  it("rounds a drifted count back to the count it represents", () => {
+    expect(intOf(centsOfInteger(101))).toBe(1);
+    expect(intOf(centsOfInteger(149))).toBe(1);
+    expect(intOf(centsOfInteger(150))).toBe(2);
+  });
+
+  it("refuses a fractional count", () => {
+    expect(() => fromInt(0.5)).toThrow();
   });
 });
