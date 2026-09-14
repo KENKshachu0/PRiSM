@@ -1,6 +1,7 @@
 import type { AssetHolding, AssetLedgerEntry } from "./assets";
 import { PrismDomainError } from "./errors";
 import {
+  type Cents,
   compareMoney,
   isNegativeQuantity,
   isPositiveQuantity,
@@ -17,7 +18,7 @@ export type ChargeItem = {
   sessionId?: string;
   source: string;
   label: string;
-  amount: number;
+  amount: Cents;
   period?: {
     startedAt: Date;
     endedAt: Date;
@@ -38,7 +39,7 @@ export type SettlementAdjustment = {
   id: string;
   source: string;
   label: string;
-  amount: number;
+  amount: Cents;
   pricingCapHistory?: PricingCapHistoryContribution;
 };
 
@@ -57,8 +58,8 @@ export type PastAppliedAdjustment = {
 
 export type Settlement = {
   sessionId: string;
-  subtotal: number;
-  total: number;
+  subtotal: Cents;
+  total: Cents;
   status: "settled";
   settledAt: Date;
 };

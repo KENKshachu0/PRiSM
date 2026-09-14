@@ -1,5 +1,6 @@
 import { PrismDomainError } from "./errors";
 import {
+  type Cents,
   isNegativeQuantity,
   isPositiveQuantity,
   normalizeQuantity,
@@ -55,7 +56,7 @@ export type AssetHolding = {
   id?: string;
   assetType: string;
   assetCode: string;
-  quantity: number;
+  quantity: Cents;
   activeAt?: Date | null;
   expiresAt?: Date | null;
 };
