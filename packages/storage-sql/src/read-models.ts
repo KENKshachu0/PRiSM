@@ -1,4 +1,4 @@
-import { quantizeMoney } from "@prism/core";
+import { type Cents, centsOf, quantizeMoney, ZERO_CENTS } from "@prism/core";
 import { sqlShop } from "./shop-scope";
 import type {
   ApplicationQueries,
@@ -780,7 +780,7 @@ function assessAssetHoldingRow(
     id: row.holding_id ?? row.id,
     assetType: row.asset_type!,
     assetCode: row.asset_code!,
-    quantity: row.quantity!,
+    quantity: centsOf(row.quantity!),
     activeAt: row.holding_active_at ? new Date(row.holding_active_at) : null,
     expiresAt: row.holding_expires_at ? new Date(row.holding_expires_at) : null,
   };
@@ -835,8 +835,8 @@ function groupStaffPlayers(
   return [...players.values()];
 }
 
-function availableCurrencyTotal(rowsJson: string | null, at: Date): number {
-  if (!rowsJson) return 0;
+function availableCurrencyTotal(rowsJson: string | null, at: Date): Cents {
+  if (!rowsJson) return ZERO_CENTS;
   const rows = JSON.parse(rowsJson) as AssetHoldingAssessmentRow[];
   const availableHoldings = rows.flatMap((row) => {
     const assessment = assessAssetHoldingRow(row, at, false);

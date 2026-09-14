@@ -8,7 +8,9 @@ import type {
   OperationLockRepository,
   SessionRepository,
 } from "@prism/core";
-import { deductCurrency, diffAssetHoldings, isPositiveQuantity, PrismDomainError, quantizeMoney } from "@prism/core";
+import { deductCurrency, diffAssetHoldings, isPositiveQuantity, PrismDomainError, quantizeMoney,
+  centsOf,
+} from "@prism/core";
 import { withOperationLease } from "./operation-lock";
 import type { AvailableAssetReader } from "./available-assets";
 
@@ -88,7 +90,7 @@ export function createBusinessItemOrderService(
           })).map((asset) => asset.holding)
         : nextHoldings;
       const assetLedgerEntries = deductCurrency(spendableHoldings, {
-        amount: price,
+        amount: centsOf(price),
         reason: "business-item.purchase",
         refId: order.id,
         now,

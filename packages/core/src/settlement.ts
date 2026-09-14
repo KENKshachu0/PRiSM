@@ -2,6 +2,16 @@ import type { AssetHolding, AssetLedgerEntry } from "./assets";
 import { PrismDomainError } from "./errors";
 import {
   type Cents,
+  addCents,
+  centsOf,
+  compareCents,
+  isNegativeCents,
+  isPositiveCents,
+  isZeroCents,
+  minCents,
+  negCents,
+  subCents,
+  sumCents,
   compareMoney,
   isNegativeQuantity,
   isPositiveQuantity,
@@ -18,7 +28,7 @@ export type ChargeItem = {
   sessionId?: string;
   source: string;
   label: string;
-  amount: Cents;
+  amount: number;
   period?: {
     startedAt: Date;
     endedAt: Date;
@@ -39,7 +49,7 @@ export type SettlementAdjustment = {
   id: string;
   source: string;
   label: string;
-  amount: Cents;
+  amount: number;
   pricingCapHistory?: PricingCapHistoryContribution;
 };
 
@@ -150,8 +160,13 @@ export async function settleSession(input: SettleSessionInput): Promise<SettleSe
   const assetHoldings = input.assetHoldings.map((account) => ({ ...account }));
   const quote = await quoteSessionSettlement(input, availableHoldingsAt(assetHoldings, input.now));
   const { chargeItems, subtotal, adjustments, total } = applyOverride(input, quote);
+  // The pricing engine works in yuan and owns the persisted cap history, so it
+  // stays yuan; the settled amounts and the holdings they are paid from are
+  // cents. This call is the boundary between the two.
+  const subtotalCents = centsOf(subtotal);
+  const totalCents = centsOf(total);
   const assetLedgerEntries = deductCurrency(assetHoldings, {
-    amount: total,
+    amount: totalCents,
     reason: "session.settlement",
     refId: input.session.id,
     now: input.now,
@@ -160,8 +175,8 @@ export async function settleSession(input: SettleSessionInput): Promise<SettleSe
   return {
     settlement: {
       sessionId: input.session.id,
-      subtotal,
-      total,
+      subtotal: subtotalCents,
+      total: totalCents,
       status: "settled",
       settledAt: input.now,
     },
@@ -312,23 +327,21 @@ function applyAdjustments(subtotal: number, adjustments: readonly SettlementAdju
 export function deductCurrency(
   assetHoldings: AssetHolding[],
   input: {
-    amount: number;
+    amount: Cents;
     reason: string;
     refId: string;
     now: Date;
   },
 ): AssetLedgerEntry[] {
-  const requested = quantizeMoney(input.amount);
-  if (isZeroQuantity(requested)) return [];
+  const requested = input.amount;
+  if (isZeroCents(requested)) return [];
 
   const currencyAccounts: AssetHolding[] = [];
   for (const account of assetHoldings) {
     if (account.assetType !== "currency") continue;
-    // Canonicalising on read removes residue left by earlier arithmetic, so a
-    // balance of 1.3877787807814457e-16 is treated as the 0 it really is rather
-    // than as a spendable holding.
-    account.quantity = normalizeQuantity(account.quantity);
-    if (!isPositiveQuantity(account.quantity)) continue;
+    // Quantities are exact integers now, so there is no residue to canonicalise:
+    // a balance of zero is zero, and every positive balance is spendable.
+    if (!isPositiveCents(account.quantity)) continue;
     if (!isHoldingAvailableAt(account, input.now)) continue;
     currencyAccounts.push(account);
   }
@@ -339,12 +352,10 @@ export function deductCurrency(
     return normalizeOrder(aIndex) - normalizeOrder(bIndex);
   });
 
-  // Both sides are cent-quantised here, so the affordability check compares two
-  // canonical amounts instead of two approximations. `compareMoney` still adds a
-  // tolerance so a balance assembled by the caller cannot round its way under an
-  // amount the player can actually afford.
-  const available = sumMoney(currencyAccounts.map((account) => account.quantity));
-  if (compareMoney(available, requested) < 0) {
+  // Exact integer comparison: no tolerance, because two integers cannot be
+  // "close but unequal".
+  const available = sumCents(currencyAccounts.map((account) => account.quantity));
+  if (compareCents(available, requested) < 0) {
     throw new PrismDomainError("Insufficient currency holdings for this operation.", "INSUFFICIENT_BALANCE");
   }
 
@@ -352,15 +363,15 @@ export function deductCurrency(
   const entries: AssetLedgerEntry[] = [];
 
   for (const account of currencyAccounts) {
-    if (!isPositiveQuantity(remaining)) break;
+    if (!isPositiveCents(remaining)) break;
 
-    const deducted = Math.min(account.quantity, remaining);
-    account.quantity = normalizeQuantity(account.quantity - deducted);
-    remaining = normalizeQuantity(remaining - deducted);
+    const deducted = minCents(account.quantity, remaining);
+    account.quantity = subCents(account.quantity, deducted);
+    remaining = subCents(remaining, deducted);
     entries.push({
       assetType: account.assetType,
       assetCode: account.assetCode,
-      delta: -deducted,
+      delta: negCents(deducted),
       reason: input.reason,
       refId: input.refId,
     });

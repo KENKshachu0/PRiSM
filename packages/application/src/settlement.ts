@@ -31,7 +31,12 @@ import {
   applyTimeCapPricing,
   closeSession,
   collectTimeCapPricingHistoryLookupKeys,
+  type Cents,
+  centsOf,
   compareMoney,
+  isPositiveCents,
+  negCents,
+  subCents,
   deductCurrency,
   diffAssetHoldings,
   explainTimeCapPricing,
@@ -277,7 +282,7 @@ export function createSettlementService(dependencies: SettlementServiceDependenc
 
 function assertCheckoutBalance(holdings: readonly AssetHolding[], amount: number, now: Date): void {
   deductCurrency(holdings.map((holding) => ({ ...holding })), {
-    amount,
+    amount: centsOf(amount),
     reason: "checkout.balance-check",
     refId: "preflight",
     now,
@@ -332,7 +337,7 @@ async function calculateUnifiedCheckoutDetails(
   );
   const availableHoldings = resolvedAvailableAssets
     ? resolvedAvailableAssets.map((asset) => asset.holding)
-    : currentHoldings.filter((holding) => isPositiveQuantity(holding.quantity) && isActiveInWindow(holding, now));
+    : currentHoldings.filter((holding) => isPositiveCents(holding.quantity) && isActiveInWindow(holding, now));
   const walletBalanceBefore = resolvedAvailableAssets
     ? sumAvailableWalletBalance(resolvedAvailableAssets)
     : sumCurrencyHoldings(availableHoldings);
@@ -400,16 +405,16 @@ async function calculateUnifiedCheckoutDetails(
           const consumable = effectConfig?.consumable === true;
           if (consumable) {
             const holding = availableHoldings.find(
-              (h) => (holdingKey ? h.id === holdingKey : h.assetType === assetType && h.assetCode === assetCode) && isPositiveQuantity(h.quantity),
+              (h) => (holdingKey ? h.id === holdingKey : h.assetType === assetType && h.assetCode === assetCode) && isPositiveCents(h.quantity),
             ) ?? availableHoldings.find(
-              (h) => h.assetType === assetType && h.assetCode === assetCode && isPositiveQuantity(h.quantity),
+              (h) => h.assetType === assetType && h.assetCode === assetCode && isPositiveCents(h.quantity),
             );
             if (holding) {
-              holding.quantity = normalizeQuantity(holding.quantity - 1);
+              holding.quantity = subCents(holding.quantity, centsOf(1));
               extraLedgerEntries.push({
                 assetType,
                 assetCode,
-                delta: -1,
+                delta: negCents(centsOf(1)),
                 reason: "session.settlement.coupon",
                 refId: session.id,
               });
@@ -485,7 +490,7 @@ async function calculateUnifiedCheckoutDetails(
   }
 
   if (dependencies.assetDefinitions) {
-    const unifiedHoldings = availableHoldings.filter((h) => isPositiveQuantity(h.quantity));
+    const unifiedHoldings = availableHoldings.filter((h) => isPositiveCents(h.quantity));
     for (let holdingIndex = 0; holdingIndex < unifiedHoldings.length; holdingIndex++) {
       const holding = unifiedHoldings[holdingIndex];
       if (!isPositiveQuantity(holding.quantity) || !isPositiveQuantity(totalAmount)) break;
@@ -537,11 +542,11 @@ async function calculateUnifiedCheckoutDetails(
       });
 
       if (effectConfig.consumable === true) {
-        holding.quantity -= 1;
+        holding.quantity = subCents(holding.quantity, centsOf(1));
         unifiedLedgerEntries.push({
           assetType: holding.assetType,
           assetCode: holding.assetCode,
-          delta: -1,
+          delta: negCents(centsOf(1)),
           reason: "session.settlement.coupon",
           refId: anchorSession.id,
         });
@@ -701,7 +706,7 @@ async function persistUnifiedPlayerCheckout(
   }
 
   const currencyLedgerEntries = deductCurrency(details.availableHoldings, {
-    amount: finalTotal,
+    amount: centsOf(finalTotal),
     reason: "session.settlement",
     refId: anchorSession.id,
     now,
@@ -735,8 +740,8 @@ async function persistUnifiedPlayerCheckout(
   const checkout: PlayerCheckout = {
     id: `player-checkout:${anchorSession.id}`,
     playerId,
-    subtotal: details.subtotal,
-    total: finalTotal,
+    subtotal: centsOf(details.subtotal),
+    total: centsOf(finalTotal),
     status: "settled",
     settledAt: now,
   };
@@ -752,8 +757,8 @@ async function persistUnifiedPlayerCheckout(
     const record: SettlementRecord = {
       settlement: {
         sessionId: result.session.id,
-        subtotal,
-        total,
+        subtotal: centsOf(subtotal),
+        total: centsOf(total),
         status: "settled",
         settledAt: now,
       },

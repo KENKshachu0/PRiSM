@@ -1,3 +1,4 @@
+import { centsOf } from "@prism/core";
 import { sqlShop, shopValues } from "@prism/storage-sql";
 import type {
   AssetDefinition,
@@ -859,7 +860,7 @@ function toAssetHolding(holding: PrismNeoUserAsset): MigratedAssetHolding {
     playerId: legacyUserId(holding.userId),
     assetType: mapped.type,
     assetCode: mapped.code,
-    quantity: holding.count,
+    quantity: centsOf(holding.count),
     activeAt: holding.activeAt ?? null,
     expiresAt: holding.expireAt ?? null,
   };
@@ -872,7 +873,7 @@ function toAssetLedgerEntry(entry: PrismNeoUserAssetLog, exportedAt: Date): Migr
     playerId: legacyUserId(entry.userId),
     assetType: mapped.type,
     assetCode: mapped.code,
-    delta: entry.changeAmount,
+    delta: centsOf(entry.changeAmount),
     reason: `legacy.${entry.action}`,
     refId: entry.userAssetId ? `legacy:user-asset:${entry.userAssetId}` : entry.comment ?? `legacy:user-asset-log:${entry.id}`,
     createdAt: entry.createdAt ?? exportedAt,
@@ -934,8 +935,8 @@ function toSettlements(
       {
         settlement: {
           sessionId: legacySessionId(session.id),
-          subtotal,
-          total,
+          subtotal: centsOf(subtotal),
+          total: centsOf(total),
           status: "settled",
           settledAt: session.closedAt,
         },

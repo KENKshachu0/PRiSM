@@ -7,7 +7,9 @@ import type {
   OperationLockRepository,
   GrantAssetsResult,
 } from "@prism/core";
-import { diffAssetHoldings, isPositiveQuantity, isZeroQuantity, normalizeQuantity, PrismDomainError, adjustAssets, deductCurrency, grantAssets, isActiveInWindow, quantizeMoney } from "@prism/core";
+import { diffAssetHoldings, isPositiveQuantity, isZeroQuantity, normalizeQuantity, PrismDomainError, adjustAssets, deductCurrency, grantAssets, isActiveInWindow, quantizeMoney,
+  centsOf,
+} from "@prism/core";
 import { withOperationLease } from "./operation-lock";
 import { sumAvailableWalletBalance, type AvailableAssetReader } from "./available-assets";
 
@@ -194,7 +196,7 @@ export function createStaffAssetService(dependencies: StaffAssetServiceDependenc
         });
       } else {
         const assetLedgerEntries = deductCurrency(availableHoldings.map((asset) => asset.holding), {
-          amount: -amount,
+          amount: centsOf(-amount),
           reason: input.reason,
           refId: input.staffId,
           now,
