@@ -1,6 +1,7 @@
 import type { PriorityTimePricingProviderConfig, TimeCapPricingProviderConfig } from "./pricing-time";
 import { createPriorityTimePricingProvider } from "./pricing-time";
 import { PrismDomainError } from "./errors";
+import { quantizeMoney } from "./money";
 import type { PricingProvider } from "./settlement";
 
 export type PricingConfigKind = "time.priority" | "time.cap" | "charge.fixed";
@@ -47,6 +48,66 @@ export type TimeCapPricingConfig = {
 export type PricingConfig = TimePriorityPricingConfig | TimeCapPricingConfig | FixedChargePricingConfig;
 
 export type PricingConfigStatus = "active" | "archived";
+
+/**
+ * Snaps every monetary field of a pricing provider to whole cents.
+ *
+ * Pricing values are the *basis* of every later charge: a `unitPrice` such as
+ * `0.1` or `6.6` has no exact binary representation, and a single such value
+ * makes every downstream product, cap and deduction carry error. Quantising here
+ * — once, at the write boundary, before the config is validated and persisted —
+ * keeps the whole charging pipeline working with values that are exact in the
+ * sense that matters (a whole number of cents).
+ *
+ * Time fields (`unitMinutes`, `roundGraceMinutes`) are deliberately untouched:
+ * minutes are counts, not money.
+ */
+export function quantizePricingProvider(
+  provider: PriorityTimePricingProviderConfig,
+): PriorityTimePricingProviderConfig;
+export function quantizePricingProvider(
+  provider: TimeCapPricingProviderConfig,
+): TimeCapPricingProviderConfig;
+export function quantizePricingProvider(
+  provider: FixedChargePricingProviderConfig,
+): FixedChargePricingProviderConfig;
+export function quantizePricingProvider(
+  provider: PricingConfig["provider"],
+): PricingConfig["provider"] {
+  if ("amount" in provider) {
+    return { ...provider, amount: quantizeMoney(provider.amount) };
+  }
+
+  if ("includedPricingConfigIds" in provider) {
+    return {
+      ...provider,
+      rules: provider.rules.map((rule) => ({ ...rule, priceCap: quantizeMoney(rule.priceCap) })),
+      paidHistory: quantizePaidHistory(provider.paidHistory),
+    };
+  }
+
+  return {
+    ...provider,
+    rules: provider.rules.map((rule) => ({
+      ...rule,
+      pricing: {
+        ...rule.pricing,
+        unitPrice: quantizeMoney(rule.pricing.unitPrice),
+        priceCap: quantizeMoney(rule.pricing.priceCap),
+      },
+    })),
+    paidHistory: quantizePaidHistory(provider.paidHistory),
+  };
+}
+
+function quantizePaidHistory(
+  paidHistory: Record<string, number> | undefined,
+): Record<string, number> | undefined {
+  if (!paidHistory) return paidHistory;
+  return Object.fromEntries(
+    Object.entries(paidHistory).map(([key, value]) => [key, quantizeMoney(value)]),
+  );
+}
 
 export function createPricingProviderFromConfig(config: PricingConfig): PricingProvider {
   switch (config.kind) {

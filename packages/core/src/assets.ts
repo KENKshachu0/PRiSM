@@ -1,4 +1,11 @@
 import { PrismDomainError } from "./errors";
+import {
+  isNegativeQuantity,
+  isPositiveQuantity,
+  normalizeQuantity,
+  quantizeMoney,
+  sumMoney,
+} from "./money";
 
 export type AssetDefinition = {
   type: string;
@@ -68,6 +75,13 @@ export type AssetHoldingChanges = {
 /**
  * Builds the write set for a current-holdings projection without treating a
  * player's complete inventory as a replaceable document.
+ *
+ * Quantity comparison here is deliberately exact (`===`) rather than
+ * tolerance-based: this is a "did anything change?" test for persistence, and
+ * every caller is expected to have run its quantities through
+ * `normalizeQuantity` first so the values are canonical. An error on the strict
+ * side only writes one extra row; a tolerance would silently drop a genuine
+ * sub-cent change.
  */
 export function diffAssetHoldings(
   before: readonly AssetHolding[],
@@ -99,9 +113,10 @@ function sameHolding(left: AssetHolding, right: AssetHolding): boolean {
 export function sumCurrencyHoldings(
   holdings: readonly Pick<AssetHolding, "assetType" | "quantity">[],
 ): number {
-  return holdings.reduce(
-    (total, holding) => total + (holding.assetType === "currency" ? holding.quantity : 0),
-    0,
+  return sumMoney(
+    holdings
+      .filter((holding) => holding.assetType === "currency")
+      .map((holding) => holding.quantity),
   );
 }
 
@@ -125,7 +140,7 @@ export function evaluateAssetHoldingAvailability(input: {
   unavailableReasons: AssetHoldingUnavailableReason[];
 } {
   const unavailableReasons: AssetHoldingUnavailableReason[] = [];
-  if (input.holding.quantity <= 0) unavailableReasons.push("quantity_not_positive");
+  if (!isPositiveQuantity(input.holding.quantity)) unavailableReasons.push("quantity_not_positive");
   if (input.holding.activeAt && input.holding.activeAt > input.at) {
     unavailableReasons.push("holding_not_active");
   }
@@ -228,21 +243,22 @@ export function grantAssets(input: GrantAssetsInput): GrantAssetsResult {
   const assetLedgerEntries: AssetLedgerEntry[] = [];
 
   for (const grant of input.grants) {
-    if (grant.amount <= 0) {
+    const amount = quantizeMoney(grant.amount);
+    if (!isPositiveQuantity(amount)) {
       throw new PrismDomainError("Asset grant amount must be positive.", "INVALID_ASSET_GRANT_AMOUNT");
     }
 
     if (grant.mergeStrategy === "stack") {
       const target = holdings.find((asset) => canStackAsset(asset, grant));
       if (target) {
-        target.quantity += grant.amount;
+        target.quantity = normalizeQuantity(target.quantity + amount);
       } else {
-        holdings.push(createGrantedAsset(input.idFactory(), grant));
+        holdings.push(createGrantedAsset(input.idFactory(), grant, amount));
       }
     } else if (grant.mergeStrategy === "extend-time") {
-      applyExtendTimeGrant(holdings, grant, input.idFactory, input.now ?? new Date(0));
+      applyExtendTimeGrant(holdings, grant, input.idFactory, input.now ?? new Date(0), amount);
     } else if (grant.mergeStrategy === "replace") {
-      applyReplaceGrant(holdings, grant, input.idFactory);
+      applyReplaceGrant(holdings, grant, input.idFactory, amount);
     } else {
       throw new PrismDomainError("Unsupported asset merge strategy.", "UNSUPPORTED_ASSET_MERGE_STRATEGY");
     }
@@ -250,7 +266,7 @@ export function grantAssets(input: GrantAssetsInput): GrantAssetsResult {
     assetLedgerEntries.push({
       assetType: grant.assetType,
       assetCode: grant.assetCode,
-      delta: grant.amount,
+      delta: amount,
       reason: grant.reason,
       refId: grant.refId,
     });
@@ -269,8 +285,9 @@ export function adjustAssets(input: AdjustAssetsInput): GrantAssetsResult {
       throw new PrismDomainError("Asset holding not found.", "ASSET_HOLDING_NOT_FOUND");
     }
 
-    const nextQuantity = target.quantity + adjustment.quantityDelta;
-    if (nextQuantity < 0) {
+    const quantityDelta = quantizeMoney(adjustment.quantityDelta);
+    const nextQuantity = normalizeQuantity(target.quantity + quantityDelta);
+    if (isNegativeQuantity(nextQuantity)) {
       throw new PrismDomainError("Insufficient asset quantity.", "INSUFFICIENT_ASSET_QUANTITY");
     }
 
@@ -281,27 +298,32 @@ export function adjustAssets(input: AdjustAssetsInput): GrantAssetsResult {
     assetLedgerEntries.push({
       assetType: adjustment.assetType,
       assetCode: adjustment.assetCode,
-      delta: adjustment.quantityDelta,
+      delta: quantityDelta,
       reason: adjustment.reason,
       refId: adjustment.refId,
     });
   }
 
   return {
-    holdings: holdings.filter((holding) => holding.quantity > 0),
+    holdings: holdings.filter((holding) => isPositiveQuantity(holding.quantity)),
     assetLedgerEntries,
   };
 }
 
-function applyReplaceGrant(holdings: AssetHolding[], grant: AssetGrant, idFactory: () => string): void {
+function applyReplaceGrant(
+  holdings: AssetHolding[],
+  grant: AssetGrant,
+  idFactory: () => string,
+  amount: number,
+): void {
   const target = holdings.find((asset) => asset.assetType === grant.assetType && asset.assetCode === grant.assetCode);
 
   if (!target) {
-    holdings.push(createGrantedAsset(idFactory(), grant));
+    holdings.push(createGrantedAsset(idFactory(), grant, amount));
     return;
   }
 
-  target.quantity = grant.amount;
+  target.quantity = amount;
   target.activeAt = grant.activeAt;
   target.expiresAt = grant.expiresAt;
 }
@@ -311,6 +333,7 @@ function applyExtendTimeGrant(
   grant: AssetGrant,
   idFactory: () => string,
   now: Date,
+  amount: number,
 ): void {
   if (!grant.durationMs || grant.durationMs <= 0) {
     throw new PrismDomainError("Extend-time asset grant requires a positive duration.", "INVALID_ASSET_GRANT_DURATION");
@@ -326,7 +349,7 @@ function applyExtendTimeGrant(
       id: idFactory(),
       assetType: grant.assetType,
       assetCode: grant.assetCode,
-      quantity: grant.amount,
+      quantity: amount,
       activeAt: grant.activeAt ?? now,
       expiresAt: new Date(base.getTime() + grant.durationMs),
     });
@@ -356,12 +379,12 @@ function canAdjustAsset(asset: AssetHolding, adjustment: AssetAdjustment): boole
   );
 }
 
-function createGrantedAsset(id: string, grant: AssetGrant): AssetHolding {
+function createGrantedAsset(id: string, grant: AssetGrant, amount: number): AssetHolding {
   return {
     id,
     assetType: grant.assetType,
     assetCode: grant.assetCode,
-    quantity: grant.amount,
+    quantity: amount,
     activeAt: grant.activeAt,
     expiresAt: grant.expiresAt,
   };

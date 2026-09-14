@@ -1,4 +1,4 @@
-import { buildPriorityTimePricingTimeline, buildTimeCapPricingTimeline, PrismDomainError, validatePricingConfig } from "@prism/core";
+import { buildPriorityTimePricingTimeline, buildTimeCapPricingTimeline, PrismDomainError, quantizePricingProvider, validatePricingConfig } from "@prism/core";
 import type {
   PricingConfig,
   PricingConfigKind,
@@ -139,12 +139,12 @@ export function createStaffPricingService(dependencies: StaffPricingServiceDepen
       if ("includedPricingConfigIds" in input.provider) {
         return buildTimeCapPricingTimeline({
           localDate: input.localDate,
-          config: await withDefaultCapTimeZone(input.provider, dependencies),
+          config: quantizePricingProvider(await withDefaultCapTimeZone(input.provider, dependencies)),
         });
       }
       return buildPriorityTimePricingTimeline({
         localDate: input.localDate,
-        config: await withDefaultTimeZone(input.provider, dependencies),
+        config: quantizePricingProvider(await withDefaultTimeZone(input.provider, dependencies)),
       });
     },
   };
@@ -168,9 +168,11 @@ async function createPricingConfigForKind(
       return {
         ...base,
         kind,
-        provider: await withDefaultTimeZone(
-          provider as Extract<PricingConfig, { kind: "time.priority" }>["provider"],
-          dependencies,
+        provider: quantizePricingProvider(
+          await withDefaultTimeZone(
+            provider as Extract<PricingConfig, { kind: "time.priority" }>["provider"],
+            dependencies,
+          ),
         ),
       };
     case "time.cap":
@@ -185,9 +187,11 @@ async function createPricingConfigForKind(
       return {
         ...base,
         kind,
-        provider: await withDefaultCapTimeZone(
-          provider as Extract<PricingConfig, { kind: "time.cap" }>["provider"],
-          dependencies,
+        provider: quantizePricingProvider(
+          await withDefaultCapTimeZone(
+            provider as Extract<PricingConfig, { kind: "time.cap" }>["provider"],
+            dependencies,
+          ),
         ),
       };
     case "charge.fixed":
@@ -197,7 +201,7 @@ async function createPricingConfigForKind(
       return {
         ...base,
         kind,
-        provider,
+        provider: quantizePricingProvider(provider),
       };
   }
 }

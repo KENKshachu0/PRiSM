@@ -1,5 +1,14 @@
 import type { AssetHolding, AssetLedgerEntry } from "./assets";
 import { PrismDomainError } from "./errors";
+import {
+  compareMoney,
+  isNegativeQuantity,
+  isPositiveQuantity,
+  isZeroQuantity,
+  normalizeQuantity,
+  quantizeMoney,
+  sumMoney,
+} from "./money";
 import type { PricingSegmentExplanation } from "./pricing-time";
 import type { Session } from "./session";
 
@@ -198,11 +207,13 @@ function applyOverride(
   total: number;
 } {
   if (!input.overrideTotal) return quote;
-  if (!Number.isFinite(input.overrideTotal.total) || input.overrideTotal.total < 0) {
+
+  const overrideTotal = quantizeMoney(input.overrideTotal.total);
+  if (!Number.isFinite(overrideTotal) || isNegativeQuantity(overrideTotal)) {
     throw new PrismDomainError("Override total must be a non-negative finite number.", "INVALID_OVERRIDE_TOTAL");
   }
 
-  const amount = input.overrideTotal.total - quote.total;
+  const amount = quantizeMoney(overrideTotal - quote.total);
   return {
     chargeItems: quote.chargeItems,
     subtotal: quote.subtotal,
@@ -215,7 +226,7 @@ function applyOverride(
         amount,
       },
     ],
-    total: input.overrideTotal.total,
+    total: overrideTotal,
   };
 }
 
@@ -278,14 +289,12 @@ async function collectAdjustments(
 }
 
 function sumCharges(chargeItems: readonly ChargeItem[]): number {
-  let total = 0;
   for (const item of chargeItems) {
     if (!Number.isFinite(item.amount)) {
       throw new PrismDomainError("Charge item amount must be a finite number.", "INVALID_CHARGE_AMOUNT");
     }
-    total += item.amount;
   }
-  return total;
+  return sumMoney(chargeItems.map((item) => item.amount));
 }
 
 function applyAdjustments(subtotal: number, adjustments: readonly SettlementAdjustment[]): number {
@@ -296,7 +305,7 @@ function applyAdjustments(subtotal: number, adjustments: readonly SettlementAdju
     }
     total += adjustment.amount;
   }
-  return Math.max(0, total);
+  return normalizeQuantity(Math.max(0, total));
 }
 
 export function deductCurrency(
@@ -308,30 +317,45 @@ export function deductCurrency(
     now: Date;
   },
 ): AssetLedgerEntry[] {
-  if (input.amount === 0) return [];
+  const requested = quantizeMoney(input.amount);
+  if (isZeroQuantity(requested)) return [];
 
-  const currencyAccounts = assetHoldings
-    .filter((account) => account.assetType === "currency" && account.quantity > 0 && isHoldingAvailableAt(account, input.now))
-    .sort((a, b) => {
-      const aIndex = CURRENCY_DEDUCTION_ORDER.indexOf(normalizeCurrencyCode(a.assetCode));
-      const bIndex = CURRENCY_DEDUCTION_ORDER.indexOf(normalizeCurrencyCode(b.assetCode));
-      return normalizeOrder(aIndex) - normalizeOrder(bIndex);
-    });
+  const currencyAccounts: AssetHolding[] = [];
+  for (const account of assetHoldings) {
+    if (account.assetType !== "currency") continue;
+    // Canonicalising on read removes residue left by earlier arithmetic, so a
+    // balance of 1.3877787807814457e-16 is treated as the 0 it really is rather
+    // than as a spendable holding.
+    account.quantity = normalizeQuantity(account.quantity);
+    if (!isPositiveQuantity(account.quantity)) continue;
+    if (!isHoldingAvailableAt(account, input.now)) continue;
+    currencyAccounts.push(account);
+  }
 
-  const available = currencyAccounts.reduce((sum, account) => sum + account.quantity, 0);
-  if (available < input.amount) {
+  currencyAccounts.sort((a, b) => {
+    const aIndex = CURRENCY_DEDUCTION_ORDER.indexOf(normalizeCurrencyCode(a.assetCode));
+    const bIndex = CURRENCY_DEDUCTION_ORDER.indexOf(normalizeCurrencyCode(b.assetCode));
+    return normalizeOrder(aIndex) - normalizeOrder(bIndex);
+  });
+
+  // Both sides are cent-quantised here, so the affordability check compares two
+  // canonical amounts instead of two approximations. `compareMoney` still adds a
+  // tolerance so a balance assembled by the caller cannot round its way under an
+  // amount the player can actually afford.
+  const available = sumMoney(currencyAccounts.map((account) => account.quantity));
+  if (compareMoney(available, requested) < 0) {
     throw new PrismDomainError("Insufficient currency holdings for this operation.", "INSUFFICIENT_BALANCE");
   }
 
-  let remaining = input.amount;
+  let remaining = requested;
   const entries: AssetLedgerEntry[] = [];
 
   for (const account of currencyAccounts) {
-    if (remaining <= 0) break;
+    if (!isPositiveQuantity(remaining)) break;
 
     const deducted = Math.min(account.quantity, remaining);
-    account.quantity -= deducted;
-    remaining -= deducted;
+    account.quantity = normalizeQuantity(account.quantity - deducted);
+    remaining = normalizeQuantity(remaining - deducted);
     entries.push({
       assetType: account.assetType,
       assetCode: account.assetCode,
@@ -349,7 +373,7 @@ function availableHoldingsAt(assetHoldings: readonly AssetHolding[], now: Date):
 }
 
 function isHoldingAvailableAt(holding: AssetHolding, now: Date): boolean {
-  if (holding.quantity <= 0) return false;
+  if (!isPositiveQuantity(holding.quantity)) return false;
   if (holding.activeAt && holding.activeAt > now) return false;
   if (holding.expiresAt && holding.expiresAt <= now) return false;
   return true;

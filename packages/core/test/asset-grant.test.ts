@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { adjustAssets, diffAssetHoldings, grantAssets } from "../src/index";
+import {
+  adjustAssets,
+  diffAssetHoldings,
+  evaluateAssetHoldingAvailability,
+  grantAssets,
+  sumCurrencyHoldings,
+} from "../src/index";
 
 describe("grantAssets", () => {
   it("stacks decimal balances without rounding", () => {
@@ -495,5 +501,121 @@ describe("diffAssetHoldings", () => {
       ],
       deleteIds: ["revoked"],
     });
+  });
+});
+
+describe("asset holdings money precision", () => {
+  it("removes a fully spent holding instead of leaving subtraction residue behind", () => {
+    const result = adjustAssets({
+      playerId: "player-1",
+      existingHoldings: [
+        {
+          id: "holding-1",
+          assetType: "currency",
+          assetCode: "currency.free",
+          quantity: 1,
+          activeAt: null,
+          expiresAt: null,
+        },
+      ],
+      adjustments: [
+        {
+          assetType: "currency",
+          assetCode: "currency.free",
+          quantityDelta: -1,
+          activeAt: null,
+          expiresAt: null,
+          reason: "staff.asset.deduct",
+          refId: "staff-1",
+        },
+      ],
+    });
+
+    expect(result.holdings).toEqual([]);
+  });
+
+  it("does not keep a holding whose balance is pure floating-point residue", () => {
+    const deduct = (quantityDelta: number) => ({
+      assetType: "currency",
+      assetCode: "currency.free",
+      quantityDelta,
+      activeAt: null,
+      expiresAt: null,
+      reason: "staff.asset.deduct",
+      refId: "staff-1",
+    });
+
+    const result = adjustAssets({
+      playerId: "player-1",
+      existingHoldings: [
+        {
+          id: "holding-1",
+          assetType: "currency",
+          assetCode: "currency.free",
+          quantity: 1,
+          activeAt: null,
+          expiresAt: null,
+        },
+      ],
+      adjustments: [deduct(-0.3), deduct(-0.3), deduct(-0.3), deduct(-0.1)],
+    });
+
+    expect(result.holdings).toEqual([]);
+  });
+
+  it("accepts a residual deduction that only overshoots by floating-point noise", () => {
+    const result = adjustAssets({
+      playerId: "player-1",
+      existingHoldings: [
+        {
+          id: "holding-1",
+          assetType: "currency",
+          assetCode: "currency.free",
+          quantity: 1,
+          activeAt: null,
+          expiresAt: null,
+        },
+      ],
+      adjustments: [
+        {
+          assetType: "currency",
+          assetCode: "currency.free",
+          quantityDelta: -1.0000000000000002,
+          activeAt: null,
+          expiresAt: null,
+          reason: "staff.asset.deduct",
+          refId: "staff-1",
+        },
+      ],
+    });
+
+    expect(result.holdings).toEqual([]);
+  });
+});
+
+describe("currency balance helpers", () => {
+  it("classifies a residue-only holding as out of quantity", () => {
+    const evaluation = evaluateAssetHoldingAvailability({
+      holding: {
+        assetType: "currency",
+        assetCode: "currency.free",
+        quantity: 1.3877787807814457e-16,
+      },
+      definition: null,
+      at: new Date("2026-06-07T10:00:00.000Z"),
+    });
+
+    expect(evaluation.available).toBe(false);
+    expect(evaluation.unavailableReasons).toContain("quantity_not_positive");
+  });
+
+  it("sums currency holdings to a canonical cent total", () => {
+    expect(
+      sumCurrencyHoldings([
+        { assetType: "currency", quantity: 0.01 },
+        { assetType: "currency", quantity: 0.06 },
+        { assetType: "ticket", quantity: 999 },
+      ]),
+    ).toBe(0.07);
   });
 });

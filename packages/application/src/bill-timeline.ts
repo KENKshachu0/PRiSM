@@ -1,4 +1,5 @@
 import type { BillTimeline, BillTimelineEntry, ChargeItem, SettlementAdjustment, TimeCapPricingWindow } from "@prism/core";
+import { isZeroQuantity, quantizeMoney } from "@prism/core";
 
 /** Presentation only: amounts come from the engine, never recalculated by clients. */
 export function buildBillTimeline(input: {
@@ -68,7 +69,7 @@ export function buildBillTimeline(input: {
     }
   }
   for (const adjustment of input.adjustments) {
-    if (adjustment.amount === 0) continue;
+    if (isZeroQuantity(adjustment.amount)) continue;
     const history = adjustment.pricingCapHistory;
     const window = history && input.globalCapWindows.find(w => w.capConfigId === history.capConfigId && w.capRuleId === history.capRuleId && w.windowStartedAt.getTime() === history.capAnchorAt.getTime());
     // Global caps are independent entries: never attribute them to one plan.
@@ -90,5 +91,5 @@ export function buildBillTimeline(input: {
   for (const entries of events.values()) for (const entry of entries) {
     if (entry.amount != null) totals.set(entry.name, (totals.get(entry.name) ?? 0) + entry.amount);
   }
-  return { totals: [...totals].map(([name, amount]) => ({ name, amount })), tracks, events: [...events].sort(([a], [b]) => b.localeCompare(a)).map(([at, entries]) => ({ at, ...local(at), entries })) };
+  return { totals: [...totals].map(([name, amount]) => ({ name, amount: quantizeMoney(amount) })), tracks, events: [...events].sort(([a], [b]) => b.localeCompare(a)).map(([at, entries]) => ({ at, ...local(at), entries })) };
 }

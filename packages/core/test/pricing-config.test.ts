@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createPricingProviderFromConfig, PrismDomainError, validatePricingConfig } from "../src/index";
+import { createPricingProviderFromConfig, PrismDomainError, quantizePricingProvider, validatePricingConfig } from "../src/index";
 
 describe("validatePricingConfig", () => {
   it("accepts an enabled time priority config with a full-day rule", () => {
@@ -203,5 +203,89 @@ describe("validatePricingConfig", () => {
         updatedAt: new Date("2026-06-07T10:00:00.000Z"),
       }),
     ).toThrow(new PrismDomainError("Fixed charge pricing amount must be a non-negative finite number.", "INVALID_FIXED_CHARGE_AMOUNT"));
+  });
+});
+
+describe("quantizePricingProvider", () => {
+  it("snaps time pricing unit prices and caps to whole cents", () => {
+    const provider = quantizePricingProvider({
+      id: "time.default",
+      rules: [
+        {
+          id: "base",
+          label: "Base",
+          priority: 0,
+          timeRange: { start: "00:00", end: "00:00" },
+          pricing: {
+            unitMinutes: 30,
+            unitPrice: 0.07000000000000001,
+            roundGraceMinutes: 5,
+            priceCap: 80.00000000000001,
+          },
+        },
+      ],
+      paidHistory: { "rule:base": 12.3456789 },
+    });
+
+    expect(provider.rules[0]!.pricing).toEqual({
+      unitMinutes: 30,
+      unitPrice: 0.07,
+      roundGraceMinutes: 5,
+      priceCap: 80,
+    });
+    expect(provider.paidHistory).toEqual({ "rule:base": 12.35 });
+  });
+
+  it("keeps minute fields untouched because they are counts, not money", () => {
+    const provider = quantizePricingProvider({
+      id: "time.default",
+      rules: [
+        {
+          id: "base",
+          label: "Base",
+          priority: 0,
+          timeRange: { start: "00:00", end: "00:00" },
+          pricing: {
+            unitMinutes: 33.333333333333336,
+            unitPrice: 7.5,
+            roundGraceMinutes: 4.5,
+            priceCap: 69,
+          },
+        },
+      ],
+    });
+
+    expect(provider.rules[0]!.pricing.unitMinutes).toBe(33.333333333333336);
+    expect(provider.rules[0]!.pricing.roundGraceMinutes).toBe(4.5);
+    expect(provider.rules[0]!.pricing.unitPrice).toBe(7.5);
+  });
+
+  it("snaps global cap rule prices and leaves included config ids alone", () => {
+    const provider = quantizePricingProvider({
+      id: "cap.default",
+      includedPricingConfigIds: ["pricing-1", "pricing-2"],
+      rules: [
+        {
+          id: "cap",
+          label: "Daily cap",
+          priority: 0,
+          timeRange: { start: "00:00", end: "00:00" },
+          priceCap: 79.00000000000001,
+        },
+      ],
+    });
+
+    expect(provider.rules[0]!.priceCap).toBe(79);
+    expect(provider.includedPricingConfigIds).toEqual(["pricing-1", "pricing-2"]);
+  });
+
+  it("snaps fixed charge amounts", () => {
+    const provider = quantizePricingProvider({
+      id: "fixed-1",
+      label: "入场费",
+      amount: 499.99999999999994,
+    });
+
+    expect(provider.amount).toBe(500);
   });
 });

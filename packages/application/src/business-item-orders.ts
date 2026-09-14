@@ -8,7 +8,7 @@ import type {
   OperationLockRepository,
   SessionRepository,
 } from "@prism/core";
-import { deductCurrency, diffAssetHoldings, PrismDomainError } from "@prism/core";
+import { deductCurrency, diffAssetHoldings, isPositiveQuantity, PrismDomainError, quantizeMoney } from "@prism/core";
 import { withOperationLease } from "./operation-lock";
 import type { AvailableAssetReader } from "./available-assets";
 
@@ -61,6 +61,7 @@ export function createBusinessItemOrderService(
 
       await assertBusinessItemCapacity(dependencies, item);
 
+      const price = quantizeMoney(item.price);
       const order: BusinessItemOrder = {
         id: dependencies.id(),
         businessItemId: item.id,
@@ -69,7 +70,7 @@ export function createBusinessItemOrderService(
         playerId: input.playerId,
         sessionId: session.id,
         status: "paid",
-        price: item.price,
+        price,
         assetType: item.assetType,
         assetCode: item.assetCode,
         metadata: input.metadata,
@@ -87,7 +88,7 @@ export function createBusinessItemOrderService(
           })).map((asset) => asset.holding)
         : nextHoldings;
       const assetLedgerEntries = deductCurrency(spendableHoldings, {
-        amount: item.price,
+        amount: price,
         reason: "business-item.purchase",
         refId: order.id,
         now,
@@ -107,7 +108,7 @@ export function createBusinessItemOrderService(
             sessionId: session.id,
           },
         },
-        holdingChanges: diffAssetHoldings(assetHoldings, nextHoldings.filter((holding) => holding.quantity > 0)),
+        holdingChanges: diffAssetHoldings(assetHoldings, nextHoldings.filter((holding) => isPositiveQuantity(holding.quantity))),
         assetLedgerEntries,
       });
       await dependencies.businessItemOrders.save(order);

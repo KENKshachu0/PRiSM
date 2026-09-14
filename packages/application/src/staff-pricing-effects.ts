@@ -1,5 +1,5 @@
-import type { PricingEffect, PricingEffectRepository } from "@prism/core";
-import { PrismDomainError } from "@prism/core";
+import type { PricingEffect, PricingEffectRepository, PricingEffectType } from "@prism/core";
+import { PrismDomainError, quantizeMoney } from "@prism/core";
 
 export type StaffPricingEffectServiceDependencies = {
   pricingEffects: PricingEffectRepository;
@@ -32,7 +32,7 @@ export function createStaffPricingEffectService(
         name: input.name,
         type: input.type,
         scope: input.scope,
-        value: input.value,
+        value: normalizePricingEffectValue(input.type, input.value),
         consumable: input.consumable,
         limitPerDay: input.limitPerDay,
         activeAt: input.activeAt ?? null,
@@ -69,4 +69,16 @@ export function createStaffPricingEffectService(
       return dependencies.pricingEffects.listAll();
     },
   };
+}
+
+/**
+ * `value` carries a different unit per effect type: a yuan amount for `discount`
+ * and `surcharge`, a percentage for `percentage-discount`, and is unused for
+ * `free`. Only the yuan forms are money, so only those are quantised to cents —
+ * a percentage keeps whatever precision the operator typed.
+ */
+function normalizePricingEffectValue(type: PricingEffectType, value: number | null): number | null {
+  if (value === null) return null;
+  if (type === "percentage-discount") return value;
+  return quantizeMoney(value);
 }

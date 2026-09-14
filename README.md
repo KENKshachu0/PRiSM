@@ -141,6 +141,7 @@ The live operations screen is player-first: each player appears once, the previe
 - [Deployment](docs/deployment.md)
 - [Integrations And Machines](docs/integrations-and-machines.md)
 - [Extension Guide](docs/extensions.md)
+- [Money Precision](docs/money.md)
 - [Migration From prism-neo](docs/migration-from-prism-neo.md)
 - [Production Checklist](docs/production-checklist.md)
 - [Roadmap](docs/roadmap.md)

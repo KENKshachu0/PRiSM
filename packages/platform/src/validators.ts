@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { quantizeMoney } from "@prism/core";
 import { normalizeHinataUrl } from "./hinata";
 
 export const accessCodeSchema = z
@@ -10,12 +11,22 @@ export const createCardSchema = z.object({
   accessCode: accessCodeSchema,
 });
 
+/**
+ * Yuan amounts entering from a request body are snapped to whole cents before
+ * they are persisted, so a value such as `33.333333333333336` or `0.07000000001`
+ * cannot reach a `REAL` column and become the basis of every later charge.
+ *
+ * The `.transform(quantizeMoney)` step is deliberately last: range and sign
+ * checks still run against the value the operator actually typed, so a request
+ * for a negative or absurd price is rejected rather than silently rounded.
+ * See `docs/money.md`.
+ */
 export const billingSetupSchema = z.object({
   paidName: z.string().trim().min(1).max(40),
   freeName: z.string().trim().min(1).max(40),
-  hourlyPrice: z.number().finite().positive().max(100000),
+  hourlyPrice: z.number().finite().positive().max(100000).transform(quantizeMoney),
   graceMinutes: z.number().int().min(0).max(59),
-  dailyCap: z.number().finite().min(0).max(100000),
+  dailyCap: z.number().finite().min(0).max(100000).transform(quantizeMoney),
   botContact: z.string().trim().max(160).default(""),
   autoRegister: z.boolean(),
 });

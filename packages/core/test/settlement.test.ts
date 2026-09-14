@@ -3,8 +3,12 @@ import {
   type AssetEffectProvider,
   type AssetHolding,
   type PricingProvider,
+  deductCurrency,
+  diffAssetHoldings,
+  isPositiveQuantity,
   PrismDomainError,
   previewSessionSettlement,
+  quantizeMoney,
   settleSession,
 } from "../src/index";
 
@@ -736,5 +740,248 @@ describe("previewSessionSettlement", () => {
         },
       ],
     });
+  });
+});
+
+describe("settlement money precision", () => {
+  const session = {
+    id: "session-float",
+    playerId: "player-1",
+    startedAt: new Date("2026-06-07T10:00:00.000Z"),
+    endedAt: new Date("2026-06-07T10:30:00.000Z"),
+  };
+
+  function chargeOf(amount: number): PricingProvider {
+    return {
+      id: "time-pricing",
+      quote() {
+        return [{ id: "charge-1", source: "time-pricing", label: "Time charge", amount }];
+      },
+    };
+  }
+
+  it("collects a settlement the player can afford even when the balance does not add up exactly", async () => {
+    // 0.01 + 0.06 evaluates to 0.06999999999999999, which is less than the
+    // 0.07 charged. A raw `available < amount` check rejected this payment.
+    expect(0.01 + 0.06 < 0.07).toBe(true);
+
+    const result = await settleSession({
+      session,
+      pricingProviders: [chargeOf(0.07)],
+      assetHoldings: [
+        { assetType: "currency", assetCode: "currency.free", quantity: 0.01 },
+        { assetType: "currency", assetCode: "currency.paid", quantity: 0.06 },
+      ],
+      now: session.endedAt,
+    });
+
+    expect(result.settlement.total).toBe(0.07);
+    expect(result.assetLedgerEntries).toEqual([
+      {
+        assetType: "currency",
+        assetCode: "currency.free",
+        delta: -0.01,
+        reason: "session.settlement",
+        refId: "session-float",
+      },
+      {
+        assetType: "currency",
+        assetCode: "currency.paid",
+        delta: -0.06,
+        reason: "session.settlement",
+        refId: "session-float",
+      },
+    ]);
+    expect(result.assetHoldings.map((holding) => holding.quantity)).toEqual([0, 0]);
+  });
+
+  it("still rejects a settlement the player genuinely cannot afford", async () => {
+    await expect(
+      settleSession({
+        session,
+        pricingProviders: [chargeOf(0.04)],
+        assetHoldings: [
+          { assetType: "currency", assetCode: "currency.free", quantity: 0.03 },
+        ],
+        now: session.endedAt,
+      }),
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" } satisfies Partial<PrismDomainError>);
+  });
+
+  it("accepts a balance assembled from thirds of a cent once it is quantised to cents", async () => {
+    expect(0.3 + 0.6 < 0.9).toBe(true);
+
+    const result = await settleSession({
+      session,
+      pricingProviders: [chargeOf(0.9)],
+      assetHoldings: [
+        { assetType: "currency", assetCode: "currency.free", quantity: 0.3 },
+        { assetType: "currency", assetCode: "currency.paid", quantity: 0.6 },
+      ],
+      now: session.endedAt,
+    });
+
+    expect(result.assetHoldings.map((holding) => holding.quantity)).toEqual([0, 0]);
+  });
+
+  it("clears deduction residue so a fully spent balance reaches exactly zero", async () => {
+    const holdings: AssetHolding[] = [
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: 1 },
+    ];
+
+    for (let index = 0; index < 10; index++) {
+      deductCurrency(holdings, {
+        amount: 0.1,
+        reason: "session.settlement",
+        refId: "session-residue",
+        now: session.endedAt,
+      });
+    }
+
+    expect(holdings[0]!.quantity).toBe(0);
+    expect(isPositiveQuantity(holdings[0]!.quantity)).toBe(false);
+  });
+
+  it("reports a spent holding for deletion instead of leaving a zero-quantity row behind", async () => {
+    const before: AssetHolding[] = [
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: 1 },
+    ];
+    const holdings = before.map((holding) => ({ ...holding }));
+
+    for (let index = 0; index < 10; index++) {
+      deductCurrency(holdings, {
+        amount: 0.1,
+        reason: "session.settlement",
+        refId: "session-residue",
+        now: session.endedAt,
+      });
+    }
+
+    const nextHoldings = holdings.filter((holding) => isPositiveQuantity(holding.quantity));
+    expect(diffAssetHoldings(before, nextHoldings).deleteIds).toEqual(["free-1"]);
+  });
+
+  it("ignores a residue-only holding rather than emitting a zero-value ledger entry", async () => {
+    const holdings: AssetHolding[] = [
+      // What `1.00 - 10 x 0.10` used to leave behind.
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: 1.3877787807814457e-16 },
+      { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: 1 },
+    ];
+
+    const entries = deductCurrency(holdings, {
+      amount: 0.01,
+      reason: "session.settlement",
+      refId: "session-residue",
+      now: session.endedAt,
+    });
+
+    expect(entries).toEqual([
+      {
+        assetType: "currency",
+        assetCode: "currency.paid",
+        delta: -0.01,
+        reason: "session.settlement",
+        refId: "session-residue",
+      },
+    ]);
+    expect(holdings.find((holding) => holding.id === "free-1")!.quantity).toBe(0);
+  });
+
+  it("quantises an override total before it is persisted", async () => {
+    const result = await settleSession({
+      session,
+      pricingProviders: [chargeOf(20)],
+      assetHoldings: [
+        { assetType: "currency", assetCode: "currency.paid", quantity: 100 },
+      ],
+      overrideTotal: {
+        total: 33.333333333333336,
+        id: "override-1",
+        source: "staff.override",
+        label: "Manual override",
+      },
+      now: session.endedAt,
+    });
+
+    expect(result.settlement.total).toBe(33.33);
+    expect(result.adjustments[0]!.amount).toBe(13.33);
+    expect(result.assetLedgerEntries[0]!.delta).toBe(-33.33);
+  });
+
+  it("settles a fixed charge of a tenth ten times without losing a cent", async () => {
+    const result = await settleSession({
+      session,
+      pricingProviders: [
+        {
+          id: "unit-charges",
+          quote() {
+            return Array.from({ length: 10 }, (_, index) => ({
+              id: `charge-${index}`,
+              source: "unit-charges",
+              label: "Unit charge",
+              amount: 0.1,
+            }));
+          },
+        },
+      ],
+      assetHoldings: [
+        { assetType: "currency", assetCode: "currency.paid", quantity: 1 },
+      ],
+      now: session.endedAt,
+    });
+
+    expect(result.settlement.subtotal).toBe(1);
+    expect(result.settlement.total).toBe(1);
+    expect(result.assetLedgerEntries[0]!.delta).toBe(-1);
+  });
+
+  it("never refuses a payment the balance covers, across every cent pair up to 3 yuan", () => {
+    let checked = 0;
+    let naiveRefusals = 0;
+    const naiveExamples: string[] = [];
+
+    for (let freeCents = 0; freeCents <= 300; freeCents++) {
+      for (let paidCents = 0; paidCents <= 300; paidCents++) {
+        const owedCents = freeCents + paidCents;
+        if (owedCents === 0) continue;
+        checked++;
+
+        const free = freeCents / 100;
+        const paid = paidCents / 100;
+        const owed = owedCents / 100;
+
+        // What the old raw comparison did, recorded so the regression stays
+        // visible: this is the count of payments the player could afford and
+        // the settlement refused anyway.
+        if (free + paid < owed) {
+          naiveRefusals++;
+          if (naiveExamples.length < 3) naiveExamples.push(`${free} + ${paid} < ${owed}`);
+        }
+
+        const holdings: AssetHolding[] = [
+          { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: free },
+          { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: paid },
+        ];
+
+        const entries = deductCurrency(holdings, {
+          amount: owed,
+          reason: "session.settlement",
+          refId: "session-grid",
+          now: session.endedAt,
+        });
+
+        // Every individual delta is a canonical cent amount. Summing them the way
+        // the application does — through the shared helper, which quantises the
+        // total — keeps the result canonical; a raw `+=` over many rows is what
+        // drifts, which is why `sumMoney` exists.
+        const deducted = quantizeMoney(entries.reduce((sum, entry) => sum + entry.delta, 0));
+        expect(deducted).toBe(-owed);
+        expect(holdings.every((holding) => holding.quantity === 0)).toBe(true);
+      }
+    }
+
+    expect(checked).toBe(90_600);
+    expect(naiveRefusals).toBeGreaterThan(1_000);
+    expect(naiveExamples.slice(0, 2)).toEqual(["0.01 + 0.06 < 0.07", "0.01 + 0.09 < 0.1"]);
   });
 });
