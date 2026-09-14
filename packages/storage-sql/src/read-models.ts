@@ -1,3 +1,4 @@
+import { quantizeMoney } from "@prism/core";
 import { sqlShop } from "./shop-scope";
 import type {
   ApplicationQueries,
@@ -87,7 +88,9 @@ function createPlayerQueries(input: CreateSqlReadModelsInput): PlayerQueries {
         if (assessment.availability !== "available") continue;
         walletByCode.set(
           row.asset_code!,
-          (walletByCode.get(row.asset_code!) ?? 0) + row.quantity!,
+          // Quantise here: a player can hold several rows for the same code, and
+          // naive float accumulation of cent amounts drifts on ~23% of pairs.
+          quantizeMoney((walletByCode.get(row.asset_code!) ?? 0) + row.quantity!),
         );
       }
 

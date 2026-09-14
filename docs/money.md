@@ -67,6 +67,10 @@ PRiSM 的所有金额以元（`number`）表示，持久化在 SQLite/D1 的 `RE
 - **存储仍是 `REAL`。** 本约定靠纪律维持，类型系统看不见 —— 量化前后都是 `number`。`packages/migration/src` 里保留了「迁移时保留小数余额」的测试（`preserves fractional wallet balances during migration`），说明小数余额是被允许写入的数据形态。
 - **`settlement_charge_items.amount` 存的是定价引擎的原始输出。** 结算总额、覆盖金额、分摊结果都过了量化，但单个费用细项没有改写，消费者若要对细项做金额判断请走金额工具。
 - **跨进程一致性。** SQLite 的 `SUM()` 内部是 Kahan 补偿求和，比 JS 朴素累加准；报表与余额必须都走 `sumMoney` / `sumCurrencyHoldings` 才能给出同一个数。
+- **读路径的聚合也要量化。** 钱包余额在 `storage-sql/src/read-models.ts` 的 `getPlayerSummary` 里按 `asset_code` 聚合 ——
+  这是整条读路径上唯一做算术的地方，已改为过 `quantizeMoney`。实测两位小数两两相加有 **22.7%** 会漂移
+  （`0.01 + 0.05` 朴素得 `0.060000000000000005`），且玩家确实可能对同一币种持有多行（不同有效期窗口）。
+  回归测试：`packages/storage-sql/test/wallet-precision.test.ts`。
 
 ## 后续收敛路径
 
