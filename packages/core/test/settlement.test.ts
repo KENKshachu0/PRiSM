@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   type AssetEffectProvider,
@@ -32,12 +33,12 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 5,
+        quantity: centsOf(5),
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 20,
+        quantity: centsOf(20),
       },
     ];
 
@@ -53,7 +54,7 @@ describe("settleSession", () => {
       now: new Date("2026-06-07T10:30:00.000Z"),
     });
 
-    expect(result.settlement.total).toBe(12);
+    expect(yuanOf(result.settlement.total)).toBe(12);
     expect(result.settlement.status).toBe("settled");
     expect(result.chargeItems).toEqual([
       {
@@ -67,14 +68,14 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        delta: -5,
+        delta: centsOf(-5),
         reason: "session.settlement",
         refId: "session-1",
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -7,
+        delta: centsOf(-7),
         reason: "session.settlement",
         refId: "session-1",
       },
@@ -83,12 +84,12 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 0,
+        quantity: centsOf(0),
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 13,
+        quantity: centsOf(13),
       },
     ]);
   });
@@ -112,12 +113,12 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 5,
+        quantity: centsOf(5),
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 20,
+        quantity: centsOf(20),
       },
     ];
 
@@ -167,7 +168,7 @@ describe("settleSession", () => {
           id: "expired-free",
           assetType: "currency",
           assetCode: "currency.free",
-          quantity: 999,
+          quantity: centsOf(999),
           activeAt: new Date("2026-06-01T00:00:00.000Z"),
           expiresAt: new Date("2026-06-07T09:59:59.000Z"),
         },
@@ -175,7 +176,7 @@ describe("settleSession", () => {
           id: "future-free",
           assetType: "currency",
           assetCode: "currency.free",
-          quantity: 999,
+          quantity: centsOf(999),
           activeAt: new Date("2026-06-08T00:00:00.000Z"),
           expiresAt: null,
         },
@@ -183,7 +184,7 @@ describe("settleSession", () => {
           id: "active-paid",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 30,
+          quantity: centsOf(30),
           activeAt: new Date("2026-06-01T00:00:00.000Z"),
           expiresAt: new Date("2026-06-08T00:00:00.000Z"),
         },
@@ -195,7 +196,7 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -20,
+        delta: centsOf(-20),
         reason: "session.settlement",
         refId: "session-windowed-currency",
       },
@@ -205,7 +206,7 @@ describe("settleSession", () => {
         id: "expired-free",
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 999,
+        quantity: centsOf(999),
         activeAt: new Date("2026-06-01T00:00:00.000Z"),
         expiresAt: new Date("2026-06-07T09:59:59.000Z"),
       },
@@ -213,7 +214,7 @@ describe("settleSession", () => {
         id: "future-free",
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 999,
+        quantity: centsOf(999),
         activeAt: new Date("2026-06-08T00:00:00.000Z"),
         expiresAt: null,
       },
@@ -221,7 +222,7 @@ describe("settleSession", () => {
         id: "active-paid",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 10,
+        quantity: centsOf(10),
         activeAt: new Date("2026-06-01T00:00:00.000Z"),
         expiresAt: new Date("2026-06-08T00:00:00.000Z"),
       },
@@ -255,12 +256,12 @@ describe("settleSession", () => {
         {
           assetType: "currency",
           assetCode: "paid",
-          quantity: 20,
+          quantity: centsOf(20),
         },
         {
           assetType: "currency",
           assetCode: "free",
-          quantity: 5,
+          quantity: centsOf(5),
         },
       ],
       now: new Date("2026-06-07T10:30:00.000Z"),
@@ -270,14 +271,14 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "free",
-        delta: -5,
+        delta: centsOf(-5),
         reason: "session.settlement",
         refId: "session-canonical-currency",
       },
       {
         assetType: "currency",
         assetCode: "paid",
-        delta: -7,
+        delta: centsOf(-7),
         reason: "session.settlement",
         refId: "session-canonical-currency",
       },
@@ -286,12 +287,12 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "paid",
-        quantity: 13,
+        quantity: centsOf(13),
       },
       {
         assetType: "currency",
         assetCode: "free",
-        quantity: 0,
+        quantity: centsOf(0),
       },
     ]);
   });
@@ -300,7 +301,7 @@ describe("settleSession", () => {
     const pricing: PricingProvider = {
       id: "mutating-plugin",
       async quote(context) {
-        context.assetHoldings[0].quantity = 999;
+        context.assetHoldings[0].quantity = centsOf(999);
         return [
           {
             id: "charge-1",
@@ -324,12 +325,12 @@ describe("settleSession", () => {
         {
           assetType: "currency",
           assetCode: "currency.free",
-          quantity: 5,
+          quantity: centsOf(5),
         },
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 20,
+          quantity: centsOf(20),
         },
       ],
       now: new Date("2026-06-07T10:30:00.000Z"),
@@ -339,14 +340,14 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        delta: -5,
+        delta: centsOf(-5),
         reason: "session.settlement",
         refId: "session-3",
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -7,
+        delta: centsOf(-7),
         reason: "session.settlement",
         refId: "session-3",
       },
@@ -355,12 +356,12 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 0,
+        quantity: centsOf(0),
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 13,
+        quantity: centsOf(13),
       },
     ]);
   });
@@ -407,19 +408,19 @@ describe("settleSession", () => {
         {
           assetType: "currency",
           assetCode: "currency.free",
-          quantity: 5,
+          quantity: centsOf(5),
         },
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 20,
+          quantity: centsOf(20),
         },
       ],
       now: new Date("2026-06-07T10:30:00.000Z"),
     });
 
-    expect(result.settlement.subtotal).toBe(20);
-    expect(result.settlement.total).toBe(14);
+    expect(yuanOf(result.settlement.subtotal)).toBe(20);
+    expect(yuanOf(result.settlement.total)).toBe(14);
     expect(result.adjustments).toEqual([
       {
         id: "adjustment-1",
@@ -432,14 +433,14 @@ describe("settleSession", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        delta: -5,
+        delta: centsOf(-5),
         reason: "session.settlement",
         refId: "session-4",
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -9,
+        delta: centsOf(-9),
         reason: "session.settlement",
         refId: "session-4",
       },
@@ -492,19 +493,19 @@ describe("settleSession", () => {
         {
           assetType: "pass",
           assetCode: "pass.expired",
-          quantity: 1,
+          quantity: centsOf(1),
           expiresAt: new Date("2026-06-07T09:59:59.000Z"),
         },
         {
           assetType: "pass",
           assetCode: "pass.future",
-          quantity: 1,
+          quantity: centsOf(1),
           activeAt: new Date("2026-06-08T00:00:00.000Z"),
         },
         {
           assetType: "pass",
           assetCode: "pass.active",
-          quantity: 1,
+          quantity: centsOf(1),
           activeAt: new Date("2026-06-01T00:00:00.000Z"),
           expiresAt: new Date("2026-06-08T00:00:00.000Z"),
         },
@@ -513,7 +514,7 @@ describe("settleSession", () => {
     });
 
     expect(seenAssetCodes).toEqual(["pass.active"]);
-    expect(result.settlement.total).toBe(0);
+    expect(yuanOf(result.settlement.total)).toBe(0);
   });
 
   it("floors settlement total at zero after adjustments", async () => {
@@ -558,14 +559,14 @@ describe("settleSession", () => {
         {
           assetType: "currency",
           assetCode: "currency.free",
-          quantity: 0,
+          quantity: centsOf(0),
         },
       ],
       now: new Date("2026-06-08T10:10:00.000Z"),
     });
 
-    expect(result.settlement.subtotal).toBe(4);
-    expect(result.settlement.total).toBe(0);
+    expect(yuanOf(result.settlement.subtotal)).toBe(4);
+    expect(yuanOf(result.settlement.total)).toBe(0);
     expect(result.assetLedgerEntries).toEqual([]);
   });
 
@@ -602,14 +603,14 @@ describe("settleSession", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
         },
       ],
       now: new Date("2026-06-07T10:30:00.000Z"),
     });
 
-    expect(result.settlement.subtotal).toBe(15);
-    expect(result.settlement.total).toBe(15);
+    expect(yuanOf(result.settlement.subtotal)).toBe(15);
+    expect(yuanOf(result.settlement.total)).toBe(15);
   });
 
   it("preserves a negative charge subtotal while flooring the final total at 0", async () => {
@@ -645,14 +646,14 @@ describe("settleSession", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
         },
       ],
       now: new Date("2026-06-07T10:30:00.000Z"),
     });
 
-    expect(result.settlement.subtotal).toBe(-15);
-    expect(result.settlement.total).toBe(0);
+    expect(yuanOf(result.settlement.subtotal)).toBe(-15);
+    expect(yuanOf(result.settlement.total)).toBe(0);
   });
 });
 
@@ -701,7 +702,7 @@ describe("previewSessionSettlement", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
         },
       ],
       now: new Date("2026-06-07T11:00:00.000Z"),
@@ -710,8 +711,8 @@ describe("previewSessionSettlement", () => {
     expect(result).toEqual({
       settlementPreview: {
         sessionId: "session-6",
-        subtotal: 20,
-        total: 15,
+        subtotal: centsOf(20),
+        total: centsOf(15),
         status: "preview",
         previewedAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -736,7 +737,7 @@ describe("previewSessionSettlement", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
         },
       ],
     });
@@ -769,30 +770,30 @@ describe("settlement money precision", () => {
       session,
       pricingProviders: [chargeOf(0.07)],
       assetHoldings: [
-        { assetType: "currency", assetCode: "currency.free", quantity: 0.01 },
-        { assetType: "currency", assetCode: "currency.paid", quantity: 0.06 },
+        { assetType: "currency", assetCode: "currency.free", quantity: centsOf(0.01) },
+        { assetType: "currency", assetCode: "currency.paid", quantity: centsOf(0.06) },
       ],
       now: session.endedAt,
     });
 
-    expect(result.settlement.total).toBe(0.07);
+    expect(yuanOf(result.settlement.total)).toBe(0.07);
     expect(result.assetLedgerEntries).toEqual([
       {
         assetType: "currency",
         assetCode: "currency.free",
-        delta: -0.01,
+        delta: centsOf(-0.01),
         reason: "session.settlement",
         refId: "session-float",
       },
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -0.06,
+        delta: centsOf(-0.06),
         reason: "session.settlement",
         refId: "session-float",
       },
     ]);
-    expect(result.assetHoldings.map((holding) => holding.quantity)).toEqual([0, 0]);
+    expect(result.assetHoldings.map((holding) => yuanOf(holding.quantity))).toEqual([0, 0]);
   });
 
   it("still rejects a settlement the player genuinely cannot afford", async () => {
@@ -801,7 +802,7 @@ describe("settlement money precision", () => {
         session,
         pricingProviders: [chargeOf(0.04)],
         assetHoldings: [
-          { assetType: "currency", assetCode: "currency.free", quantity: 0.03 },
+          { assetType: "currency", assetCode: "currency.free", quantity: centsOf(0.03) },
         ],
         now: session.endedAt,
       }),
@@ -815,42 +816,42 @@ describe("settlement money precision", () => {
       session,
       pricingProviders: [chargeOf(0.9)],
       assetHoldings: [
-        { assetType: "currency", assetCode: "currency.free", quantity: 0.3 },
-        { assetType: "currency", assetCode: "currency.paid", quantity: 0.6 },
+        { assetType: "currency", assetCode: "currency.free", quantity: centsOf(0.3) },
+        { assetType: "currency", assetCode: "currency.paid", quantity: centsOf(0.6) },
       ],
       now: session.endedAt,
     });
 
-    expect(result.assetHoldings.map((holding) => holding.quantity)).toEqual([0, 0]);
+    expect(result.assetHoldings.map((holding) => yuanOf(holding.quantity))).toEqual([0, 0]);
   });
 
   it("clears deduction residue so a fully spent balance reaches exactly zero", async () => {
     const holdings: AssetHolding[] = [
-      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: 1 },
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOf(1) },
     ];
 
     for (let index = 0; index < 10; index++) {
       deductCurrency(holdings, {
-        amount: 0.1,
+        amount: centsOf(0.1),
         reason: "session.settlement",
         refId: "session-residue",
         now: session.endedAt,
       });
     }
 
-    expect(holdings[0]!.quantity).toBe(0);
+    expect(yuanOf(holdings[0]!.quantity)).toBe(0);
     expect(isPositiveQuantity(holdings[0]!.quantity)).toBe(false);
   });
 
   it("reports a spent holding for deletion instead of leaving a zero-quantity row behind", async () => {
     const before: AssetHolding[] = [
-      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: 1 },
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOf(1) },
     ];
     const holdings = before.map((holding) => ({ ...holding }));
 
     for (let index = 0; index < 10; index++) {
       deductCurrency(holdings, {
-        amount: 0.1,
+        amount: centsOf(0.1),
         reason: "session.settlement",
         refId: "session-residue",
         now: session.endedAt,
@@ -864,12 +865,12 @@ describe("settlement money precision", () => {
   it("ignores a residue-only holding rather than emitting a zero-value ledger entry", async () => {
     const holdings: AssetHolding[] = [
       // What `1.00 - 10 x 0.10` used to leave behind.
-      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: 1.3877787807814457e-16 },
-      { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: 1 },
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOf(13877787807814457e-16) },
+      { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: centsOf(1) },
     ];
 
     const entries = deductCurrency(holdings, {
-      amount: 0.01,
+      amount: centsOf(0.01),
       reason: "session.settlement",
       refId: "session-residue",
       now: session.endedAt,
@@ -879,12 +880,12 @@ describe("settlement money precision", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -0.01,
+        delta: centsOf(-0.01),
         reason: "session.settlement",
         refId: "session-residue",
       },
     ]);
-    expect(holdings.find((holding) => holding.id === "free-1")!.quantity).toBe(0);
+    expect(yuanOf(holdings.find((holding) => holding.id === "free-1")!.quantity)).toBe(0);
   });
 
   it("quantises an override total before it is persisted", async () => {
@@ -892,10 +893,10 @@ describe("settlement money precision", () => {
       session,
       pricingProviders: [chargeOf(20)],
       assetHoldings: [
-        { assetType: "currency", assetCode: "currency.paid", quantity: 100 },
+        { assetType: "currency", assetCode: "currency.paid", quantity: centsOf(100) },
       ],
       overrideTotal: {
-        total: 33.333333333333336,
+        total: centsOf(33.333333333333336),
         id: "override-1",
         source: "staff.override",
         label: "Manual override",
@@ -903,9 +904,9 @@ describe("settlement money precision", () => {
       now: session.endedAt,
     });
 
-    expect(result.settlement.total).toBe(33.33);
+    expect(yuanOf(result.settlement.total)).toBe(33.33);
     expect(result.adjustments[0]!.amount).toBe(13.33);
-    expect(result.assetLedgerEntries[0]!.delta).toBe(-33.33);
+    expect(yuanOf(result.assetLedgerEntries[0]!.delta)).toBe(-33.33);
   });
 
   it("settles a fixed charge of a tenth ten times without losing a cent", async () => {
@@ -919,20 +920,20 @@ describe("settlement money precision", () => {
               id: `charge-${index}`,
               source: "unit-charges",
               label: "Unit charge",
-              amount: 0.1,
+              amount: centsOf(0.1),
             }));
           },
         },
       ],
       assetHoldings: [
-        { assetType: "currency", assetCode: "currency.paid", quantity: 1 },
+        { assetType: "currency", assetCode: "currency.paid", quantity: centsOf(1) },
       ],
       now: session.endedAt,
     });
 
-    expect(result.settlement.subtotal).toBe(1);
-    expect(result.settlement.total).toBe(1);
-    expect(result.assetLedgerEntries[0]!.delta).toBe(-1);
+    expect(yuanOf(result.settlement.subtotal)).toBe(1);
+    expect(yuanOf(result.settlement.total)).toBe(1);
+    expect(yuanOf(result.assetLedgerEntries[0]!.delta)).toBe(-1);
   });
 
   it("never refuses a payment the balance covers, across every cent pair up to 3 yuan", () => {
@@ -959,12 +960,12 @@ describe("settlement money precision", () => {
         }
 
         const holdings: AssetHolding[] = [
-          { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: free },
-          { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: paid },
+          { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOf(free) },
+          { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: centsOf(paid) },
         ];
 
         const entries = deductCurrency(holdings, {
-          amount: owed,
+          amount: centsOf(owed),
           reason: "session.settlement",
           refId: "session-grid",
           now: session.endedAt,

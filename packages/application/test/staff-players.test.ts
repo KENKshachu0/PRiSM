@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetDefinitionRepository,
   AssetHolding,
   AssetLedgerEntry,
@@ -11,6 +11,8 @@ import type {
   PlayerIdentityRepository,
   PlayerRepository,
   PlayerStatus,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import { createStaffPlayerService } from "../src/index";
 
@@ -165,7 +167,7 @@ describe("createStaffPlayerService", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 80,
+          quantity: centsOf(80),
           activeAt: null,
           expiresAt: null,
         },
@@ -187,7 +189,7 @@ describe("createStaffPlayerService", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: 80,
+        delta: centsOf(80),
         reason: "player.register.grant",
         refId: "player-1",
         transactionId: "asset-tx:player.register.grant:player-1",
@@ -254,7 +256,7 @@ describe("createStaffPlayerService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 80,
+        quantity: centsOf(80),
         activeAt: null,
         expiresAt: null,
       },
@@ -271,7 +273,7 @@ describe("createStaffPlayerService", () => {
     expect(assets.ledgerEntries[0]).toMatchObject({
       assetType: "currency",
       assetCode: "paid",
-      delta: 80,
+      delta: centsOf(80),
       reason: "player.register.present",
       refId: "present-welcome",
     });

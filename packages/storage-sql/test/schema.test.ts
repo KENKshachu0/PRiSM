@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "bun:test";
+import { centsOf } from "@prism/core";
 import { sqliteSchema } from "../src/index";
 
 describe("sqliteSchema", () => {
@@ -195,8 +196,8 @@ describe("sqliteSchema", () => {
 
     expect(db.query("SELECT player_id, subtotal, total FROM player_checkouts").get()).toEqual({
       player_id: "player-1",
-      subtotal: 7,
-      total: 7,
+      subtotal: centsOf(7),
+      total: centsOf(7),
     });
     expect(db.query("SELECT COUNT(DISTINCT checkout_id) AS count FROM settlements").get()).toEqual({ count: 1 });
   });

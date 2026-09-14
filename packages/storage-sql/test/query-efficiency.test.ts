@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createSqlRepositories, sqliteSchema, type SqlExecutor, type SqlValue } from "../src";
@@ -33,14 +34,14 @@ test("SQL repositories batch repeated reads and writes", async () => {
     },
     holdingChanges: {
       upserts: [
-        { id: "holding-1", assetType: "currency", assetCode: "paid", quantity: 10 },
-        { id: "holding-2", assetType: "currency", assetCode: "free", quantity: 5 },
+        { id: "holding-1", assetType: "currency", assetCode: "paid", quantity: centsOf(10) },
+        { id: "holding-2", assetType: "currency", assetCode: "free", quantity: centsOf(5) },
       ],
       deleteIds: [],
     },
     assetLedgerEntries: [
-      { assetType: "currency", assetCode: "paid", delta: 10, reason: "test", refId: "ref-1" },
-      { assetType: "currency", assetCode: "free", delta: 5, reason: "test", refId: "ref-2" },
+      { assetType: "currency", assetCode: "paid", delta: centsOf(10), reason: "test", refId: "ref-1" },
+      { assetType: "currency", assetCode: "free", delta: centsOf(5), reason: "test", refId: "ref-2" },
     ],
   });
   expect(statements).toHaveLength(3);
@@ -62,7 +63,7 @@ test("SQL repositories batch repeated reads and writes", async () => {
 
   statements.length = 0;
   await repositories.settlements.saveSettlement({
-    settlement: { sessionId: "session-1", subtotal: 10, total: 8, status: "settled", settledAt: now },
+    settlement: { sessionId: "session-1", subtotal: centsOf(10), total: centsOf(8), status: "settled", settledAt: now },
     chargeItems: [
       { id: "charge-1", source: "pricing", label: "Usage", amount: 10 },
       { id: "charge-2", source: "pricing", label: "Fee", amount: 2 },

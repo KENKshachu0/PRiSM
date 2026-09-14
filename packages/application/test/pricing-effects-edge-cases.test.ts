@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetDefinitionRepository,
   AssetRepository,
   PricingEffect,
   Session,
   SessionRepository,
   SettlementRepository,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import {
   calculateAssetEffectDiscount,
@@ -54,11 +56,11 @@ describe("pricing effects edge cases", () => {
         status: "active",
         paymentStatus: "unpaid",
       },
-      subtotal: 30,
+      subtotal: centsOf(30),
       chargeItems: [],
       assetHoldings: [
-        { id: "holding-a", assetType: "coupon", assetCode: "five-off", quantity: 1 },
-        { id: "holding-b", assetType: "coupon", assetCode: "five-off", quantity: 1 },
+        { id: "holding-a", assetType: "coupon", assetCode: "five-off", quantity: centsOf(1) },
+        { id: "holding-b", assetType: "coupon", assetCode: "five-off", quantity: centsOf(1) },
       ],
       now: new Date("2026-09-01T10:00:00.000Z"),
     });
@@ -102,7 +104,7 @@ describe("pricing effects edge cases", () => {
         status: "active",
         paymentStatus: "unpaid",
       },
-      subtotal: 65,
+      subtotal: centsOf(65),
       chargeItems: [
         {
           id: "charge-music",
@@ -125,8 +127,8 @@ describe("pricing effects edge cases", () => {
         },
       ],
       assetHoldings: [
-        { id: "holding-1", assetType: "coupon", assetCode: "music-ten", quantity: 1 },
-        { id: "holding-2", assetType: "coupon", assetCode: "music-ten", quantity: 1 },
+        { id: "holding-1", assetType: "coupon", assetCode: "music-ten", quantity: centsOf(1) },
+        { id: "holding-2", assetType: "coupon", assetCode: "music-ten", quantity: centsOf(1) },
       ],
       now: new Date("2026-09-01T10:00:00.000Z"),
     });
@@ -173,10 +175,10 @@ describe("pricing effects edge cases", () => {
         status: "active",
         paymentStatus: "unpaid",
       },
-      subtotal: 50,
+      subtotal: centsOf(50),
       chargeItems: [],
       assetHoldings: [
-        { id: "holding-1", assetType: "coupon", assetCode: "ten-off", quantity: 1 },
+        { id: "holding-1", assetType: "coupon", assetCode: "ten-off", quantity: centsOf(1) },
       ],
       now: new Date("2026-09-01T12:00:00.000Z"),
     });
@@ -210,7 +212,7 @@ describe("pricing effects edge cases", () => {
         id: "h-currency",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 1000,
+        quantity: centsOf(1000),
         activeAt: null,
         expiresAt: null,
       },
@@ -218,7 +220,7 @@ describe("pricing effects edge cases", () => {
         id: "h-coupon",
         assetType: "coupon",
         assetCode: "ten-off",
-        quantity: 1, // Only 1 coupon!
+        quantity: centsOf(1), // Only 1 coupon!
         activeAt: null,
         expiresAt: null,
       },
@@ -353,10 +355,10 @@ describe("pricing effects edge cases", () => {
         status: "active",
         paymentStatus: "unpaid",
       },
-      subtotal: 40,
+      subtotal: centsOf(40),
       chargeItems: [],
       assetHoldings: [
-        { id: "holding-1", assetType: "coupon", assetCode: "spend-50-minus-10", quantity: 1 },
+        { id: "holding-1", assetType: "coupon", assetCode: "spend-50-minus-10", quantity: centsOf(1) },
       ],
       now: new Date("2026-09-01T10:00:00.000Z"),
     });
@@ -372,10 +374,10 @@ describe("pricing effects edge cases", () => {
         status: "active",
         paymentStatus: "unpaid",
       },
-      subtotal: 60,
+      subtotal: centsOf(60),
       chargeItems: [],
       assetHoldings: [
-        { id: "holding-1", assetType: "coupon", assetCode: "spend-50-minus-10", quantity: 1 },
+        { id: "holding-1", assetType: "coupon", assetCode: "spend-50-minus-10", quantity: centsOf(1) },
       ],
       now: new Date("2026-09-01T10:00:00.000Z"),
     });

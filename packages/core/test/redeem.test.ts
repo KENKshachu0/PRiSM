@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { PrismDomainError, redeemGift } from "../src/index";
 
@@ -39,7 +40,7 @@ describe("redeemGift", () => {
         id: "asset-new",
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 10,
+        quantity: centsOf(10),
         activeAt: null,
         expiresAt: null,
       },
@@ -48,7 +49,7 @@ describe("redeemGift", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        delta: 10,
+        delta: centsOf(10),
         reason: "gift.redeem",
         refId: "redeem-1",
       },
@@ -302,7 +303,7 @@ describe("redeemGift", () => {
         id: "asset-new",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 100,
+        quantity: centsOf(100),
         activeAt: null,
         expiresAt: null,
       },
@@ -311,7 +312,7 @@ describe("redeemGift", () => {
       {
         assetType: "currency",
         assetCode: "paid",
-        delta: 100,
+        delta: centsOf(100),
         reason: "gift.redeem",
         refId: "redeem-6",
       },

@@ -740,8 +740,8 @@ async function persistUnifiedPlayerCheckout(
   const checkout: PlayerCheckout = {
     id: `player-checkout:${anchorSession.id}`,
     playerId,
-    subtotal: centsOf(details.subtotal),
-    total: centsOf(finalTotal),
+    subtotal: details.subtotal,
+    total: finalTotal,
     status: "settled",
     settledAt: now,
   };

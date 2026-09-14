@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetDefinition,
   AssetDefinitionRepository,
   AssetHolding,
   AssetLedgerEntry,
   AssetRepository,
   AssetTransaction,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import { createAvailableAssetReader, createStaffAssetService } from "../src/index";
 
@@ -103,7 +105,7 @@ describe("createStaffAssetService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
         activeAt: null,
         expiresAt: null,
       },
@@ -136,7 +138,7 @@ describe("createStaffAssetService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 150,
+        quantity: centsOf(150),
         activeAt: null,
         expiresAt: null,
       },
@@ -159,7 +161,7 @@ describe("createStaffAssetService", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: 50,
+        delta: centsOf(50),
         reason: "现场赠送",
         refId: "staff-1",
         transactionId: "asset-tx:staff.asset.grant:staff-1:player-1:2026-06-07T10:00:00.000Z:holding-new",
@@ -173,7 +175,7 @@ describe("createStaffAssetService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
         activeAt: null,
         expiresAt: null,
       },
@@ -181,7 +183,7 @@ describe("createStaffAssetService", () => {
         id: "pass-1",
         assetType: "pass",
         assetCode: "monthly",
-        quantity: 1,
+        quantity: centsOf(1),
         activeAt: new Date("2026-06-01T00:00:00.000Z"),
         expiresAt: new Date("2026-07-01T00:00:00.000Z"),
       },
@@ -221,7 +223,7 @@ describe("createStaffAssetService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 70,
+        quantity: centsOf(70),
         activeAt: null,
         expiresAt: null,
       },
@@ -229,7 +231,7 @@ describe("createStaffAssetService", () => {
         id: "pass-1",
         assetType: "pass",
         assetCode: "monthly",
-        quantity: 1,
+        quantity: centsOf(1),
         activeAt: new Date("2026-06-01T00:00:00.000Z"),
         expiresAt: new Date("2026-06-07T10:00:00.000Z"),
       },
@@ -252,7 +254,7 @@ describe("createStaffAssetService", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -30,
+        delta: centsOf(-30),
         reason: "staff.asset.deduct",
         refId: "staff-1",
         transactionId: "asset-tx:staff.asset.adjust:staff-1:player-1:2026-06-07T10:00:00.000Z:unused",
@@ -260,7 +262,7 @@ describe("createStaffAssetService", () => {
       {
         assetType: "pass",
         assetCode: "monthly",
-        delta: 0,
+        delta: centsOf(0),
         reason: "staff.asset.expire",
         refId: "staff-1",
         transactionId: "asset-tx:staff.asset.adjust:staff-1:player-1:2026-06-07T10:00:00.000Z:unused",
@@ -274,7 +276,7 @@ describe("createStaffAssetService", () => {
         id: "title-1",
         assetType: "title",
         assetCode: "vip",
-        quantity: 1,
+        quantity: centsOf(1),
         activeAt: null,
         expiresAt: null,
       },
@@ -282,7 +284,7 @@ describe("createStaffAssetService", () => {
         id: "title-2",
         assetType: "title",
         assetCode: "vip",
-        quantity: 1,
+        quantity: centsOf(1),
         activeAt: null,
         expiresAt: null,
       },
@@ -313,7 +315,7 @@ describe("createStaffAssetService", () => {
         id: "title-2",
         assetType: "title",
         assetCode: "vip",
-        quantity: 1,
+        quantity: centsOf(1),
         activeAt: null,
         expiresAt: null,
       },
@@ -336,7 +338,7 @@ describe("createStaffAssetService", () => {
       {
         assetType: "title",
         assetCode: "vip",
-        delta: -1,
+        delta: centsOf(-1),
         reason: "staff.asset.revoke",
         refId: "staff-1",
         transactionId: "asset-tx:staff.asset.adjust:staff-1:player-1:2026-06-07T10:00:00.000Z:unused",
@@ -387,8 +389,8 @@ describe("createStaffAssetService", () => {
 
   it("adjusts aggregate wallet balances using free before paid", async () => {
     const assets = new MemoryAssetRepository([
-      { id: "free", assetType: "currency", assetCode: "free", quantity: 20, activeAt: null, expiresAt: null },
-      { id: "paid", assetType: "currency", assetCode: "paid", quantity: 40, activeAt: null, expiresAt: null },
+      { id: "free", assetType: "currency", assetCode: "free", quantity: centsOf(20), activeAt: null, expiresAt: null },
+      { id: "paid", assetType: "currency", assetCode: "paid", quantity: centsOf(40), activeAt: null, expiresAt: null },
     ]);
     const service = createStaffAssetService({
       assets,
@@ -397,11 +399,11 @@ describe("createStaffAssetService", () => {
       now: () => new Date("2026-07-10T00:00:00.000Z"),
     });
     const result = await service.adjustWallet({ staffId: "staff-1", playerId: "player-1", amount: -30, reason: "staff.wallet.deduct" });
-    expect(result.balanceBefore).toBe(60);
-    expect(result.balanceAfter).toBe(30);
+    expect(yuanOf(result.balanceBefore)).toBe(60);
+    expect(yuanOf(result.balanceAfter)).toBe(30);
     expect(result.assetLedgerEntries).toEqual([
-      { assetType: "currency", assetCode: "free", delta: -20, reason: "staff.wallet.deduct", refId: "staff-1" },
-      { assetType: "currency", assetCode: "paid", delta: -10, reason: "staff.wallet.deduct", refId: "staff-1" },
+      { assetType: "currency", assetCode: "free", delta: centsOf(-20), reason: "staff.wallet.deduct", refId: "staff-1" },
+      { assetType: "currency", assetCode: "paid", delta: centsOf(-10), reason: "staff.wallet.deduct", refId: "staff-1" },
     ]);
   });
 

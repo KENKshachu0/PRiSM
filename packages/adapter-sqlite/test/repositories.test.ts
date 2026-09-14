@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { sqliteSchema } from "@prism/storage-sql";
@@ -908,14 +909,14 @@ describe("createSqliteRepositories", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
         }],
         deleteIds: [],
       },
       assetLedgerEntries: [{
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: 100,
+        delta: centsOf(100),
         reason: "gift.redeem",
         refId: "code-1",
       }],
@@ -928,7 +929,7 @@ describe("createSqliteRepositories", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
         activeAt: null,
         expiresAt: null,
       },
@@ -939,7 +940,7 @@ describe("createSqliteRepositories", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: 100,
+        delta: centsOf(100),
         reason: "gift.redeem",
         refId: "code-1",
         transactionId: "asset-tx-1",
@@ -968,14 +969,14 @@ describe("createSqliteRepositories", () => {
           id: "holding-valid",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 10,
+          quantity: centsOf(10),
         }],
         deleteIds: [],
       },
       assetLedgerEntries: [{
         assetType: "currency",
         assetCode: "currency.missing",
-        delta: 10,
+        delta: centsOf(10),
         reason: "gift.redeem",
         refId: "code-invalid",
       }],
@@ -1002,7 +1003,7 @@ describe("createSqliteRepositories", () => {
         refId: "session-1",
         createdAt: new Date("2026-06-07T10:00:00.000Z"),
         metadata: {
-          total: 25,
+          total: centsOf(25),
         },
       },
       holdingChanges: { upserts: [], deleteIds: [] },
@@ -1010,7 +1011,7 @@ describe("createSqliteRepositories", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          delta: -25,
+          delta: centsOf(-25),
           reason: "session.settlement",
           refId: "session-1",
           transactionId: "asset-tx-1",
@@ -1028,7 +1029,7 @@ describe("createSqliteRepositories", () => {
         refId: "session-1",
         createdAt: new Date("2026-06-07T10:00:00.000Z"),
         metadata: {
-          total: 25,
+          total: centsOf(25),
         },
       },
     ]);
@@ -1038,7 +1039,7 @@ describe("createSqliteRepositories", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -25,
+        delta: centsOf(-25),
         reason: "session.settlement",
         refId: "session-1",
         transactionId: "asset-tx-1",
@@ -1340,8 +1341,8 @@ describe("createSqliteRepositories", () => {
     await repositories.settlements.saveSettlement({
       settlement: {
         sessionId: "session-1",
-        subtotal: 30,
-        total: 20,
+        subtotal: centsOf(30),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -1368,8 +1369,8 @@ describe("createSqliteRepositories", () => {
     ).resolves.toEqual({
       settlement: {
         sessionId: "session-1",
-        subtotal: 30,
-        total: 20,
+        subtotal: centsOf(30),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -1410,8 +1411,8 @@ describe("createSqliteRepositories", () => {
     await repositories.settlements.saveSettlement({
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -1424,8 +1425,8 @@ describe("createSqliteRepositories", () => {
     ).resolves.toEqual({
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -1436,15 +1437,15 @@ describe("createSqliteRepositories", () => {
     await repositories.settlements.saveCheckout!({
       id: "checkout-1",
       playerId: "player-1",
-      subtotal: 20,
-      total: 20,
+      subtotal: centsOf(20),
+      total: centsOf(20),
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     }, [{
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -1456,8 +1457,8 @@ describe("createSqliteRepositories", () => {
     });
     expect(db.query("SELECT player_id, subtotal, total FROM player_checkouts WHERE id = ?").get("checkout-1")).toEqual({
       player_id: "player-1",
-      subtotal: 20,
-      total: 20,
+      subtotal: centsOf(20),
+      total: centsOf(20),
     });
   });
 

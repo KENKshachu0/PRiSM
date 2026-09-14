@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { sqliteSchema } from "@prism/storage-sql";
@@ -588,7 +589,7 @@ describe("createD1Repositories", () => {
         upserts: [{
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
         }],
         deleteIds: [],
       },
@@ -625,7 +626,7 @@ describe("createD1Repositories", () => {
         id: "id-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
         activeAt: null,
         expiresAt: null,
       },
@@ -704,8 +705,8 @@ describe("createD1Repositories", () => {
     await repositories.settlements.saveSettlement({
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 15,
+        subtotal: centsOf(20),
+        total: centsOf(15),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -731,8 +732,8 @@ describe("createD1Repositories", () => {
     ).resolves.toEqual({
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 15,
+        subtotal: centsOf(20),
+        total: centsOf(15),
         status: "settled",
         settledAt: new Date("2026-06-07T11:00:00.000Z"),
       },
@@ -873,14 +874,14 @@ describe("createD1Repositories", () => {
           id: "holding-valid",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 10,
+          quantity: centsOf(10),
         }],
         deleteIds: [],
       },
       assetLedgerEntries: [{
         assetType: "currency",
         assetCode: "currency.missing",
-        delta: 10,
+        delta: centsOf(10),
         reason: "gift.redeem",
         refId: "code-invalid",
       }],

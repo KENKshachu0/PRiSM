@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetDefinition,
   AssetDefinitionRepository,
   AssetHolding,
@@ -10,6 +10,8 @@ import type {
   RedeemCode,
   RedeemRecord,
   RedeemRepository,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import { createAvailableAssetReader, createRedeemService } from "../src/index";
 
@@ -206,7 +208,7 @@ describe("createRedeemService", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 100,
+          quantity: centsOf(100),
           activeAt: null,
           expiresAt: null,
         },
@@ -230,7 +232,7 @@ describe("createRedeemService", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: 100,
+        delta: centsOf(100),
         reason: "gift.redeem",
         refId: "code-1",
         transactionId: "asset-tx:gift.redeem:code-1:player-1",
@@ -241,7 +243,7 @@ describe("createRedeemService", () => {
         assetType: "currency",
         assetCode: "currency.paid",
         assetName: "猫粮",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
     expect(redeems.savedRecords).toEqual([result.redeemRecord]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetDefinition,
   AssetDefinitionRepository,
   AssetHolding,
@@ -14,6 +14,8 @@ import type {
   SessionRepository,
   SettlementRecord,
   SettlementRepository,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import { createTimePricingProvider } from "@prism/core";
 import { createAssetDefinitionEffectProvider, createAvailableAssetReader, createSettlementService } from "../src/index";
@@ -273,7 +275,7 @@ describe("createSettlementService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -322,7 +324,7 @@ describe("createSettlementService", () => {
         id: "holding-archived-wallet",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
     const assetDefinitions = new MemoryAssetDefinitionRepository([
@@ -373,7 +375,7 @@ describe("createSettlementService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -393,15 +395,15 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-1"],
-      subtotal: 20,
-      total: 20,
+      subtotal: centsOf(20),
+      total: centsOf(20),
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
     expect(result.settlements[0].settlement).toEqual({
       sessionId: "session-1",
-      subtotal: 20,
-      total: 20,
+      subtotal: centsOf(20),
+      total: centsOf(20),
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
@@ -422,7 +424,7 @@ describe("createSettlementService", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 80,
+          quantity: centsOf(80),
         },
       ],
     ]);
@@ -430,7 +432,7 @@ describe("createSettlementService", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -20,
+        delta: centsOf(-20),
         reason: "session.settlement",
         refId: "session-1",
         transactionId: "asset-tx:session.settlement:session-1",
@@ -465,7 +467,7 @@ describe("createSettlementService", () => {
         id: "holding-wallet",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 200,
+        quantity: centsOf(200),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -521,7 +523,7 @@ describe("createSettlementService", () => {
         id: "holding-wallet",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 200,
+        quantity: centsOf(200),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -541,8 +543,8 @@ describe("createSettlementService", () => {
     expect(preview.settlementPreview).toEqual({
       playerId: "player-1",
       sessionIds: ["session-closed", "session-active"],
-      subtotal: 60,
-      total: 60,
+      subtotal: centsOf(60),
+      total: centsOf(60),
       status: "preview",
       previewedAt: new Date("2026-06-07T11:15:00.000Z"),
     });
@@ -592,7 +594,7 @@ describe("createSettlementService", () => {
         id: "holding-wallet",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 200,
+        quantity: centsOf(200),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -612,8 +614,8 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-closed", "session-music", "session-mahjong"],
-      subtotal: 105,
-      total: 105,
+      subtotal: centsOf(105),
+      total: centsOf(105),
       status: "settled",
       settledAt: new Date("2026-06-07T11:30:00.000Z"),
     });
@@ -650,8 +652,8 @@ describe("createSettlementService", () => {
     expect(settlements.checkouts).toEqual([{
       id: "player-checkout:session-mahjong",
       playerId: "player-1",
-      subtotal: 105,
-      total: 105,
+      subtotal: centsOf(105),
+      total: centsOf(105),
       status: "settled",
       settledAt: new Date("2026-06-07T11:30:00.000Z"),
     }]);
@@ -664,7 +666,7 @@ describe("createSettlementService", () => {
         createdAt: new Date("2026-06-07T11:30:00.000Z"),
         metadata: {
           sessions: ["session-closed", "session-music", "session-mahjong"],
-          total: 105,
+          total: centsOf(105),
         },
       },
     ]);
@@ -693,7 +695,7 @@ describe("createSettlementService", () => {
       id: "holding-paid",
       assetType: "currency",
       assetCode: "paid",
-      quantity: 20,
+      quantity: centsOf(20),
     }]);
     const settlements = new MemorySettlementRepository();
     const amounts: Record<string, number> = {
@@ -728,11 +730,11 @@ describe("createSettlementService", () => {
       subtotal: settlement.subtotal,
       total: settlement.total,
     }))).toEqual([
-      { sessionId: "session-charge", subtotal: 10, total: 10 },
-      { sessionId: "session-discount", subtotal: -3, total: -3 },
+      { sessionId: "session-charge", subtotal: centsOf(10), total: centsOf(10) },
+      { sessionId: "session-discount", subtotal: centsOf(-3), total: centsOf(-3) },
     ]);
     expect(result.playerSettlement).toMatchObject({ subtotal: 7, total: 7 });
-    expect(assets.ledgerEntries).toContainEqual(expect.objectContaining({ delta: -7 }));
+    expect(assets.ledgerEntries).toContainEqual(expect.objectContaining({ delta: centsOf(-7) }));
   });
 
   it("floors only the unified checkout total when session contributions sum below zero", async () => {
@@ -783,7 +785,7 @@ describe("createSettlementService", () => {
     expect(preview.settlementPreview.total).toBe(0);
 
     const result = await service.checkout({ playerId: "player-1" });
-    expect(result.settlements.map(({ settlement }) => settlement.total)).toEqual([2, -5]);
+    expect(result.settlements.map(({ settlement }) => yuanOf(settlement.total))).toEqual([2, -5]);
     expect(result.playerSettlement.total).toBe(0);
     expect(assets.ledgerEntries).toEqual([]);
     expect(assets.assetTransactions[0]?.metadata).toMatchObject({ total: 0 });
@@ -803,13 +805,13 @@ describe("createSettlementService", () => {
         id: "holding-free",
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: 5,
+        quantity: centsOf(5),
       },
       {
         id: "holding-paid",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 30,
+        quantity: centsOf(30),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -849,7 +851,7 @@ describe("createSettlementService", () => {
         createdAt: new Date("2026-06-07T11:00:00.000Z"),
         metadata: {
           sessions: ["session-1"],
-          total: 25,
+          total: centsOf(25),
         },
       },
     ]);
@@ -857,7 +859,7 @@ describe("createSettlementService", () => {
       {
         assetType: "currency",
         assetCode: "currency.free",
-        delta: -5,
+        delta: centsOf(-5),
         reason: "session.settlement",
         refId: "session-1",
         transactionId: "asset-tx:session.settlement:session-1",
@@ -865,7 +867,7 @@ describe("createSettlementService", () => {
       {
         assetType: "currency",
         assetCode: "currency.paid",
-        delta: -20,
+        delta: centsOf(-20),
         reason: "session.settlement",
         refId: "session-1",
         transactionId: "asset-tx:session.settlement:session-1",
@@ -887,7 +889,7 @@ describe("createSettlementService", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -903,15 +905,15 @@ describe("createSettlementService", () => {
     const result = await service.checkoutWithOverride({
       playerId: "player-1",
       staffId: "staff-1",
-      total: 5,
+      total: centsOf(5),
       reason: "machine fault",
     });
 
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-1"],
-      subtotal: 20,
-      total: 5,
+      subtotal: centsOf(20),
+      total: centsOf(5),
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
@@ -929,7 +931,7 @@ describe("createSettlementService", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 95,
+          quantity: centsOf(95),
         },
       ],
     ]);
@@ -951,13 +953,13 @@ describe("createSettlementService", () => {
         id: "holding-discount",
         assetType: "ticket",
         assetCode: "freemother",
-        quantity: 1,
+        quantity: centsOf(1),
       },
       {
         id: "holding-wallet",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 12,
+        quantity: centsOf(12),
       },
     ]);
     const assetDefinitions = new MemoryAssetDefinitionRepository([
@@ -1027,13 +1029,13 @@ describe("createSettlementService", () => {
         id: "holding-vip-day",
         assetType: "pass",
         assetCode: "pass.daily-vip",
-        quantity: 1,
+        quantity: centsOf(1),
       },
       {
         id: "holding-wallet",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
 
@@ -1082,11 +1084,11 @@ describe("createSettlementService", () => {
     expect(savedSettlements.length).toBe(2);
 
     const s1 = savedSettlements.find((s) => s.settlement.sessionId === "session-1")!;
-    expect(s1.settlement.total).toBe(0);
+    expect(yuanOf(s1.settlement.total)).toBe(0);
     expect(s1.adjustments.length).toBe(1);
 
     const s2 = savedSettlements.find((s) => s.settlement.sessionId === "session-2")!;
-    expect(s2.settlement.total).toBe(20);
+    expect(yuanOf(s2.settlement.total)).toBe(20);
     expect(s2.adjustments.length).toBe(0);
   });
 
@@ -1104,7 +1106,7 @@ describe("createSettlementService", () => {
         id: "holding-wallet",
         assetType: "currency",
         assetCode: "currency.paid",
-        quantity: 200,
+        quantity: centsOf(200),
       },
     ]);
     const settlements = new MemorySettlementRepository();
@@ -1160,8 +1162,8 @@ describe("createSettlementService", () => {
     });
 
     expect(result.playerSettlement).toMatchObject({
-      subtotal: 92,
-      total: 89,
+      subtotal: centsOf(92),
+      total: centsOf(89),
     });
     expect(result.adjustments).toEqual([
       expect.objectContaining({

@@ -719,7 +719,7 @@ describe("createPrismRuntimeDependencies", () => {
     const holdingRow = db
       .query("SELECT quantity FROM asset_holdings WHERE id = ?")
       .get("holding-coupon") as any;
-    expect(holdingRow.quantity).toBe(1);
+    expect(yuanOf(holdingRow.quantity)).toBe(1);
   });
 
   it("applies configurable session-scope coupons with date range constraints", async () => {

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetDefinition,
   AssetDefinitionRepository,
   AssetHolding,
   AssetLedgerEntry,
   AssetRepository,
   AssetTransaction,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import { createAvailableAssetReader, sumAvailableWalletBalance, toAvailableAssetView } from "../src";
 
@@ -67,7 +69,7 @@ describe("createAvailableAssetReader", () => {
         id: "holding-available",
         assetType: "test",
         assetCode: "available",
-        quantity: 2,
+        quantity: centsOf(2),
         activeAt: null,
         expiresAt: null,
         assetName: "可用资产",
@@ -126,7 +128,7 @@ function holding(
     id: `holding-${assetCode}`,
     assetType: "test",
     assetCode,
-    quantity,
+    quantity: centsOf(quantity),
     activeAt: dates.activeAt ?? null,
     expiresAt: dates.expiresAt ?? null,
   };

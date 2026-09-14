@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { PrismDomainError } from "@prism/core";
+import { PrismDomainError,
+  centsOf,
+  yuanOf,
+} from "@prism/core";
 import type { PricingConfig } from "@prism/core";
 import { createStaffOperationsService } from "@prism/application";
 import { createPrismApp as createPrismAppBase } from "../src/index";
@@ -1151,7 +1154,7 @@ describe("createPrismApp", () => {
             wallet: [
               {
                 assetCode: "paid",
-                quantity: 100,
+                quantity: centsOf(100),
               },
             ],
             activeSession: {
@@ -1202,7 +1205,7 @@ describe("createPrismApp", () => {
       wallet: [
         {
           assetCode: "paid",
-          quantity: 100,
+          quantity: centsOf(100),
         },
       ],
       activeSession: {
@@ -1386,7 +1389,7 @@ describe("createPrismApp", () => {
                 assetType: "pass",
                 assetCode: "pass.monthly",
                 assetName: "Monthly pass",
-                quantity: 1,
+                quantity: centsOf(1),
                 activeAt: new Date("2026-06-07T10:00:00.000Z"),
                 expiresAt: new Date("2026-07-07T10:00:00.000Z"),
                 metadata: {
@@ -1400,7 +1403,7 @@ describe("createPrismApp", () => {
                 assetType: "pass",
                 assetCode: "pass.monthly",
                 assetName: "Monthly pass",
-                delta: 1,
+                delta: centsOf(1),
                 reason: "gift.redeem",
                 refId: "code-1",
                 transactionId: null,
@@ -1449,7 +1452,7 @@ describe("createPrismApp", () => {
           assetType: "pass",
           assetCode: "pass.monthly",
           assetName: "Monthly pass",
-          quantity: 1,
+          quantity: centsOf(1),
           activeAt: "2026-06-07T10:00:00.000Z",
           expiresAt: "2026-07-07T10:00:00.000Z",
           metadata: {
@@ -1463,7 +1466,7 @@ describe("createPrismApp", () => {
           assetType: "pass",
           assetCode: "pass.monthly",
           assetName: "Monthly pass",
-          delta: 1,
+          delta: centsOf(1),
           reason: "gift.redeem",
           refId: "code-1",
           transactionId: null,
@@ -1487,8 +1490,8 @@ describe("createPrismApp", () => {
               startedAt: new Date("2026-06-07T10:00:00.000Z"),
               endedAt: new Date("2026-06-07T11:00:00.000Z"),
               durationMinutes: 60,
-              subtotal: 20,
-              total: 20,
+              subtotal: centsOf(20),
+              total: centsOf(20),
               status: "settled",
               settledAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -1534,8 +1537,8 @@ describe("createPrismApp", () => {
           startedAt: "2026-06-07T10:00:00.000Z",
           endedAt: "2026-06-07T11:00:00.000Z",
           durationMinutes: 60,
-          subtotal: 20,
-          total: 20,
+          subtotal: centsOf(20),
+          total: centsOf(20),
           status: "settled",
           settledAt: "2026-06-07T11:00:00.000Z",
         },
@@ -1557,8 +1560,8 @@ describe("createPrismApp", () => {
             startedAt: new Date("2026-06-07T10:00:00.000Z"),
             endedAt: new Date("2026-06-07T11:00:00.000Z"),
             durationMinutes: 60,
-            subtotal: 30,
-            total: 20,
+            subtotal: centsOf(30),
+            total: centsOf(20),
             status: "settled",
             settledAt: new Date("2026-06-07T11:00:00.000Z"),
             chargeItems: [
@@ -1618,8 +1621,8 @@ describe("createPrismApp", () => {
         startedAt: "2026-06-07T10:00:00.000Z",
         endedAt: "2026-06-07T11:00:00.000Z",
         durationMinutes: 60,
-        subtotal: 30,
-        total: 20,
+        subtotal: centsOf(30),
+        total: centsOf(20),
         status: "settled",
         settledAt: "2026-06-07T11:00:00.000Z",
         chargeItems: [
@@ -1872,8 +1875,8 @@ describe("createPrismApp", () => {
             settlementPreview: {
               playerId: "player-1",
               sessionIds: ["session-1"],
-              subtotal: 20,
-              total: 15,
+              subtotal: centsOf(20),
+              total: centsOf(15),
               status: "preview",
               previewedAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -1884,8 +1887,8 @@ describe("createPrismApp", () => {
                 startedAt: new Date("2026-06-07T10:00:00.000Z"),
                 endedAt: new Date("2026-06-07T11:00:00.000Z"),
                 status: "closed",
-                subtotal: 20,
-                total: 15,
+                subtotal: centsOf(20),
+                total: centsOf(15),
                 chargeItems: [],
                 adjustments: [],
               },
@@ -1937,8 +1940,8 @@ describe("createPrismApp", () => {
       settlementPreview: {
         playerId: "player-1",
         sessionIds: ["session-1"],
-        subtotal: 20,
-        total: 15,
+        subtotal: centsOf(20),
+        total: centsOf(15),
         status: "preview",
         previewedAt: "2026-06-07T11:00:00.000Z",
       },
@@ -1949,8 +1952,8 @@ describe("createPrismApp", () => {
           startedAt: "2026-06-07T10:00:00.000Z",
           endedAt: "2026-06-07T11:00:00.000Z",
           status: "closed",
-          subtotal: 20,
-          total: 15,
+          subtotal: centsOf(20),
+          total: centsOf(15),
           chargeItems: [],
           adjustments: [],
         },
@@ -2013,8 +2016,8 @@ describe("createPrismApp", () => {
             playerSettlement: {
               playerId: "player-1",
               sessionIds: ["session-1"],
-              subtotal: 20,
-              total: 20,
+              subtotal: centsOf(20),
+              total: centsOf(20),
               status: "settled",
               settledAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -2022,8 +2025,8 @@ describe("createPrismApp", () => {
               {
                 settlement: {
                   sessionId: "session-1",
-                  subtotal: 20,
-                  total: 20,
+                  subtotal: centsOf(20),
+                  total: centsOf(20),
                   status: "settled",
                   settledAt: new Date("2026-06-07T11:00:00.000Z"),
                 },
@@ -2061,7 +2064,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "currency.paid",
-                delta: -20,
+                delta: centsOf(-20),
                 reason: "session.settlement",
                 refId: "session-1",
               },
@@ -2092,8 +2095,8 @@ describe("createPrismApp", () => {
       playerSettlement: {
         playerId: "player-1",
         sessionIds: ["session-1"],
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: "2026-06-07T11:00:00.000Z",
       },
@@ -2104,8 +2107,8 @@ describe("createPrismApp", () => {
             label: "Time",
             startedAt: "2026-06-07T10:00:00.000Z",
             endedAt: "2026-06-07T11:00:00.000Z",
-            subtotal: 20,
-            total: 20,
+            subtotal: centsOf(20),
+            total: centsOf(20),
             status: "settled",
             settledAt: "2026-06-07T11:00:00.000Z",
           },
@@ -2136,7 +2139,7 @@ describe("createPrismApp", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          delta: -20,
+          delta: centsOf(-20),
           reason: "session.settlement",
           refId: "session-1",
         },
@@ -2184,15 +2187,15 @@ describe("createPrismApp", () => {
           expect(input).toEqual({
             playerId: "player-1",
             staffId: "staff-1",
-            total: 5,
+            total: centsOf(5),
             reason: "machine fault",
           });
           return {
             playerSettlement: {
               playerId: "player-1",
               sessionIds: ["session-1"],
-              subtotal: 20,
-              total: 5,
+              subtotal: centsOf(20),
+              total: centsOf(5),
               status: "settled",
               settledAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -2200,8 +2203,8 @@ describe("createPrismApp", () => {
               {
                 settlement: {
                   sessionId: "session-1",
-                  subtotal: 20,
-                  total: 5,
+                  subtotal: centsOf(20),
+                  total: centsOf(5),
                   status: "settled",
                   settledAt: new Date("2026-06-07T11:00:00.000Z"),
                 },
@@ -2253,7 +2256,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "currency.paid",
-                delta: -5,
+                delta: centsOf(-5),
                 reason: "session.settlement",
                 refId: "session-1",
               },
@@ -2285,7 +2288,7 @@ describe("createPrismApp", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        total: 5,
+        total: centsOf(5),
         reason: "machine fault",
       }),
     });
@@ -2295,8 +2298,8 @@ describe("createPrismApp", () => {
       playerSettlement: {
         playerId: "player-1",
         sessionIds: ["session-1"],
-        subtotal: 20,
-        total: 5,
+        subtotal: centsOf(20),
+        total: centsOf(5),
         status: "settled",
         settledAt: "2026-06-07T11:00:00.000Z",
       },
@@ -2304,8 +2307,8 @@ describe("createPrismApp", () => {
         {
           settlement: {
             sessionId: "session-1",
-            subtotal: 20,
-            total: 5,
+            subtotal: centsOf(20),
+            total: centsOf(5),
             status: "settled",
             settledAt: "2026-06-07T11:00:00.000Z",
           },
@@ -2339,7 +2342,7 @@ describe("createPrismApp", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          delta: -5,
+          delta: centsOf(-5),
         },
       ],
     });
@@ -2545,8 +2548,8 @@ describe("createPrismApp", () => {
             settlementPreview: {
               playerId: "player-1",
               sessionIds: ["session-1"],
-              subtotal: 20,
-              total: 12,
+              subtotal: centsOf(20),
+              total: centsOf(12),
               status: "preview",
               previewedAt: new Date("2026-06-07T10:55:00.000Z"),
             },
@@ -2557,8 +2560,8 @@ describe("createPrismApp", () => {
                 startedAt: new Date("2026-06-07T10:00:00.000Z"),
                 endedAt: new Date("2026-06-07T10:55:00.000Z"),
                 status: "closed",
-                subtotal: 20,
-                total: 12,
+                subtotal: centsOf(20),
+                total: centsOf(12),
                 chargeItems: [],
                 adjustments: [],
               },
@@ -2633,15 +2636,15 @@ describe("createPrismApp", () => {
       settlementPreview: {
         playerId: "player-1",
         sessionIds: ["session-1"],
-        subtotal: 20,
-        total: 12,
+        subtotal: centsOf(20),
+        total: centsOf(12),
         status: "preview",
         previewedAt: "2026-06-07T10:55:00.000Z",
       },
       sessionPreviews: [
         {
           sessionId: "session-1",
-          total: 12,
+          total: centsOf(12),
         },
       ],
       chargeItems: [
@@ -2701,8 +2704,8 @@ describe("createPrismApp", () => {
             playerSettlement: {
               playerId: "player-1",
               sessionIds: ["session-1"],
-              subtotal: 20,
-              total: 20,
+              subtotal: centsOf(20),
+              total: centsOf(20),
               status: "settled",
               settledAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -2710,8 +2713,8 @@ describe("createPrismApp", () => {
               {
                 settlement: {
                   sessionId: "session-1",
-                  subtotal: 20,
-                  total: 20,
+                  subtotal: centsOf(20),
+                  total: centsOf(20),
                   status: "settled",
                   settledAt: new Date("2026-06-07T11:00:00.000Z"),
                 },
@@ -2749,7 +2752,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "currency.paid",
-                delta: -20,
+                delta: centsOf(-20),
                 reason: "session.settlement",
                 refId: "session-1",
               },
@@ -2782,8 +2785,8 @@ describe("createPrismApp", () => {
       playerSettlement: {
         playerId: "player-1",
         sessionIds: ["session-1"],
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: "2026-06-07T11:00:00.000Z",
       },
@@ -2791,8 +2794,8 @@ describe("createPrismApp", () => {
         {
           settlement: {
             sessionId: "session-1",
-            subtotal: 20,
-            total: 20,
+            subtotal: centsOf(20),
+            total: centsOf(20),
             status: "settled",
             settledAt: "2026-06-07T11:00:00.000Z",
           },
@@ -2805,7 +2808,7 @@ describe("createPrismApp", () => {
       globalCapWindows: [],
       assetLedgerEntries: [
         {
-          delta: -20,
+          delta: centsOf(-20),
           reason: "session.settlement",
         },
       ],
@@ -2940,8 +2943,8 @@ describe("createPrismApp", () => {
             settlementPreview: {
               playerId: "player-1",
               sessionIds: ["session-1", "session-2"],
-              subtotal: 64,
-              total: 56,
+              subtotal: centsOf(64),
+              total: centsOf(56),
               status: "preview",
               previewedAt: new Date("2026-06-07T12:00:00.000Z"),
             },
@@ -2952,8 +2955,8 @@ describe("createPrismApp", () => {
                 startedAt: new Date("2026-06-07T10:00:00.000Z"),
                 endedAt: null,
                 status: "active",
-                subtotal: 64,
-                total: 64,
+                subtotal: centsOf(64),
+                total: centsOf(64),
                 chargeItems: [
                   {
                     id: "charge-1",
@@ -2990,7 +2993,7 @@ describe("createPrismApp", () => {
                 startedAt: new Date("2026-06-07T10:45:00.000Z"),
                 endedAt: new Date("2026-06-07T12:00:00.000Z"),
                 status: "closed",
-                subtotal: 0,
+                subtotal: centsOf(0),
                 total: -8,
                 chargeItems: [],
                 adjustments: [
@@ -3197,8 +3200,8 @@ describe("createPrismApp", () => {
             playerSettlement: {
               playerId: input.playerId,
               sessionIds: [isPlayer1 ? "session-1" : "session-2"],
-              subtotal: isPlayer1 ? 20 : 10,
-              total: isPlayer1 ? 20 : 10,
+              subtotal: centsOf(isPlayer1 ? 20 : 10),
+              total: centsOf(isPlayer1 ? 20 : 10),
               status: "settled",
               settledAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -3206,8 +3209,8 @@ describe("createPrismApp", () => {
               {
                 settlement: {
                   sessionId: isPlayer1 ? "session-1" : "session-2",
-                  subtotal: isPlayer1 ? 20 : 10,
-                  total: isPlayer1 ? 20 : 10,
+                  subtotal: centsOf(isPlayer1 ? 20 : 10),
+                  total: centsOf(isPlayer1 ? 20 : 10),
                   status: "settled",
                   settledAt: new Date("2026-06-07T11:00:00.000Z"),
                 },
@@ -3261,13 +3264,13 @@ describe("createPrismApp", () => {
         {
           playerSettlement: {
             playerId: "player-1",
-            total: 20,
+            total: centsOf(20),
           },
         },
         {
           playerSettlement: {
             playerId: "player-2",
-            total: 10,
+            total: centsOf(10),
           },
         },
       ],
@@ -3315,7 +3318,7 @@ describe("createPrismApp", () => {
                 id: "holding-1",
                 assetType: "currency",
                 assetCode: "currency.paid",
-                quantity: 179,
+                quantity: centsOf(179),
                 activeAt: null,
                 expiresAt: null,
               },
@@ -3325,7 +3328,7 @@ describe("createPrismApp", () => {
                 assetType: "currency",
                 assetCode: "currency.paid",
                 assetName: "猫粮",
-                quantity: 100,
+                quantity: centsOf(100),
               },
             ],
             availableHoldings: [
@@ -3334,7 +3337,7 @@ describe("createPrismApp", () => {
                 assetType: "currency",
                 assetCode: "currency.paid",
                 assetName: "猫粮",
-                quantity: 179,
+                quantity: centsOf(179),
                 activeAt: null,
                 expiresAt: null,
                 metadata: null,
@@ -3344,7 +3347,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "currency.paid",
-                delta: 100,
+                delta: centsOf(100),
                 reason: "gift.redeem",
                 refId: "code-1",
               },
@@ -3385,7 +3388,7 @@ describe("createPrismApp", () => {
           assetType: "currency",
           assetCode: "currency.paid",
           assetName: "猫粮",
-          quantity: 100,
+          quantity: centsOf(100),
         },
       ],
       currentHoldings: [
@@ -3394,7 +3397,7 @@ describe("createPrismApp", () => {
           assetType: "currency",
           assetCode: "currency.paid",
           assetName: "猫粮",
-          quantity: 179,
+          quantity: centsOf(179),
           activeAt: null,
           expiresAt: null,
           metadata: null,
@@ -3404,7 +3407,7 @@ describe("createPrismApp", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          delta: 100,
+          delta: centsOf(100),
           reason: "gift.redeem",
           refId: "code-1",
         },
@@ -3464,7 +3467,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "paid",
-                delta: -1200,
+                delta: centsOf(-1200),
                 reason: "business-item.purchase",
                 refId: "order-1",
               },
@@ -3534,7 +3537,7 @@ describe("createPrismApp", () => {
       assetLedgerEntries: [
         {
           assetCode: "paid",
-          delta: -1200,
+          delta: centsOf(-1200),
         },
       ],
     });
@@ -3944,8 +3947,8 @@ describe("createPrismApp", () => {
               endedAt: new Date("2026-06-07T11:30:00.000Z"),
               settledAt: new Date("2026-06-07T11:30:00.000Z"),
               durationMinutes: 90,
-              subtotal: 120,
-              total: 100,
+              subtotal: centsOf(120),
+              total: centsOf(100),
             },
             {
               settlementId: "settlement-2",
@@ -3956,8 +3959,8 @@ describe("createPrismApp", () => {
               endedAt: new Date("2026-06-07T10:00:00.000Z"),
               settledAt: new Date("2026-06-07T10:00:00.000Z"),
               durationMinutes: 60,
-              subtotal: 80,
-              total: 80,
+              subtotal: centsOf(80),
+              total: centsOf(80),
             },
           ];
         },
@@ -3999,8 +4002,8 @@ describe("createPrismApp", () => {
           endedAt: "2026-06-07T11:30:00.000Z",
           settledAt: "2026-06-07T11:30:00.000Z",
           durationMinutes: 90,
-          subtotal: 120,
-          total: 100,
+          subtotal: centsOf(120),
+          total: centsOf(100),
         },
       ],
       page: { limit: 1, offset: 10, hasMore: true },
@@ -4177,7 +4180,7 @@ describe("createPrismApp", () => {
                 assetType: "title",
                 assetCode: "title.special",
                 assetName: "Special title",
-                quantity: 1,
+                quantity: centsOf(1),
                 activeAt: null,
                 expiresAt: null,
                 metadata: {
@@ -4191,7 +4194,7 @@ describe("createPrismApp", () => {
                 assetType: "title",
                 assetCode: "title.special",
                 assetName: "Special title",
-                delta: 1,
+                delta: centsOf(1),
                 reason: "staff.asset.grant",
                 refId: "staff-1",
                 transactionId: null,
@@ -4231,7 +4234,7 @@ describe("createPrismApp", () => {
           assetType: "title",
           assetCode: "title.special",
           assetName: "Special title",
-          quantity: 1,
+          quantity: centsOf(1),
           activeAt: null,
           expiresAt: null,
           metadata: {
@@ -4245,7 +4248,7 @@ describe("createPrismApp", () => {
           assetType: "title",
           assetCode: "title.special",
           assetName: "Special title",
-          delta: 1,
+          delta: centsOf(1),
           reason: "staff.asset.grant",
           refId: "staff-1",
           transactionId: null,
@@ -4277,8 +4280,8 @@ describe("createPrismApp", () => {
               startedAt: new Date("2026-06-07T10:00:00.000Z"),
               endedAt: new Date("2026-06-07T11:00:00.000Z"),
               durationMinutes: 60,
-              subtotal: 20,
-              total: 20,
+              subtotal: centsOf(20),
+              total: centsOf(20),
               status: "settled",
               settledAt: new Date("2026-06-07T11:00:00.000Z"),
             },
@@ -4315,8 +4318,8 @@ describe("createPrismApp", () => {
           startedAt: "2026-06-07T10:00:00.000Z",
           endedAt: "2026-06-07T11:00:00.000Z",
           durationMinutes: 60,
-          subtotal: 20,
-          total: 20,
+          subtotal: centsOf(20),
+          total: centsOf(20),
           status: "settled",
           settledAt: "2026-06-07T11:00:00.000Z",
         },
@@ -4346,8 +4349,8 @@ describe("createPrismApp", () => {
             startedAt: new Date("2026-06-07T10:00:00.000Z"),
             endedAt: new Date("2026-06-07T11:00:00.000Z"),
             durationMinutes: 60,
-            subtotal: 30,
-            total: 20,
+            subtotal: centsOf(30),
+            total: centsOf(20),
             status: "settled",
             settledAt: new Date("2026-06-07T11:00:00.000Z"),
             chargeItems: [
@@ -4398,8 +4401,8 @@ describe("createPrismApp", () => {
         startedAt: "2026-06-07T10:00:00.000Z",
         endedAt: "2026-06-07T11:00:00.000Z",
         durationMinutes: 60,
-        subtotal: 30,
-        total: 20,
+        subtotal: centsOf(30),
+        total: centsOf(20),
         status: "settled",
         settledAt: "2026-06-07T11:00:00.000Z",
         chargeItems: [
@@ -6319,7 +6322,7 @@ describe("createPrismApp", () => {
                 id: "holding-1",
                 assetType: "currency",
                 assetCode: "currency.paid",
-                quantity: 150,
+                quantity: centsOf(150),
                 activeAt: null,
                 expiresAt: null,
               },
@@ -6328,7 +6331,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "currency.paid",
-                delta: 50,
+                delta: centsOf(50),
                 reason: "staff.asset.grant",
                 refId: "staff-1",
               },
@@ -6381,7 +6384,7 @@ describe("createPrismApp", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 150,
+          quantity: centsOf(150),
           activeAt: null,
           expiresAt: null,
         },
@@ -6390,7 +6393,7 @@ describe("createPrismApp", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          delta: 50,
+          delta: centsOf(50),
           reason: "staff.asset.grant",
           refId: "staff-1",
         },
@@ -6446,7 +6449,7 @@ describe("createPrismApp", () => {
                 id: "holding-1",
                 assetType: "currency",
                 assetCode: "currency.paid",
-                quantity: 70,
+                quantity: centsOf(70),
                 activeAt: null,
                 expiresAt: null,
               },
@@ -6455,7 +6458,7 @@ describe("createPrismApp", () => {
               {
                 assetType: "currency",
                 assetCode: "currency.paid",
-                delta: -30,
+                delta: centsOf(-30),
                 reason: "staff.asset.deduct",
                 refId: "staff-1",
               },
@@ -6505,7 +6508,7 @@ describe("createPrismApp", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "currency.paid",
-          quantity: 70,
+          quantity: centsOf(70),
           activeAt: null,
           expiresAt: null,
         },
@@ -6514,7 +6517,7 @@ describe("createPrismApp", () => {
         {
           assetType: "currency",
           assetCode: "currency.paid",
-          delta: -30,
+          delta: centsOf(-30),
           reason: "staff.asset.deduct",
           refId: "staff-1",
         },

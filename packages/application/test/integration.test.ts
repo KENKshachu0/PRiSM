@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type {
+import {
   AssetHolding,
   DeviceCommand,
   DeviceCommandRepository,
@@ -9,6 +9,8 @@ import type {
   PlayerRepository,
   Session,
   SessionRepository,
+  centsOf,
+  yuanOf,
 } from "@prism/core";
 import { PrismDomainError } from "@prism/core";
 import { createDeviceActionService, createIntegrationService } from "../src/index";
@@ -575,7 +577,7 @@ describe("createIntegrationService", () => {
       id: "holding-1",
       assetType: "currency",
       assetCode: "currency.paid",
-      quantity: 120,
+      quantity: centsOf(120),
     } satisfies AssetHolding;
     const service = createIntegrationService({
       players,
@@ -595,8 +597,8 @@ describe("createIntegrationService", () => {
             settlementPreview: {
               playerId: input.playerId,
               sessionIds: ["session-1"],
-              subtotal: 30,
-              total: 30,
+              subtotal: centsOf(30),
+              total: centsOf(30),
               status: "preview",
               previewedAt: new Date("2026-07-07T12:00:00.000Z"),
             },
@@ -607,8 +609,8 @@ describe("createIntegrationService", () => {
                 startedAt: new Date("2026-07-07T11:00:00.000Z"),
                 endedAt: new Date("2026-07-07T12:00:00.000Z"),
                 status: "closed",
-                subtotal: 30,
-                total: 30,
+                subtotal: centsOf(30),
+                total: centsOf(30),
                 chargeItems: [],
                 adjustments: [],
               },
@@ -627,8 +629,8 @@ describe("createIntegrationService", () => {
             playerSettlement: {
               playerId: input.playerId,
               sessionIds: ["session-1"],
-              subtotal: 30,
-              total: 30,
+              subtotal: centsOf(30),
+              total: centsOf(30),
               status: "settled",
               settledAt: new Date("2026-07-07T12:00:00.000Z"),
             },
@@ -636,8 +638,8 @@ describe("createIntegrationService", () => {
               {
                 settlement: {
                   sessionId: "session-1",
-                  subtotal: 30,
-                  total: 30,
+                  subtotal: centsOf(30),
+                  total: centsOf(30),
                   status: "settled",
                   settledAt: new Date("2026-07-07T12:00:00.000Z"),
                 },
@@ -688,7 +690,7 @@ describe("createIntegrationService", () => {
           calls.push(`summary:${playerId}`);
           return {
             player,
-            wallet: [{ assetCode: "currency.paid", quantity: 120 }],
+            wallet: [{ assetCode: "currency.paid", quantity: centsOf(120) }],
             activeSession: null,
           };
         },
@@ -708,7 +710,7 @@ describe("createIntegrationService", () => {
     await expect(service.getWalletByIdentity({ identityKey: "qq:123456" })).resolves.toEqual([
       {
         assetCode: "currency.paid",
-        quantity: 120,
+        quantity: centsOf(120),
       },
     ]);
     await expect(service.getAssetsByIdentity({ identityKey: "qq:123456" })).resolves.toEqual({

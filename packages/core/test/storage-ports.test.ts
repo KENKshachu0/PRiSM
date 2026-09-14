@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import type {
   AssetHolding,
@@ -198,14 +199,14 @@ describe("storage ports", () => {
           id: "holding-1",
           assetType: "currency",
           assetCode: "paid",
-          quantity: 100,
+          quantity: centsOf(100),
         }],
         deleteIds: [],
       },
       assetLedgerEntries: [{
         assetType: "currency",
         assetCode: "paid",
-        delta: 100,
+        delta: centsOf(100),
         reason: "gift.redeem",
         refId: "code-1",
       }],
@@ -229,8 +230,8 @@ describe("storage ports", () => {
     await settlements.saveSettlement({
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T10:30:00.000Z"),
       },
@@ -258,14 +259,14 @@ describe("storage ports", () => {
         id: "holding-1",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 100,
+        quantity: centsOf(100),
       },
     ]);
     await expect(assets.listLedgerEntriesByPlayerId("player-1")).resolves.toEqual([
       {
         assetType: "currency",
         assetCode: "paid",
-        delta: 100,
+        delta: centsOf(100),
         reason: "gift.redeem",
         refId: "code-1",
         transactionId: "asset-tx-1",
@@ -286,8 +287,8 @@ describe("storage ports", () => {
     await expect(settlements.findSettlementBySessionId("session-1")).resolves.toEqual({
       settlement: {
         sessionId: "session-1",
-        subtotal: 20,
-        total: 20,
+        subtotal: centsOf(20),
+        total: centsOf(20),
         status: "settled",
         settledAt: new Date("2026-06-07T10:30:00.000Z"),
       },

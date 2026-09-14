@@ -1,3 +1,4 @@
+import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createBunSqliteExecutor, createSqliteRepositories } from "@prism/adapter-sqlite";
@@ -87,7 +88,7 @@ describe("importPrismNeoMigrationPlan", () => {
           playerId: "legacy:user:7",
           assetType: "currency",
           assetCode: "paid",
-          quantity: 500,
+          quantity: centsOf(500),
           activeAt: null,
           expiresAt: null,
         },
@@ -98,7 +99,7 @@ describe("importPrismNeoMigrationPlan", () => {
           playerId: "legacy:user:7",
           assetType: "currency",
           assetCode: "paid",
-          delta: 500,
+          delta: centsOf(500),
           reason: "legacy.ADMIN_GRANT",
           refId: "legacy:user-asset:101",
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -118,8 +119,8 @@ describe("importPrismNeoMigrationPlan", () => {
         {
           settlement: {
             sessionId: "legacy:session:51",
-            subtotal: 120,
-            total: 90,
+            subtotal: centsOf(120),
+            total: centsOf(90),
             status: "settled",
             settledAt: new Date("2026-01-03T11:30:00.000Z"),
           },
@@ -257,7 +258,7 @@ describe("importPrismNeoMigrationPlan", () => {
         id: "legacy:user-asset:101",
         assetType: "currency",
         assetCode: "paid",
-        quantity: 500,
+        quantity: centsOf(500),
         activeAt: null,
         expiresAt: null,
       },
@@ -266,13 +267,13 @@ describe("importPrismNeoMigrationPlan", () => {
       {
         assetType: "currency",
         assetCode: "paid",
-        delta: 500,
+        delta: centsOf(500),
         reason: "legacy.ADMIN_GRANT",
         refId: "legacy:user-asset:101",
       },
     ]);
     expect(session?.paymentStatus).toBe("paid");
-    expect(settlement?.settlement.total).toBe(90);
+    expect(yuanOf(settlement!.settlement.total)).toBe(90);
     expect(settlement?.chargeItems).toHaveLength(1);
     expect(settlement?.adjustments).toHaveLength(1);
     const legacyPricingConfig = pricingConfigs[0];
@@ -304,7 +305,7 @@ describe("importPrismNeoMigrationPlan", () => {
     expect(commands[0]?.payload).toEqual({ count: 2, legacyCoinRecordId: 91 });
 
     const summary = await queries.playerQueries.getPlayerSummary("legacy:user:7");
-    expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: 500 }]);
+    expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: centsOf(500) }]);
     const getHistoryDetail = queries.playerQueries.getPlayerSessionHistoryDetail;
     if (!getHistoryDetail) throw new Error("Expected session history detail query to be configured.");
     const history = await getHistoryDetail("legacy:user:7", "legacy:session:51");
