@@ -7,8 +7,21 @@ import type {
   OperationLockRepository,
   GrantAssetsResult,
 } from "@prism/core";
-import { diffAssetHoldings, isPositiveQuantity, isZeroQuantity, normalizeQuantity, PrismDomainError, adjustAssets, deductCurrency, grantAssets, isActiveInWindow, quantizeMoney,
+import {
+  adjustAssets,
   centsOf,
+  deductCurrency,
+  diffAssetHoldings,
+  grantAssets,
+  isActiveInWindow,
+  isPositiveCents,
+  isPositiveQuantity,
+  isZeroCents,
+  isZeroQuantity,
+  normalizeQuantity,
+  type Cents,
+  PrismDomainError,
+  quantizeMoney,
 } from "@prism/core";
 import { withOperationLease } from "./operation-lock";
 import { sumAvailableWalletBalance, type AvailableAssetReader } from "./available-assets";
@@ -59,8 +72,8 @@ export type StaffWalletAdjustmentInput = {
 };
 
 export type StaffWalletAdjustmentResult = GrantAssetsResult & {
-  balanceBefore: number;
-  balanceAfter: number;
+  balanceBefore: Cents;
+  balanceAfter: Cents;
 };
 
 export type StaffAssetService = {
@@ -201,7 +214,7 @@ export function createStaffAssetService(dependencies: StaffAssetServiceDependenc
           refId: input.staffId,
           now,
         });
-        result = { holdings: currentHoldings.filter((holding) => isPositiveQuantity(holding.quantity)), assetLedgerEntries };
+        result = { holdings: currentHoldings.filter((holding) => isPositiveCents(holding.quantity)), assetLedgerEntries };
       }
       const transactionId = assetTransactionId(
         "staff.wallet.adjust",

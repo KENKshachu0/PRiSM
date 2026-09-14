@@ -107,8 +107,8 @@ export type StaffCheckoutOverrideInput = {
 };
 
 export type CheckoutWallet = {
-  balanceBefore: number;
-  balanceAfter: number;
+  balanceBefore: Cents;
+  balanceAfter: Cents;
 };
 
 export type PreviewPlayerCheckoutResult = {

@@ -5,7 +5,9 @@ import type {
   AssetHoldingUnavailableReason,
   AssetRepository,
 } from "@prism/core";
-import { evaluateAssetHoldingAvailability, sumCurrencyHoldings } from "@prism/core";
+import { evaluateAssetHoldingAvailability, sumCurrencyHoldings,
+  type Cents,
+} from "@prism/core";
 
 export type AvailableAsset = {
   holding: AssetHolding;
@@ -140,7 +142,7 @@ export function toAssessedAssetView(asset: AssetHoldingAssessment): AssessedAsse
 }
 
 /** Aggregates only currency holdings that the shared availability resolver accepted. */
-export function sumAvailableWalletBalance(assets: readonly AvailableAsset[]): number {
+export function sumAvailableWalletBalance(assets: readonly AvailableAsset[]): Cents {
   return sumCurrencyHoldings(assets.map((asset) => asset.holding));
 }
 
