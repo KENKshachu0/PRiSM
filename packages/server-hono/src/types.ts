@@ -399,6 +399,8 @@ export type StartPlayerSessionInput = {
   playerId: string;
   pricingConfigIds?: string[];
   label?: string;
+  /** Free-form session metadata. `createdBy: "integration"` marks Bot-owned sessions. */
+  metadata?: Record<string, unknown>;
 };
 
 export type RequestPlayerDeviceCommandInput = {
@@ -510,6 +512,7 @@ export type IntegrationWalletAdjustmentBody = IntegrationIdentityBody & {
 export type IntegrationCheckoutOverrideBody = IntegrationIdentityBody & {
   total: number;
   reason: string;
+  closeSessionsBeforeBalanceCheck?: boolean;
 };
 
 export type IntegrationDeviceActionBody = IntegrationIdentityBody & {

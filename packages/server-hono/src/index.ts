@@ -205,17 +205,6 @@ export function createPrismApp(dependencies: PrismAppDependencies): Hono {
           404,
         );
       }
-      if (error instanceof PrismDomainError && error.code === "INTEGRATION_SESSION_NOT_OWNED") {
-        return context.json(
-          {
-            error: {
-              code: error.code,
-              message: error.message,
-            },
-          },
-          403,
-        );
-      }
       throw error;
     }
   };

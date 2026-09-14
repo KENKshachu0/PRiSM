@@ -65,6 +65,12 @@ export type IntegrationWalletAdjustmentInput = IntegrationIdentityInput & {
 export type IntegrationCheckoutOverrideInput = IntegrationIdentityInput & {
   total: number;
   reason: string;
+  /**
+   * Same meaning as on `checkout`: when explicitly `false`, the balance is
+   * verified before any session is written, so a failed override leaves the
+   * session running instead of closing it as unpaid.
+   */
+  closeSessionsBeforeBalanceCheck?: boolean;
 };
 
 export type IntegrationPlayerSummary = {
@@ -168,6 +174,8 @@ export function createIntegrationService(dependencies: IntegrationServiceDepende
         playerId: player.id,
         pricingConfigIds: input.pricingConfigIds,
         label: input.label,
+        // Audit trail only: records that a Bot opened this session. It is deliberately
+        // never used to authorise anything — see stopSessionByIdentity below.
         metadata: { createdBy: "integration" },
       });
     },
@@ -238,12 +246,10 @@ export function createIntegrationService(dependencies: IntegrationServiceDepende
       if (!session || session.playerId !== player.id || session.status !== "active") {
         throw new PrismDomainError("Integration session was not found.", "INTEGRATION_SESSION_NOT_FOUND");
       }
-      if (session.metadata?.createdBy !== "integration") {
-        throw new PrismDomainError(
-          "Integration can only stop sessions it created.",
-          "INTEGRATION_SESSION_NOT_OWNED",
-        );
-      }
+      // Scope is the player, not the channel that opened the session. A Bot acting for
+      // a player may end any of that player's running sessions, including ones staff
+      // opened for them, the same way checkout has always worked. Do not reintroduce a
+      // check on `metadata.createdBy`: it only describes who opened the session.
       return dependencies.playerCheckoutCommands.stopSession({
         playerId: player.id,
         sessionId: input.sessionId,
@@ -319,6 +325,7 @@ export function createIntegrationService(dependencies: IntegrationServiceDepende
         playerId: player.id,
         total: input.total,
         reason: input.reason,
+        closeSessionsBeforeBalanceCheck: input.closeSessionsBeforeBalanceCheck,
       });
     },
   };

@@ -61,7 +61,7 @@ Integration player actions 都在 `/rpc/integration/players/by-identity/*` 下�
 | `POST /session/start` | 给玩家开启一条计费 session。 |
 | `POST /checkout/preview` | 预览玩家当前 session 结算。 |
 | `POST /checkout/confirm` | 确认玩家当前 session 结算。 |
-| `POST /sessions/:sessionId/stop` | 停止这名玩家由 Integration 创建的某一条 session。 |
+| `POST /sessions/:sessionId/stop` | 停止这名玩家名下的某一条 session，不论它由谁开启。 |
 | `POST /wallet` | 查看玩家钱包。 |
 | `POST /assets` | 查看玩家资产与流水。 |
 | `POST /history` | 查看玩家计时记录。 |
@@ -87,7 +87,9 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/sessi
 
 如果 `autoRegister` 为 `false` 或未传，而身份没有绑定玩家，接口会返回 `PLAYER_IDENTITY_NOT_FOUND` 和 HTTP 404。
 
-`POST /sessions/:sessionId/stop` 只用于结束这名玩家名下由 Integration 创建的 session，例如 AstrBot 创建的麻将叠加计时。它会把 session 关闭并标记为待结算，不会扣款；玩家最终离店时，统一结算会把仍在运行的 session 和已经停止但未结算的 session 一起计算。接口会校验外部身份对应的玩家、session 归属和 session 来源，不能拿一个 Integration Token 去停别人的 session 或员工手动创建的 session。
+`POST /sessions/:sessionId/stop` 用于结束某一条 session 的计时但不结账，典型场景是 AstrBot 的麻将叠加计时：一张桌子每人各持一条平级 session，有人下桌只停他自己那一条，其余人继续。它会把 session 关闭并标记为待结算，不会扣款；玩家最终离店时，统一结算会把仍在运行的 session 和已经停止但未结算的 session 一起计算。
+
+授权边界是**玩家**，不是开启渠道：接口校验外部身份对应的玩家与 session 归属，拿一个 Integration Token 停不了别人的 session；但在这名玩家名下，无论 session 是机器人开的、扫码入口开的还是员工在后台开的，都可以停。计费和结账历来不区分开启渠道，停表也一致。session 上的 `metadata.createdBy` 只记录来源供审计，不参与任何鉴权判断。
 
 没有单独的客户端 SDK；集成直接调用 HTTP API。以下示例使用平台原生 `fetch`：
 

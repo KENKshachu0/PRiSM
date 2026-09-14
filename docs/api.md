@@ -287,7 +287,7 @@ Integration RPC 面向聊天机器人、自助入口、扫码入口等可信外�
 | `POST` | `/rpc/integration/players/by-identity/session/start` | 按外部身份为玩家开启一条计费 session，可传 `pricingConfigIds` 与 `label`。 |
 | `POST` | `/rpc/integration/players/by-identity/checkout/preview` | 按外部身份预览玩家当前 session 结算。 |
 | `POST` | `/rpc/integration/players/by-identity/checkout/confirm` | 按外部身份确认玩家当前 session 结算。 |
-| `POST` | `/rpc/integration/players/by-identity/sessions/:sessionId/stop` | 按外部身份停止这名玩家由 Integration 创建的单条 session，只结束计时并保留待结算，不立即扣款。 |
+| `POST` | `/rpc/integration/players/by-identity/sessions/:sessionId/stop` | 按外部身份停止这名玩家名下的单条 session，只结束计时并保留待结算，不立即扣款。授权按玩家归属校验，不区分 session 由哪个渠道开启。 |
 | `POST` | `/rpc/integration/players/by-identity/wallet` | 按外部身份读取玩家钱包总览。 |
 | `POST` | `/rpc/integration/players/by-identity/assets` | 按外部身份读取玩家资产持有与流水。 |
 | `POST` | `/rpc/integration/players/by-identity/history` | 按外部身份读取玩家计时记录。 |

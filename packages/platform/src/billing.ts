@@ -267,7 +267,14 @@ export function dependencies(c: C, shop: BillingShop): PrismAppDependencies {
           ...input,
           autoRegister: !!shop.auto_register,
         });
-        return startEntry({ ...input, playerId: player.id });
+        // Keep the audit trail consistent with the specialist branch below: every Bot
+        // entry session should record that a Bot opened it. Authorisation is scoped by
+        // player, never by this marker.
+        return startEntry({
+          ...input,
+          playerId: player.id,
+          metadata: { createdBy: "integration" },
+        });
       },
     };
   const checkout = deps.playerCheckoutCommands;

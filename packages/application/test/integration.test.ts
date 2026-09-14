@@ -841,7 +841,7 @@ describe("createIntegrationService", () => {
     expect(sessions.saved).toContainEqual(stopped);
   });
 
-  it("does not stop sessions belonging to another player or sessions not created by integration", async () => {
+  it("stops the referenced player's session whichever channel opened it, but never another player's", async () => {
     const player = {
       id: "player-1",
       displayName: "A",
@@ -876,6 +876,7 @@ describe("createIntegrationService", () => {
         paymentStatus: "unpaid",
       },
     ]);
+    const stopped: Array<{ playerId: string; sessionId: string }> = [];
     const service = createIntegrationService({
       players,
       playerIdentities: identities,
@@ -895,8 +896,17 @@ describe("createIntegrationService", () => {
         async checkout() {
           throw new Error("not used");
         },
-        async stopSession() {
-          throw new Error("integration stop should reject before stopSession");
+        async stopSession(input: { playerId: string; sessionId: string }) {
+          stopped.push(input);
+          return {
+            id: input.sessionId,
+            playerId: input.playerId,
+            startedAt: new Date("2026-07-07T10:00:00.000Z"),
+            endedAt: new Date("2026-07-07T10:30:00.000Z"),
+            status: "closed" as const,
+            pricingConfigIds: ["music"],
+            paymentStatus: "unpaid" as const,
+          };
         },
       },
       now: () => new Date("2026-07-07T10:30:00.000Z"),
@@ -906,9 +916,15 @@ describe("createIntegrationService", () => {
     await expect(
       service.stopSessionByIdentity({ identityKey: "qq:123456", sessionId: "other-player-session" }),
     ).rejects.toMatchObject({ code: "INTEGRATION_SESSION_NOT_FOUND" });
-    await expect(
-      service.stopSessionByIdentity({ identityKey: "qq:123456", sessionId: "staff-created-session" }),
-    ).rejects.toMatchObject({ code: "INTEGRATION_SESSION_NOT_OWNED" });
+
+    // Which channel opened a session is not an authorisation boundary here — only who
+    // the session belongs to is. A staff-opened session for the same player is stoppable.
+    const result = await service.stopSessionByIdentity({
+      identityKey: "qq:123456",
+      sessionId: "staff-created-session",
+    });
+    expect(result.status).toBe("closed");
+    expect(stopped).toEqual([{ playerId: "player-1", sessionId: "staff-created-session" }]);
   });
 
   it("updates player display name when identity is resolved with a different displayName", async () => {

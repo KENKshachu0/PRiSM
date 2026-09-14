@@ -104,7 +104,7 @@ PRiSM Next 是一款单店、可自托管的场馆运营核心系统。系统支
 
 已实现的辅助业务切片：
 
-- 场次启动/结束生命周期。同一玩家可同时拥有多个平级 active session；这些 session 不区分主次，现场页按玩家聚合展示，最终由玩家级统一结算处理未结 session。Integration 创建的 session 会带有来源 metadata，Integration 只能停止自己创建且属于当前外部身份玩家的 session，停止后仍保持未结算状态。
+- 场次启动/结束生命周期。同一玩家可同时拥有多个平级 active session；这些 session 不区分主次，现场页按玩家聚合展示，最终由玩家级统一结算处理未结 session。Integration 创建的 session 会带有来源 metadata，该 metadata 仅用于审计：停止 session 的授权边界是玩家归属，而非开启渠道，因此 Integration 可以停止当前外部身份玩家名下的任意一条 session（停止后仍保持未结算状态），但停不了别人的。
 - 新玩家注册统一经过 Staff Player 应用服务；当 `player.registration.defaultPresentId` 指向有效礼物时，按礼物中当前有效的 grants 生成一次 `player.register.present` 资产交易。默认礼物未配置、已归档、过期或不存在时只跳过发放，不阻断玩家注册。
 - 优先级计费引擎：支持星期、指定日期、绝对日期范围、跨天区间（按开始日匹配）、时间舍入单位、宽限期、方案内封顶、跨场次历史计费封顶，以及用于叠加抵扣 session 的负数单价规则。支持设备操作与首次宽限联动（操作设备即产生费用）：若玩家在计费场次内触发了除门禁 `door.open` 外的有效设备动作（如 `coin` 投币、`aime.scan` 刷卡、`power.on`/`power.off` 电源开关、空调等），该场次自动标记为已操作设备（`metadata.deviceOperated: true`，结算时亦可通过命令流水回溯补齐），并立即使首次进店免单宽限失效，收取至少 1 个计费单位基础费用（即使即时登出或游玩不足 1 分钟；后续尾数取整宽限保留不受影响）；未操作任何设备的玩家在宽限期内离场依然享受免费离场。每个 session 保留原始正负计费贡献，只在玩家级统一结账完成全部 session 汇总后将最终应付金额限制为不低于 `0`。每次统一结账会写入一条 `player_checkouts`，并以 `settlements.checkout_id` 关联其中全部 session；营业报表直接汇总这个持久化批次，不再用相同时间戳猜测哪些 session 属于同一单。全局封顶时间轴使用同一套时间匹配规则，但不产生费用项；它在资产和手动改单等后置优惠之前，对选中的按时计费方案合计做二次封顶，并把历史写入 `pricing_cap_history_entries`。员工展示按该规则锚定的封顶窗口聚合历史和本次参与金额；达到上限时显示封顶后的最终金额，而不是本次封顶调整的差额。
 - `0013_player_checkouts.sql` 是报表读模型的必需迁移：它为历史 settlements 建立统一 checkout 并补齐 `checkout_id`，因此运行时报表不保留旧的按玩家和相同结算时间猜测批次的分支。

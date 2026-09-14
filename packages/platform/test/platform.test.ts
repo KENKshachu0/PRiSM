@@ -1462,3 +1462,106 @@ test("staff can bind a player code without Bot credentials, scoped by shop and r
   expect((await request(endpoint, { code: third.code, qq: confirm.qq })).status).toBe(200);
   expect(await env.DB.prepare("SELECT player_id FROM shop_player_accounts WHERE shop_id=? AND user_id='u'").bind(shop).first()).toEqual({ player_id: binding!.player_id });
 });
+
+test("a Bot stops the referenced player's sessions regardless of which channel opened them", async () => {
+  const shop = "bot-stop";
+  await env.DB.prepare(
+    "INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES (?,?,?,35,139,80,'u')",
+  ).bind(shop, shop, shop).run();
+  await env.DB.prepare(
+    "INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES (?,'bot','Bot','integration','test',?,'active','2026-01-01')",
+  ).bind(shop, createHash("sha256").update(`${shop}-bot`).digest("hex")).run();
+  await env.DB.prepare(
+    `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
+     VALUES (?,'entry-rule','charge.fixed','Entry',1,'active',?,'2026-01-01','2026-01-01')`,
+  ).bind(shop, JSON.stringify({ id: "entry-rule", label: "Entry", amount: 12 })).run();
+  await env.DB.prepare(
+    "INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,entry_pricing_ids_json) VALUES (?,1,0,?)",
+  ).bind(shop, JSON.stringify(["entry-rule"])).run();
+  for (const [id, subject] of [["bot-owner", "777001"], ["someone-else", "777002"]] as const) {
+    await env.DB.prepare(
+      "INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES (?,?,?,'active','2026-01-01')",
+    ).bind(shop, id, id).run();
+    await env.DB.prepare(
+      "INSERT INTO player_identities(shop_id,player_id,provider,subject,created_at) VALUES (?,?,'qq',?,'2026-01-01')",
+    ).bind(shop, id, subject).run();
+  }
+
+  const base = `/api/v1/shops/${shop}/integration/players/by-identity`;
+  const body = { identity: { provider: "qq", subject: "777001" } };
+  const started = await request(base + "/session/start", body, `${shop}-bot`);
+  expect(started.status).toBe(200);
+  const sessionId = ((await started.json()) as { data: { session: { id: string } } }).data.session.id;
+
+  // Source metadata is recorded for audit, and is not what authorises the stop.
+  const recorded = await env.DB.prepare(
+    "SELECT metadata_json FROM sessions WHERE shop_id=? AND id=?",
+  ).bind(shop, sessionId).first<{ metadata_json: string | null }>();
+  expect(recorded?.metadata_json).toContain("integration");
+  expect((await request(`${base}/sessions/${sessionId}/stop`, body, `${shop}-bot`)).status).toBe(200);
+
+  // A session this Bot never opened, but which belongs to the same player, is stoppable too.
+  const staffSessionId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO sessions(shop_id,id,player_id,started_at,status,pricing_config_ids_json,payment_status,label,metadata_json)
+     VALUES (?,?,'bot-owner','2026-01-01T00:00:00.000Z','active','["entry-rule"]','unpaid','staff-opened',NULL)`,
+  ).bind(shop, staffSessionId).run();
+  expect((await request(`${base}/sessions/${staffSessionId}/stop`, body, `${shop}-bot`)).status).toBe(200);
+  const closed = await env.DB.prepare(
+    "SELECT status FROM sessions WHERE shop_id=? AND id=?",
+  ).bind(shop, staffSessionId).first<{ status: string }>();
+  expect(closed?.status).toBe("closed");
+
+  // Another player's session stays out of reach.
+  const other = await request(base + "/session/start", { identity: { provider: "qq", subject: "777002" } }, `${shop}-bot`);
+  expect(other.status).toBe(200);
+  const otherSessionId = ((await other.json()) as { data: { session: { id: string } } }).data.session.id;
+  const cross = await request(`${base}/sessions/${otherSessionId}/stop`, body, `${shop}-bot`);
+  expect(cross.status).toBe(404);
+  expect(await cross.json()).toMatchObject({ error: { code: "INTEGRATION_SESSION_NOT_FOUND" } });
+});
+
+test("a Bot checkout override without funds keeps the session running instead of closing it unpaid", async () => {
+  const shop = "bot-override";
+  await env.DB.prepare(
+    "INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES (?,?,?,35,139,80,'u')",
+  ).bind(shop, shop, shop).run();
+  await env.DB.prepare(
+    "INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES (?,'bot','Bot','integration','test',?,'active','2026-01-01')",
+  ).bind(shop, createHash("sha256").update(`${shop}-bot`).digest("hex")).run();
+  await env.DB.prepare(
+    `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
+     VALUES (?,'entry-rule','charge.fixed','Entry',1,'active',?,'2026-01-01','2026-01-01')`,
+  ).bind(shop, JSON.stringify({ id: "entry-rule", label: "Entry", amount: 12 })).run();
+  await env.DB.prepare(
+    "INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,entry_pricing_ids_json) VALUES (?,1,0,?)",
+  ).bind(shop, JSON.stringify(["entry-rule"])).run();
+  await env.DB.prepare(
+    "INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES (?,'broke','No funds','active','2026-01-01')",
+  ).bind(shop).run();
+  await env.DB.prepare(
+    "INSERT INTO player_identities(shop_id,player_id,provider,subject,created_at) VALUES (?,'broke','qq','777002','2026-01-01')",
+  ).bind(shop).run();
+
+  const base = `/api/v1/shops/${shop}/integration/players/by-identity`;
+  const body = { identity: { provider: "qq", subject: "777002" } };
+  const started = await request(base + "/session/start", body, `${shop}-bot`);
+  expect(started.status).toBe(200);
+  const sessionId = ((await started.json()) as { data: { session: { id: string } } }).data.session.id;
+
+  // The player holds no balance at all, so the override cannot be paid.
+  const denied = await request(
+    base + "/checkout/override",
+    { ...body, total: 12, reason: "test" },
+    `${shop}-bot`,
+  );
+  expect(denied.status).toBe(409);
+  expect(await denied.json()).toMatchObject({ error: { code: "INSUFFICIENT_BALANCE" } });
+
+  // The platform asks integrations to verify the balance before closing sessions, so
+  // the failed payment must not strand the session as closed-and-unpaid.
+  const session = await env.DB.prepare(
+    "SELECT status, payment_status FROM sessions WHERE shop_id=? AND id=?",
+  ).bind(shop, sessionId).first<{ status: string; payment_status: string }>();
+  expect(session).toEqual({ status: "active", payment_status: "unpaid" });
+});
