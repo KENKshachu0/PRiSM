@@ -632,7 +632,7 @@ function toPlayerCheckoutPreview(
     pricingCapAdjustments: details.globalCapAdjustments,
     wallet: {
       balanceBefore: details.walletBalanceBefore,
-      balanceAfter: details.walletBalanceBefore - details.total,
+      balanceAfter: subCents(details.walletBalanceBefore, centsOf(details.total)),
     },
     globalCapWindows: details.globalCapWindows,
   };

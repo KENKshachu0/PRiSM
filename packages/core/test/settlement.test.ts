@@ -1,16 +1,24 @@
-import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   type AssetEffectProvider,
   type AssetHolding,
   type PricingProvider,
+  centsOf,
+  centsOfInteger,
   deductCurrency,
   diffAssetHoldings,
+  isPositiveCents,
   isPositiveQuantity,
+  minCents,
+  negCents,
   PrismDomainError,
   previewSessionSettlement,
   quantizeMoney,
   settleSession,
+  subCents,
+  sumCents,
+  yuanOf,
+  ZERO_CENTS,
 } from "../src/index";
 
 describe("settleSession", () => {
@@ -862,10 +870,11 @@ describe("settlement money precision", () => {
     expect(diffAssetHoldings(before, nextHoldings).deleteIds).toEqual(["free-1"]);
   });
 
-  it("ignores a residue-only holding rather than emitting a zero-value ledger entry", async () => {
+  it("ignores an empty holding rather than emitting a zero-value ledger entry", async () => {
     const holdings: AssetHolding[] = [
-      // What `1.00 - 10 x 0.10` used to leave behind.
-      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOf(13877787807814457e-16) },
+      // Under integer cents a sub-cent residue cannot exist: it is simply zero,
+      // and a zero balance must never be selected or emit a ledger entry.
+      { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: ZERO_CENTS },
       { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: centsOf(1) },
     ];
 
@@ -896,7 +905,7 @@ describe("settlement money precision", () => {
         { assetType: "currency", assetCode: "currency.paid", quantity: centsOf(100) },
       ],
       overrideTotal: {
-        total: centsOf(33.333333333333336),
+        total: 33.333333333333336,
         id: "override-1",
         source: "staff.override",
         label: "Manual override",
@@ -920,7 +929,7 @@ describe("settlement money precision", () => {
               id: `charge-${index}`,
               source: "unit-charges",
               label: "Unit charge",
-              amount: centsOf(0.1),
+              amount: 0.1,
             }));
           },
         },
@@ -947,36 +956,34 @@ describe("settlement money precision", () => {
         if (owedCents === 0) continue;
         checked++;
 
-        const free = freeCents / 100;
-        const paid = paidCents / 100;
-        const owed = owedCents / 100;
+        const freeYuan = freeCents / 100;
+        const paidYuan = paidCents / 100;
+        const owedYuan = owedCents / 100;
 
         // What the old raw comparison did, recorded so the regression stays
         // visible: this is the count of payments the player could afford and
         // the settlement refused anyway.
-        if (free + paid < owed) {
+        if (freeYuan + paidYuan < owedYuan) {
           naiveRefusals++;
-          if (naiveExamples.length < 3) naiveExamples.push(`${free} + ${paid} < ${owed}`);
+          if (naiveExamples.length < 3) naiveExamples.push(`${freeYuan} + ${paidYuan} < ${owedYuan}`);
         }
 
         const holdings: AssetHolding[] = [
-          { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOf(free) },
-          { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: centsOf(paid) },
+          { id: "free-1", assetType: "currency", assetCode: "currency.free", quantity: centsOfInteger(freeCents) },
+          { id: "paid-1", assetType: "currency", assetCode: "currency.paid", quantity: centsOfInteger(paidCents) },
         ];
 
         const entries = deductCurrency(holdings, {
-          amount: centsOf(owed),
+          amount: centsOfInteger(owedCents),
           reason: "session.settlement",
           refId: "session-grid",
           now: session.endedAt,
         });
 
-        // Every individual delta is a canonical cent amount. Summing them the way
-        // the application does — through the shared helper, which quantises the
-        // total — keeps the result canonical; a raw `+=` over many rows is what
-        // drifts, which is why `sumMoney` exists.
-        const deducted = quantizeMoney(entries.reduce((sum, entry) => sum + entry.delta, 0));
-        expect(deducted).toBe(-owed);
+        // Integer arithmetic: the parts always sum to exactly what was charged,
+        // with no tolerance and no residue.
+        const deducted = sumCents(entries.map((entry) => entry.delta));
+        expect(Number(deducted)).toBe(-owedCents);
         expect(holdings.every((holding) => holding.quantity === 0)).toBe(true);
       }
     }

@@ -18,6 +18,7 @@ import type {
   Session,
   TimeCapPricingWindow,
 } from "@prism/core";
+import { intOf, yuanOf } from "@prism/core";
 import type { StaffUserView } from "./types";
 import type {
   PlayerAssets,
@@ -57,11 +58,13 @@ export function toPlayerAssetsView(
   return {
     holdings: assets.holdings.map((holding) => ({
       ...holding,
+      quantity: holding.assetType === "currency" ? yuanOf(holding.quantity) : intOf(holding.quantity),
       activeAt: holding.activeAt?.toISOString() ?? null,
       expiresAt: holding.expiresAt?.toISOString() ?? null,
     })),
     ledgerEntries: assets.ledgerEntries.map((entry) => ({
       ...entry,
+      delta: entry.assetType === "currency" ? yuanOf(entry.delta) : intOf(entry.delta),
       createdAt: entry.createdAt.toISOString(),
     })),
   };
@@ -76,8 +79,8 @@ export function toSessionHistoryView(
       startedAt: session.startedAt.toISOString(),
       endedAt: session.endedAt?.toISOString() ?? null,
       durationMinutes: session.durationMinutes,
-      subtotal: session.subtotal,
-      total: session.total,
+      subtotal: session.subtotal === null ? null : yuanOf(session.subtotal),
+      total: session.total === null ? null : yuanOf(session.total),
       status: session.status,
       settledAt: session.settledAt?.toISOString() ?? null,
     })),
@@ -104,8 +107,8 @@ export function toSessionHistoryDetailView(
       startedAt: session.startedAt.toISOString(),
       endedAt: session.endedAt?.toISOString() ?? null,
       durationMinutes: session.durationMinutes,
-      subtotal: session.subtotal,
-      total: session.total,
+      subtotal: session.subtotal === null ? null : yuanOf(session.subtotal),
+      total: session.total === null ? null : yuanOf(session.total),
       status: session.status,
       settledAt: session.settledAt?.toISOString() ?? null,
       chargeItems: session.chargeItems,
@@ -256,8 +259,8 @@ export function toStaffReportSettlementView(
     endedAt: settlement.endedAt?.toISOString() ?? null,
     settledAt: settlement.settledAt.toISOString(),
     durationMinutes: settlement.durationMinutes,
-    subtotal: settlement.subtotal,
-    total: settlement.total,
+    subtotal: yuanOf(settlement.subtotal),
+    total: yuanOf(settlement.total),
   };
 }
 

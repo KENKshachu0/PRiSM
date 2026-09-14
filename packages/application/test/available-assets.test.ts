@@ -115,7 +115,7 @@ describe("createAvailableAssetReader", () => {
     });
 
     const available = await reader.listPlayerAvailableAssets("player-1", { includeHidden: true });
-    expect(sumAvailableWalletBalance(available)).toBe(10);
+    expect(yuanOf(sumAvailableWalletBalance(available))).toBe(10);
   });
 });
 

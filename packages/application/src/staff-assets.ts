@@ -9,6 +9,7 @@ import type {
 } from "@prism/core";
 import {
   adjustAssets,
+  addCents,
   centsOf,
   deductCurrency,
   diffAssetHoldings,
@@ -235,7 +236,7 @@ export function createStaffAssetService(dependencies: StaffAssetServiceDependenc
         holdingChanges: diffAssetHoldings(existingHoldings, result.holdings),
         assetLedgerEntries: result.assetLedgerEntries,
       });
-      return { ...result, balanceBefore, balanceAfter: normalizeQuantity(balanceBefore + amount) };
+      return { ...result, balanceBefore, balanceAfter: addCents(balanceBefore, centsOf(amount)) };
       });
     },
   };

@@ -619,7 +619,7 @@ describe("createIntegrationService", () => {
             adjustments: [],
             checkoutAdjustments: [],
             pricingCapAdjustments: [],
-            wallet: { balanceBefore: 120, balanceAfter: 90 },
+            wallet: { balanceBefore: centsOf(120), balanceAfter: centsOf(90) },
             globalCapWindows: [],
           };
         },
@@ -660,7 +660,7 @@ describe("createIntegrationService", () => {
             checkoutAdjustments: [],
             pricingCapAdjustments: [],
             assetLedgerEntries: [],
-            wallet: { balanceBefore: 120, balanceAfter: 90 },
+            wallet: { balanceBefore: centsOf(120), balanceAfter: centsOf(90) },
             globalCapWindows: [],
           };
         },

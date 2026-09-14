@@ -1,4 +1,4 @@
-import { centsOf, yuanOf } from "@prism/core";
+import { ZERO_CENTS, centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   adjustAssets,
@@ -595,12 +595,12 @@ describe("asset holdings money precision", () => {
 });
 
 describe("currency balance helpers", () => {
-  it("classifies a residue-only holding as out of quantity", () => {
+  it("classifies a empty holding as out of quantity", () => {
     const evaluation = evaluateAssetHoldingAvailability({
       holding: {
         assetType: "currency",
         assetCode: "currency.free",
-        quantity: centsOf(13877787807814457e-16),
+        quantity: ZERO_CENTS,
       },
       definition: null,
       at: new Date("2026-06-07T10:00:00.000Z"),

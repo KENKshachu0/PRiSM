@@ -1,4 +1,6 @@
-import { centsOf, PrismDomainError } from "@prism/core";
+import { centsOf, PrismDomainError,
+  centsOfInteger,
+} from "@prism/core";
 import { sqlShop, shopValues } from "./shop-scope";
 import type {
   CheckoutCommit,
@@ -1994,7 +1996,7 @@ function toAssetHolding(row: AssetHoldingRow): AssetHolding {
     id: row.id,
     assetType: row.asset_type,
     assetCode: row.asset_code,
-    quantity: centsOf(row.quantity),
+    quantity: centsOfInteger(row.quantity),
     activeAt: row.active_at ? new Date(row.active_at) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
   };
@@ -2079,7 +2081,7 @@ function toAssetLedgerEntry(row: AssetLedgerEntryRow): AssetLedgerEntry {
   return {
     assetType: row.asset_type,
     assetCode: row.asset_code,
-    delta: centsOf(row.delta),
+    delta: centsOfInteger(row.delta),
     reason: row.reason,
     refId: row.ref_id,
     ...(row.transaction_id ? { transactionId: row.transaction_id } : {}),
@@ -2219,8 +2221,8 @@ function toRedeemRecord(row: RedeemRecordRow): RedeemRecord {
 function toSettlement(row: SettlementRow): SettlementRecord["settlement"] {
   return {
     sessionId: row.session_id,
-    subtotal: centsOf(row.subtotal),
-    total: centsOf(row.total),
+    subtotal: centsOfInteger(row.subtotal),
+    total: centsOfInteger(row.total),
     status: row.status,
     settledAt: new Date(row.settled_at),
   };

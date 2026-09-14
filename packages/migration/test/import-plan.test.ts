@@ -309,6 +309,6 @@ describe("importPrismNeoMigrationPlan", () => {
     const getHistoryDetail = queries.playerQueries.getPlayerSessionHistoryDetail;
     if (!getHistoryDetail) throw new Error("Expected session history detail query to be configured.");
     const history = await getHistoryDetail("legacy:user:7", "legacy:session:51");
-    expect(history?.total).toBe(90);
+    expect(yuanOf(history!.total!)).toBe(90);
   });
 });

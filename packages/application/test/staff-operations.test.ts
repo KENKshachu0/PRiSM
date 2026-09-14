@@ -1,3 +1,4 @@
+import { centsOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { createStaffOperationsService } from "../src/staff-operations";
 
@@ -59,7 +60,7 @@ it('live list skips empty venues and bounds preview concurrency to four players'
         playerReads++;
         expect(input?.playerIds).toEqual(ids);
         return ids.map(id => ({id, displayName: id, status: 'active' as const,
-          walletTotal: 10, activeSessionId: `s-${id}`,
+          walletTotal: centsOf(10), activeSessionId: `s-${id}`,
           identities: [{provider: 'qq', subject: id, createdAt: now}],
         }));
       },

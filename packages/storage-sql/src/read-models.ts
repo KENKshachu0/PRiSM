@@ -1,4 +1,6 @@
-import { type Cents, centsOf, quantizeMoney, ZERO_CENTS } from "@prism/core";
+import { type Cents, centsOf, quantizeMoney, ZERO_CENTS,
+  centsOfInteger,
+} from "@prism/core";
 import { sqlShop } from "./shop-scope";
 import type {
   ApplicationQueries,
@@ -415,8 +417,8 @@ async function listReportSettlements(
       endedAt,
       settledAt: new Date(row.settled_at),
       durationMinutes: endedAt ? Math.floor((endedAt.getTime() - startedAt.getTime()) / 60_000) : null,
-      subtotal: row.subtotal,
-      total: row.total,
+      subtotal: centsOfInteger(row.subtotal),
+      total: centsOfInteger(row.total),
     };
   });
 }
@@ -613,8 +615,8 @@ function toSessionHistoryListItem(row: SessionHistoryRow): SessionHistoryListIte
     startedAt,
     endedAt,
     durationMinutes: endedAt ? Math.floor((endedAt.getTime() - startedAt.getTime()) / 60_000) : null,
-    subtotal: row.subtotal,
-    total: row.total,
+    subtotal: row.subtotal === null ? null : centsOfInteger(row.subtotal),
+    total: row.total === null ? null : centsOfInteger(row.total),
     status: row.settlement_status === "settled" ? "settled" : row.session_status,
     settledAt: row.settled_at ? new Date(row.settled_at) : null,
   };
@@ -728,7 +730,7 @@ async function listPlayerAssets(
       assetType: row.asset_type,
       assetCode: row.asset_code,
       assetName: row.asset_name,
-      delta: row.delta,
+      delta: centsOfInteger(row.delta),
       reason: row.reason,
       refId: row.ref_id,
       transactionId: row.transaction_id,
@@ -780,7 +782,7 @@ function assessAssetHoldingRow(
     id: row.holding_id ?? row.id,
     assetType: row.asset_type!,
     assetCode: row.asset_code!,
-    quantity: centsOf(row.quantity!),
+    quantity: centsOfInteger(row.quantity!),
     activeAt: row.holding_active_at ? new Date(row.holding_active_at) : null,
     expiresAt: row.holding_expires_at ? new Date(row.holding_expires_at) : null,
   };

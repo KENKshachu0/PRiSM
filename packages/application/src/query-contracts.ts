@@ -1,5 +1,6 @@
 import type {
   AssetHoldingUnavailableReason,
+  Cents,
   DeviceCommand,
   DeviceCommandType,
   DeviceState,
@@ -27,7 +28,7 @@ export type PlayerAssetHoldingListItem = {
   assetType: string;
   assetCode: string;
   assetName: string | null;
-  quantity: number;
+  quantity: Cents;
   activeAt: Date | null;
   expiresAt: Date | null;
   metadata: Record<string, unknown> | null;
@@ -40,7 +41,7 @@ export type PlayerAssetLedgerListItem = {
   assetType: string;
   assetCode: string;
   assetName: string;
-  delta: number;
+  delta: Cents;
   reason: string;
   refId: string;
   transactionId: string | null;
@@ -57,8 +58,8 @@ export type SessionHistoryListItem = {
   startedAt: Date;
   endedAt: Date | null;
   durationMinutes: number | null;
-  subtotal: number | null;
-  total: number | null;
+  subtotal: Cents | null;
+  total: Cents | null;
   status: "active" | "closed" | "settled";
   settledAt: Date | null;
 };
@@ -104,7 +105,7 @@ export type StaffPlayerListItem = {
   id: string;
   displayName: string;
   status: "active" | "disabled" | "banned";
-  walletTotal: number;
+  walletTotal: Cents;
   activeSessionId: string | null;
   hasUnpaidSession?: boolean;
   identities?: Array<{
@@ -165,8 +166,8 @@ export type StaffReportSettlementListItem = {
   endedAt: Date | null;
   settledAt: Date;
   durationMinutes: number | null;
-  subtotal: number;
-  total: number;
+  subtotal: Cents;
+  total: Cents;
 };
 
 export type StaffReportPlayerListItem = {

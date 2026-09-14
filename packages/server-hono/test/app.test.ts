@@ -1911,7 +1911,7 @@ describe("createPrismApp", () => {
             ],
             checkoutAdjustments: [],
             pricingCapAdjustments: [],
-            wallet: { balanceBefore: 100, balanceAfter: 85 },
+            wallet: { balanceBefore: centsOf(100), balanceAfter: centsOf(85) },
             globalCapWindows: [],
           };
         },
@@ -1977,7 +1977,7 @@ describe("createPrismApp", () => {
       checkoutAdjustments: [],
       pricingCapAdjustments: [],
       globalCapWindows: [],
-      wallet: { balanceBefore: 100, balanceAfter: 85 },
+      wallet: { balanceBefore: centsOf(100), balanceAfter: centsOf(85) },
     });
   });
 
@@ -2069,7 +2069,7 @@ describe("createPrismApp", () => {
                 refId: "session-1",
               },
             ],
-            wallet: { balanceBefore: 100, balanceAfter: 80 },
+            wallet: { balanceBefore: centsOf(100), balanceAfter: centsOf(80) },
             globalCapWindows: [],
           };
         },
@@ -2144,7 +2144,7 @@ describe("createPrismApp", () => {
           refId: "session-1",
         },
       ],
-      wallet: { balanceBefore: 100, balanceAfter: 80 },
+      wallet: { balanceBefore: centsOf(100), balanceAfter: centsOf(80) },
     });
   });
 
@@ -2261,7 +2261,7 @@ describe("createPrismApp", () => {
                 refId: "session-1",
               },
             ],
-            wallet: { balanceBefore: 100, balanceAfter: 95 },
+            wallet: { balanceBefore: centsOf(100), balanceAfter: centsOf(95) },
             globalCapWindows: [],
           };
         },
@@ -2591,7 +2591,7 @@ describe("createPrismApp", () => {
                 amount: -8,
               },
             ],
-            wallet: { balanceBefore: 0, balanceAfter: -12 },
+            wallet: { balanceBefore: centsOf(0), balanceAfter: centsOf(-12) },
             globalCapWindows: [
               {
                 key: "cap-1@night@2026-06-06T14:00:00.000Z",
@@ -2757,7 +2757,7 @@ describe("createPrismApp", () => {
                 refId: "session-1",
               },
             ],
-            wallet: { balanceBefore: 100, balanceAfter: 80 },
+            wallet: { balanceBefore: centsOf(100), balanceAfter: centsOf(80) },
             globalCapWindows: [],
           };
         },
@@ -2905,7 +2905,7 @@ describe("createPrismApp", () => {
               id: "player-1",
               displayName: "A",
               status: "active",
-              walletTotal: 132,
+              walletTotal: centsOf(132),
               activeSessionId: "session-1",
             },
           ];
@@ -3010,7 +3010,7 @@ describe("createPrismApp", () => {
             adjustments: [],
             checkoutAdjustments: [],
             pricingCapAdjustments: [],
-            wallet: { balanceBefore: 0, balanceAfter: 0 },
+            wallet: { balanceBefore: centsOf(0), balanceAfter: centsOf(0) },
             globalCapWindows: [
               {
                 key: "night:2026-06-07",
@@ -3083,7 +3083,7 @@ describe("createPrismApp", () => {
           identities: [],
           displayName: "A",
           status: "active",
-          walletTotal: 132,
+          walletTotal: centsOf(132),
           stayDurationMinutes: 120,
           estimatedTotal: 56,
           globalCapWindows: [
@@ -3232,8 +3232,8 @@ describe("createPrismApp", () => {
             pricingCapAdjustments: [],
             assetLedgerEntries: [],
             wallet: {
-              balanceBefore: 100,
-              balanceAfter: isPlayer1 ? 80 : 90,
+              balanceBefore: centsOf(100),
+              balanceAfter: centsOf(isPlayer1 ? 80 : 90),
             },
             globalCapWindows: [],
           };
@@ -4098,14 +4098,14 @@ describe("createPrismApp", () => {
               id: "player-1",
               displayName: "Neri",
               status: "active",
-              walletTotal: 100,
+              walletTotal: centsOf(100),
               activeSessionId: "session-1",
             },
             {
               id: "player-2",
               displayName: "Guest",
               status: "disabled",
-              walletTotal: 0,
+              walletTotal: centsOf(0),
               activeSessionId: null,
             },
           ];
@@ -4143,14 +4143,14 @@ describe("createPrismApp", () => {
           id: "player-1",
           displayName: "Neri",
           status: "active",
-          walletTotal: 100,
+          walletTotal: centsOf(100),
           activeSessionId: "session-1",
         },
         {
           id: "player-2",
           displayName: "Guest",
           status: "disabled",
-          walletTotal: 0,
+          walletTotal: centsOf(0),
           activeSessionId: null,
         },
       ],

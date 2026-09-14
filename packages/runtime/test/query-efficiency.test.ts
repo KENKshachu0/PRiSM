@@ -1,3 +1,4 @@
+import { centsOf } from "@prism/core";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createBunSqliteExecutor } from "@prism/adapter-sqlite";
@@ -72,7 +73,7 @@ test("runtime read models execute one SQL statement each", async () => {
   const summary = await queries.playerQueries.getPlayerSummary("player-1");
   expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: 10 }]);
   await expect(queries.staffQueries.listPlayers()).resolves.toEqual([
-    expect.objectContaining({ id: "player-1", walletTotal: 10 }),
+    expect.objectContaining({ id: "player-1", walletTotal: centsOf(10) }),
   ]);
   const playerAssets = await queries.playerQueries.listPlayerAssets!("player-1");
   expect(playerAssets.holdings.map((holding) => holding.assetName)).toEqual(["余额"]);

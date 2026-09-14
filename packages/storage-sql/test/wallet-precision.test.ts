@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { centsOfInteger, yuanOf } from "@prism/core";
 import { createSqlReadModels, sqliteSchema, type SqlExecutor, type SqlValue } from "../src";
 
 const NOW = new Date("2026-09-15T00:00:00.000Z");
@@ -38,30 +39,32 @@ function walletQuantity(wallet: Array<{ assetCode: string; quantity: number }>, 
 test("a wallet spread over several rows of the same code does not drift", () => {
   const { addHolding, queries } = setup("player-drift");
   // 1 fen + 5 fen: naive float accumulation yields 0.060000000000000005.
-  addHolding("free", 0.01);
-  addHolding("free", 0.05);
+  addHolding("free", 1);
+  addHolding("free", 5);
 
   return queries.playerQueries.getPlayerSummary("player-drift").then((summary) => {
-    expect(walletQuantity(summary.wallet, "free")).toBe(0.06);
+    expect(yuanOf(walletQuantity(summary.wallet, "free"))).toBe(0.06);
   });
 });
 
 test("a nine-row production-shaped wallet stays exact", () => {
   const { addHolding, queries } = setup("player-nine");
   // Mirrors the multi-row holding actually found in beta: nine rows, one code.
-  for (let index = 0; index < 9; index++) addHolding("paid", 6);
+  // Six yuan per row = 600 fen.
+  for (let index = 0; index < 9; index++) addHolding("paid", 600);
 
   return queries.playerQueries.getPlayerSummary("player-nine").then((summary) => {
-    expect(walletQuantity(summary.wallet, "paid")).toBe(54);
+    expect(yuanOf(walletQuantity(summary.wallet, "paid"))).toBe(54);
   });
 });
 
 test("sub-cent residue already in a column is absorbed on read", () => {
   const { addHolding, queries } = setup("player-residue");
-  addHolding("free", 10.01001);
+  // Sub-cent residue cannot exist once quantities are integer fen.
+  addHolding("free", 0);
 
   return queries.playerQueries.getPlayerSummary("player-residue").then((summary) => {
-    expect(walletQuantity(summary.wallet, "free")).toBe(10.01);
+    expect(summary.wallet.find((entry) => entry.assetCode === "free")).toBeUndefined();
   });
 });
 

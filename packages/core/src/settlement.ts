@@ -91,8 +91,8 @@ export type SettlementRecord = {
 
 export type SettlementPreview = {
   sessionId: string;
-  subtotal: number;
-  total: number;
+  subtotal: Cents;
+  total: Cents;
   status: "preview";
   previewedAt: Date;
 };
@@ -197,8 +197,8 @@ export async function previewSessionSettlement(input: SettleSessionInput): Promi
   return {
     settlementPreview: {
       sessionId: input.session.id,
-      subtotal,
-      total,
+      subtotal: centsOf(subtotal),
+      total: centsOf(total),
       status: "preview",
       previewedAt: input.now,
     },

@@ -1,3 +1,4 @@
+import { centsOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { sqliteSchema } from "@prism/storage-sql";
@@ -557,7 +558,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
         {
           id: "player-1",
           displayName: "Neri",
-          walletTotal: 1980,
+          walletTotal: centsOf(1980),
           activeSessionId: null,
         },
       ],
@@ -595,7 +596,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
       players: [
         {
           id: "player-1",
-          walletTotal: 2030,
+          walletTotal: centsOf(2030),
         },
       ],
     });
@@ -1037,7 +1038,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
     const staffAfterRedeem = (await staffAfterRedeemResponse.json()) as { players: Array<{ id: string; walletTotal: number }> };
     expect(staffAfterRedeem.players.find((player) => player.id === "player-1")).toMatchObject({
       id: "player-1",
-      walletTotal: 1056,
+      walletTotal: centsOf(1056),
     });
 
     const revokeResponse = await app.request(`/rpc/staff/redeem-codes/${redeemCode.redeemCode.id}/revoke`, {
@@ -1212,7 +1213,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
     const staffAfterAdjust = (await staffAfterAdjustResponse.json()) as { players: Array<{ id: string; walletTotal: number }> };
     expect(staffAfterAdjust.players.find((player) => player.id === "player-1")).toMatchObject({
       id: "player-1",
-      walletTotal: 45,
+      walletTotal: centsOf(45),
     });
 
     const reportsResponse = await app.request(

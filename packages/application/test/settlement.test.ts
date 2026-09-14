@@ -293,7 +293,7 @@ describe("createSettlementService", () => {
     });
 
     expect(result.settlementPreview.total).toBe(20);
-    expect(result.wallet).toEqual({ balanceBefore: 100, balanceAfter: 80 });
+    expect(result.wallet).toEqual({ balanceBefore: centsOf(100), balanceAfter: centsOf(80) });
     expect(sessions.saved).toEqual([
       {
         id: "session-1",
@@ -354,7 +354,7 @@ describe("createSettlementService", () => {
     });
 
     const preview = await service.previewCheckout({ playerId: "player-1" });
-    expect(preview.wallet).toEqual({ balanceBefore: 0, balanceAfter: -20 });
+    expect(preview.wallet).toEqual({ balanceBefore: centsOf(0), balanceAfter: centsOf(-20) });
     await expect(service.checkout({
       playerId: "player-1",
       closeSessionsBeforeBalanceCheck: false,
