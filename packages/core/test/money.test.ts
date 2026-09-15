@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   MONEY_EPSILON,
@@ -23,8 +24,8 @@ import {
   quantizeMoney,
   subCents,
   subUnits,
-  fromInt,
-  intOf,
+  assetQuantityOf,
+  assetQuantityToNatural,
   sumCents,
   sumMoney,
   sumUnits,
@@ -50,10 +51,7 @@ describe("quantizeMoney", () => {
     expect(quantizeMoney(0.004)).toBe(0);
     expect(quantizeMoney(0.005)).toBe(0.01);
     expect(quantizeMoney(0.006)).toBe(0.01);
-    // 1.005 is stored fractionally *below* 1.005, so it rounds down. Sub-cent
-    // input never reaches the domain in the first place — the API boundary
-    // rejects or quantises it — so this only documents the direction.
-    expect(quantizeMoney(1.005)).toBe(1);
+    expect(quantizeMoney(1.005)).toBe(1.01);
   });
 
   it("never returns negative zero", () => {
@@ -185,14 +183,11 @@ describe("centsOf / yuanOf", () => {
     expect(n(centsOf(1919042))).toBe(191904200);
   });
 
-  it("resolves sub-cent input by its stored double, not by decimal intuition", () => {
-    // Out-of-contract input is quantised by the double the runtime actually
-    // holds: 1.005 is really 1.00499999999999989..., so it lands on 1.00.
-    expect(n(centsOf(1.005))).toBe(100);
-    // 0.005 is really 0.005000000000000000104..., so it lands on 0.01.
+  it("rounds decimal input half away from zero without binary multiplication", () => {
+    expect(n(centsOf(1.005))).toBe(101);
     expect(n(centsOf(0.005))).toBe(1);
     expect(n(centsOf(-0.005))).toBe(-1);
-    expect(n(centsOf(-1.005))).toBe(-100);
+    expect(n(centsOf(-1.005))).toBe(-101);
   });
 
   it("never produces negative zero", () => {
@@ -373,38 +368,23 @@ describe("the two brands do not mix", () => {
   });
 });
 
-describe("intOf / fromInt", () => {
-  it("reads a scaled value back as a whole-unit count", () => {
-    expect(intOf(fromInt(1))).toBe(1);
-    expect(intOf(fromInt(2))).toBe(2);
-    expect(intOf(fromInt(0))).toBe(0);
-    expect(intOf(fromInt(-3))).toBe(-3);
-    // The stored form of one coupon is 100.
-    expect(intOf(centsOfInteger(100))).toBe(1);
+describe("asset quantities use their own units", () => {
+  it("stores money in cents and coupons and tickets as whole counts", () => {
+    expect(n(assetQuantityOf("currency", 1.23))).toBe(123);
+    expect(assetQuantityToNatural("currency", centsOfInteger(123))).toBe(1.23);
+    for (const type of ["coupon", "ticket"]) {
+      expect(n(assetQuantityOf(type, 1))).toBe(1);
+      expect(assetQuantityToNatural(type, centsOfInteger(1))).toBe(1);
+      expect(() => assetQuantityOf(type, 0.5)).toThrow();
+    }
   });
 
-  it("wraps a whole count as the scaled value", () => {
-    expect(n(fromInt(1))).toBe(100);
-    expect(n(fromInt(0))).toBe(0);
-    expect(n(fromInt(-3))).toBe(-300);
-  });
-
-  it("is the count counterpart of the yuan pair", () => {
-    // Money: yuan in, cents stored, yuan out.
-    expect(n(centsOf(1.01))).toBe(101);
-    expect(yuanOf(centsOf(1.01))).toBe(1.01);
-    // Counts: units in, hundredths stored, units out.
-    expect(n(fromInt(1))).toBe(100);
-    expect(intOf(fromInt(1))).toBe(1);
-  });
-
-  it("rounds a drifted count back to the count it represents", () => {
-    expect(intOf(centsOfInteger(101))).toBe(1);
-    expect(intOf(centsOfInteger(149))).toBe(1);
-    expect(intOf(centsOfInteger(150))).toBe(2);
-  });
-
-  it("refuses a fractional count", () => {
-    expect(() => fromInt(0.5)).toThrow();
+  it("rejects unsafe inputs and arithmetic overflow", () => {
+    const largest = centsOfInteger(Number.MAX_SAFE_INTEGER);
+    expect(() => centsOfInteger(Number.MAX_SAFE_INTEGER + 1)).toThrow();
+    expect(() => centsOf(Number.MAX_SAFE_INTEGER)).toThrow();
+    expect(() => addCents(largest, centsOfInteger(1))).toThrow();
+    expect(() => mulDivRound(largest, 2, 1, "half")).toThrow();
+    expect(() => allocate(largest, [Number.MAX_SAFE_INTEGER + 1])).toThrow();
   });
 });

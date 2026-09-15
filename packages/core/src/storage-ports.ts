@@ -5,6 +5,7 @@ import type { PricingConfig } from "./pricing-config";
 import type { Present, RedeemCode, RedeemRecord } from "./redeem";
 import type { Session } from "./session";
 import type { PastAppliedAdjustment, PlayerCheckout, SettlementRecord } from "./settlement";
+import type { Cents } from "./money";
 
 export type CheckoutCommit = {
   assets: Parameters<AssetRepository["commitAssetTransaction"]>[0];
@@ -30,7 +31,7 @@ export type PricingHistoryEntry = {
   ruleId: string;
   ruleAnchorAt: Date;
   sessionId: string;
-  amount: number;
+  amount: Cents;
   createdAt: Date;
   metadata: Record<string, unknown> | null;
 };
@@ -50,7 +51,7 @@ export type PricingCapHistoryEntry = {
   capAnchorAt: Date;
   includedPricingConfigIds: string[];
   sessionIds: string[];
-  amount: number;
+  amount: Cents;
   createdAt: Date;
   metadata: Record<string, unknown> | null;
 };
@@ -264,7 +265,7 @@ export type PricingHistoryRepository = {
   sumByPlayerAndKeys(
     playerId: string,
     keys: readonly PricingHistoryLookupKey[],
-  ): Promise<Record<string, number>>;
+  ): Promise<Record<string, Cents>>;
   appendEntries(entries: readonly PricingHistoryEntry[]): Promise<void>;
 };
 
@@ -272,7 +273,7 @@ export type PricingCapHistoryRepository = {
   sumByPlayerAndKeys(
     playerId: string,
     keys: readonly PricingCapHistoryLookupKey[],
-  ): Promise<Record<string, number>>;
+  ): Promise<Record<string, Cents>>;
   appendEntries(entries: readonly PricingCapHistoryEntry[]): Promise<void>;
 };
 

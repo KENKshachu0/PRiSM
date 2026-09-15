@@ -1,4 +1,4 @@
-import { isNegativeQuantity, PrismDomainError, quantizeMoney } from "@prism/core";
+import { centsOf, PrismDomainError } from "@prism/core";
 import type { BusinessItem, BusinessItemRepository } from "@prism/core";
 
 export type StaffCreateBusinessItemInput = {
@@ -30,8 +30,8 @@ export function createStaffBusinessItemService(
 ): StaffBusinessItemService {
   return {
     async createBusinessItem(input) {
-      const price = quantizeMoney(input.price);
-      validateBusinessItemInput({ ...input, price });
+      const price = centsOf(input.price);
+      validateBusinessItemInput(input);
       const now = dependencies.now();
       const item: BusinessItem = {
         id: dependencies.id(),
@@ -87,7 +87,7 @@ export function createStaffBusinessItemService(
 }
 
 function validateBusinessItemInput(input: StaffCreateBusinessItemInput): void {
-  if (!Number.isFinite(input.price) || isNegativeQuantity(input.price)) {
+  if (!Number.isFinite(input.price) || input.price < 0) {
     throw new PrismDomainError("Business item price must be a non-negative finite number.", "INVALID_BUSINESS_ITEM_PRICE");
   }
   if (input.activeAt && input.expiresAt && input.activeAt >= input.expiresAt) {

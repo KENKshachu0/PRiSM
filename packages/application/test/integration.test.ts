@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetHolding,
@@ -719,10 +720,10 @@ describe("createIntegrationService", () => {
     });
     await expect(service.getHistoryByIdentity({ identityKey: "qq:123456" })).resolves.toEqual([]);
     await expect(service.previewCheckoutByIdentity({ identityKey: "qq:123456" })).resolves.toMatchObject({
-      settlementPreview: { total: 30 },
+      settlementPreview: { total: moneyFixture(30) },
     });
     await expect(service.confirmCheckoutByIdentity({ identityKey: "qq:123456" })).resolves.toMatchObject({
-      playerSettlement: { total: 30 },
+      playerSettlement: { total: moneyFixture(30) },
     });
     await expect(service.redeemByIdentity({ identityKey: "qq:123456", code: "GIFT" })).resolves.toMatchObject({
       redeemRecord: { playerId: "player-1" },

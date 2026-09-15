@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
@@ -215,7 +216,7 @@ describe("runtime entrypoints", () => {
                     id: `${context.session.id}:locker`,
                     source: "plugin.locker",
                     label: "储物柜",
-                    amount: 30,
+                    amount: moneyFixture(30),
                   },
                 ];
               },
@@ -387,7 +388,7 @@ describe("runtime entrypoints", () => {
                       id: `${context.session.id}:entry-ticket`,
                       source: "plugin.entry-ticket",
                       label: "入场票",
-                      amount: 45,
+                      amount: moneyFixture(45),
                     },
                   ];
                 },

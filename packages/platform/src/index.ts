@@ -7,6 +7,7 @@ import {
   claimDeviceCoin,
 } from "./devices";
 import { PrismDomainError } from "@prism/core";
+import { serializePricingProviderConfig } from "@prism/storage-sql";
 import {
   registerBillingRoutes,
   getBillingShop,
@@ -860,7 +861,7 @@ app.post("/api/v1/merchant/shops", async (c) => {
     statements.push(
       c.env.DB.prepare(
         "INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at) VALUES (?,?,'time.priority','标准入场',1,'active',?,?,?)",
-      ).bind(shopId, ruleId, JSON.stringify(provider), now, now),
+      ).bind(shopId, ruleId, JSON.stringify(serializePricingProviderConfig(provider)), now, now),
     );
     statements.push(
       c.env.DB.prepare(

@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf } from "@prism/core";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -71,7 +72,7 @@ test("runtime read models execute one SQL statement each", async () => {
   }));
 
   const summary = await queries.playerQueries.getPlayerSummary("player-1");
-  expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: 10 }]);
+  expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: moneyFixture(10) }]);
   await expect(queries.staffQueries.listPlayers()).resolves.toEqual([
     expect.objectContaining({ id: "player-1", walletTotal: centsOf(10) }),
   ]);
@@ -102,16 +103,16 @@ test("reports use persisted unified checkout totals instead of inferring batches
     );
     db.run(
       "INSERT INTO settlements (id, session_id, subtotal, total, status, settled_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [`settlement-${sessionId}`, sessionId, total, total, "settled", settledAt],
+      [`settlement-${sessionId}`, sessionId, centsOf(total), centsOf(total), "settled", settledAt],
     );
   }
   db.run(
     "INSERT INTO player_checkouts (id, player_id, subtotal, total, status, settled_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ["checkout-main", "player-1", 7, 7, "settled", "2026-07-14T10:00:00.000Z"],
+    ["checkout-main", "player-1", centsOf(7), centsOf(7), "settled", "2026-07-14T10:00:00.000Z"],
   );
   db.run(
     "INSERT INTO player_checkouts (id, player_id, subtotal, total, status, settled_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ["checkout-zero", "player-1", -4, 0, "settled", "2026-07-14T11:00:00.000Z"],
+    ["checkout-zero", "player-1", centsOf(-4), 0, "settled", "2026-07-14T11:00:00.000Z"],
   );
   db.run(
     "UPDATE settlements SET checkout_id = ? WHERE session_id IN (?, ?)",
@@ -132,7 +133,7 @@ test("reports use persisted unified checkout totals instead of inferring batches
   };
 
   await expect(queries.staffQueries.getReportsSummary!(range)).resolves.toMatchObject({
-    revenueTotal: 7,
+    revenueTotal: moneyFixture(7),
     sessionCount: 3,
   });
   await expect(queries.staffQueries.listReportPlayers!({
@@ -140,7 +141,7 @@ test("reports use persisted unified checkout totals instead of inferring batches
     limit: 10,
   })).resolves.toEqual([expect.objectContaining({
     playerId: "player-1",
-    revenueTotal: 7,
+    revenueTotal: moneyFixture(7),
     settlementCount: 3,
   })]);
 });

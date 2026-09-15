@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { type Cents, centsOfInteger, yuanOf } from "@prism/core";
@@ -33,14 +34,14 @@ function setup(playerId: string) {
 function walletQuantity(wallet: Array<{ assetCode: string; quantity: number }>, code: string): Cents {
   const found = wallet.find((entry) => entry.assetCode === code);
   if (!found) throw new Error("wallet has no entry for " + code + ": " + JSON.stringify(wallet));
-  return found.quantity;
+  return integerFixture(found.quantity);
 }
 
 test("a wallet spread over several rows of the same code does not drift", () => {
   const { addHolding, queries } = setup("player-drift");
   // 1 fen + 5 fen: naive float accumulation yields 0.060000000000000005.
-  addHolding("free", 1);
-  addHolding("free", 5);
+  addHolding("free", integerFixture(1));
+  addHolding("free", integerFixture(5));
 
   return queries.playerQueries.getPlayerSummary("player-drift").then((summary) => {
     expect(yuanOf(walletQuantity(summary.wallet, "free"))).toBe(0.06);
@@ -51,7 +52,7 @@ test("a nine-row production-shaped wallet stays exact", () => {
   const { addHolding, queries } = setup("player-nine");
   // Mirrors the multi-row holding actually found in beta: nine rows, one code.
   // Six yuan per row = 600 fen.
-  for (let index = 0; index < 9; index++) addHolding("paid", 600);
+  for (let index = 0; index < 9; index++) addHolding("paid", integerFixture(600));
 
   return queries.playerQueries.getPlayerSummary("player-nine").then((summary) => {
     expect(yuanOf(walletQuantity(summary.wallet, "paid"))).toBe(54);
@@ -61,7 +62,7 @@ test("a nine-row production-shaped wallet stays exact", () => {
 test("sub-cent residue already in a column is absorbed on read", () => {
   const { addHolding, queries } = setup("player-residue");
   // Sub-cent residue cannot exist once quantities are integer fen.
-  addHolding("free", 0);
+  addHolding("free", integerFixture(0));
 
   return queries.playerQueries.getPlayerSummary("player-residue").then((summary) => {
     expect(summary.wallet.find((entry) => entry.assetCode === "free")).toBeUndefined();
@@ -70,7 +71,7 @@ test("sub-cent residue already in a column is absorbed on read", () => {
 
 test("zero-quantity rows are not reported as balance", () => {
   const { addHolding, queries } = setup("player-empty");
-  addHolding("free", 0);
+  addHolding("free", integerFixture(0));
 
   return queries.playerQueries.getPlayerSummary("player-empty").then((summary) => {
     expect(summary.wallet.find((entry) => entry.assetCode === "free")).toBeUndefined();

@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -129,7 +130,7 @@ describe("importPrismNeoMigrationPlan", () => {
               id: "legacy:billing-record:401",
               source: "legacy.billing-rule.2",
               label: "Legacy billing record 401",
-              amount: 90,
+              amount: moneyFixture(90),
             },
           ],
           adjustments: [
@@ -137,7 +138,7 @@ describe("importPrismNeoMigrationPlan", () => {
               id: "legacy:session-cost-delta:51",
               source: "legacy.session",
               label: "Legacy final cost delta",
-              amount: -30,
+              amount: moneyFixture(-30),
             },
           ],
         },
@@ -174,7 +175,7 @@ describe("importPrismNeoMigrationPlan", () => {
           ruleId: "legacy.rule.2",
           ruleAnchorAt: new Date("2026-01-01T00:00:00.000Z"),
           sessionId: "legacy:billing-record:401",
-          amount: 90,
+          amount: moneyFixture(90),
           createdAt: new Date("2026-01-03T11:30:00.000Z"),
           metadata: null,
         },
@@ -290,7 +291,7 @@ describe("importPrismNeoMigrationPlan", () => {
         },
       ]),
     ).resolves.toEqual({
-      [`${legacyPricingConfig.id}@legacy.time-priority@legacy.rule.2@2026-01-01T00:00:00.000Z`]: 90,
+      [`${legacyPricingConfig.id}@legacy.time-priority@legacy.rule.2@2026-01-01T00:00:00.000Z`]: moneyFixture(90),
     });
     expect(redeemCodes[0]?.code).toBe("ABC123");
     expect(present?.grants[0]?.assetCode).toBe("paid");

@@ -1,10 +1,15 @@
 import {
-  compareMoney,
+  centsOf,
+  compareCents,
   isActiveInWindow,
-  isPositiveQuantity,
-  normalizeQuantity,
-  quantizeMoney,
-  sumMoney,
+  isPositiveCents,
+  minCents,
+  negCents,
+  mulDivRound,
+  subCents,
+  sumCents,
+  ZERO_CENTS,
+  type Cents,
   type AssetDefinition,
   type AssetDefinitionRepository,
   type AssetEffectProvider,
@@ -35,10 +40,10 @@ export function createAssetDefinitionEffectProvider(
   return {
     id: "asset-definition.metadata-effects",
     async apply(context) {
-      if (!isPositiveQuantity(context.subtotal)) return [];
+      if (!isPositiveCents(context.subtotal)) return [];
 
       const adjustments: SettlementAdjustment[] = [];
-      let remainingSubtotal = quantizeMoney(context.subtotal);
+      let remainingSubtotal = context.subtotal;
       const timeZone = context.timeZone ?? "Asia/Shanghai";
       const definitions = new Map(
         (await assetDefinitions.listAll()).map((definition) => [
@@ -50,9 +55,9 @@ export function createAssetDefinitionEffectProvider(
       const remainingChargeAmounts = new Map(context.chargeItems.map((item) => [item.id, item.amount]));
 
       for (let holdingIndex = 0; holdingIndex < context.assetHoldings.length; holdingIndex++) {
-        if (!isPositiveQuantity(remainingSubtotal)) break;
+        if (!isPositiveCents(remainingSubtotal)) break;
         const holding = context.assetHoldings[holdingIndex];
-        if (!isPositiveQuantity(holding.quantity)) continue;
+        if (!isPositiveCents(holding.quantity)) continue;
 
         const definition = definitions.get(assetDefinitionKey(holding.assetType, holding.assetCode));
         const effectiveAt = definition && isActiveInWindow(definition, context.session.startedAt)
@@ -79,13 +84,13 @@ export function createAssetDefinitionEffectProvider(
           ? context.chargeItems.filter((item) => isChargeItemEligibleForAssetEffect(item, config))
           : null;
         if (targetedCharges) {
-          const targetedRemaining = sumMoney(
-            targetedCharges.map((item) => remainingChargeAmounts.get(item.id) ?? 0),
+          const targetedRemaining = sumCents(
+            targetedCharges.map((item) => remainingChargeAmounts.get(item.id) ?? ZERO_CENTS),
           );
-          eligibleSubtotal = quantizeMoney(Math.min(remainingSubtotal, targetedRemaining));
+          eligibleSubtotal = minCents(remainingSubtotal, targetedRemaining);
         }
-        if (!isPositiveQuantity(eligibleSubtotal)) continue;
-        if (config.minSubtotal && compareMoney(eligibleSubtotal, config.minSubtotal) < 0) continue;
+        if (!isPositiveCents(eligibleSubtotal)) continue;
+        if (config.minSubtotal && compareCents(eligibleSubtotal, centsOf(config.minSubtotal)) < 0) continue;
 
         if (config.limitPerDay) {
           const today = calendarDayAt(effectiveAt, timeZone);
@@ -98,16 +103,16 @@ export function createAssetDefinitionEffectProvider(
         }
 
         const discountAmount = calculateAssetEffectDiscount(eligibleSubtotal, config);
-        if (!isPositiveQuantity(discountAmount)) continue;
+        if (!isPositiveCents(discountAmount)) continue;
 
         if (targetedCharges) {
           let toDeduct = discountAmount;
           for (const item of targetedCharges) {
-            if (!isPositiveQuantity(toDeduct)) break;
-            const current = remainingChargeAmounts.get(item.id) ?? 0;
-            const deducted = Math.min(current, toDeduct);
-            remainingChargeAmounts.set(item.id, normalizeQuantity(current - deducted));
-            toDeduct = normalizeQuantity(toDeduct - deducted);
+            if (!isPositiveCents(toDeduct)) break;
+            const current = remainingChargeAmounts.get(item.id) ?? ZERO_CENTS;
+            const deducted = minCents(current, toDeduct);
+            remainingChargeAmounts.set(item.id, subCents(current, deducted));
+            toDeduct = subCents(toDeduct, deducted);
           }
         }
 
@@ -120,9 +125,9 @@ export function createAssetDefinitionEffectProvider(
           id: adjId,
           source: assetDefinitionEffectSource(holding.assetType, holding.assetCode),
           label: definition.name,
-          amount: -discountAmount,
+          amount: negCents(discountAmount),
         });
-        remainingSubtotal = normalizeQuantity(remainingSubtotal - discountAmount);
+        remainingSubtotal = subCents(remainingSubtotal, discountAmount);
       }
 
       return adjustments;
@@ -166,16 +171,16 @@ export function isAssetEffectConfigAvailable(
 }
 
 export function calculateAssetEffectDiscount(
-  subtotal: number,
+  subtotal: Cents,
   config: AssetSettlementEffectConfig,
-): number {
+): Cents {
   if (config.type === "free") return subtotal;
-  if (config.type === "discount") return quantizeMoney(Math.min(subtotal, config.value ?? 0));
+  if (config.type === "discount") return minCents(subtotal, centsOf(config.value ?? 0));
   if (config.type === "percentage-discount") {
-    const discount = subtotal * ((config.value ?? 0) / 100);
-    return quantizeMoney(discount);
+    const percentageBasisPoints = centsOf(config.value ?? 0);
+    return mulDivRound(subtotal, percentageBasisPoints, 10_000, "half");
   }
-  return 0;
+  return centsOf(0);
 }
 
 export function isChargeItemEligibleForAssetEffect(

@@ -202,7 +202,7 @@ describe("sqliteSchema", () => {
     expect(db.query("SELECT COUNT(DISTINCT checkout_id) AS count FROM settlements").get()).toEqual({ count: 1 });
   });
 
-  it("declares money and balance columns as decimal-capable values", () => {
+  it("declares money and balance columns as integer values", () => {
     const db = new Database(":memory:");
     db.run("PRAGMA foreign_keys = ON");
     for (const statement of sqliteSchema) {
@@ -216,16 +216,16 @@ describe("sqliteSchema", () => {
         )
         .get(tableName, columnName)?.type;
 
-    expect(columnType("asset_holdings", "quantity")).toBe("REAL");
-    expect(columnType("asset_ledger_entries", "delta")).toBe("REAL");
-    expect(columnType("pricing_effects", "value")).toBe("REAL");
-    expect(columnType("settlements", "subtotal")).toBe("REAL");
-    expect(columnType("settlements", "total")).toBe("REAL");
-    expect(columnType("settlement_charge_items", "amount")).toBe("REAL");
-    expect(columnType("settlement_adjustments", "amount")).toBe("REAL");
-    expect(columnType("pricing_history_entries", "amount")).toBe("REAL");
-    expect(columnType("business_items", "price")).toBe("REAL");
-    expect(columnType("business_item_orders", "price")).toBe("REAL");
+    expect(columnType("asset_holdings", "quantity")).toBe("INTEGER");
+    expect(columnType("asset_ledger_entries", "delta")).toBe("INTEGER");
+    expect(columnType("pricing_effects", "value")).toBe("INTEGER");
+    expect(columnType("settlements", "subtotal")).toBe("INTEGER");
+    expect(columnType("settlements", "total")).toBe("INTEGER");
+    expect(columnType("settlement_charge_items", "amount")).toBe("INTEGER");
+    expect(columnType("settlement_adjustments", "amount")).toBe("INTEGER");
+    expect(columnType("pricing_history_entries", "amount")).toBe("INTEGER");
+    expect(columnType("business_items", "price")).toBe("INTEGER");
+    expect(columnType("business_item_orders", "price")).toBe("INTEGER");
   });
 
   it("persists sessions, asset holdings, ledger entries, redeem records, and device commands", () => {

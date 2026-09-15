@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   type AssetEffectProvider,
@@ -31,7 +32,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "manual-package",
             label: "One song package",
-            amount: 12,
+            amount: moneyFixture(12),
           },
         ];
       },
@@ -69,7 +70,7 @@ describe("settleSession", () => {
         id: "charge-1",
         source: "manual-package",
         label: "One song package",
-        amount: 12,
+        amount: moneyFixture(12),
       },
     ]);
     expect(result.assetLedgerEntries).toEqual([
@@ -111,7 +112,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "cover-charge",
             label: "Cover charge",
-            amount: 30,
+            amount: moneyFixture(30),
           },
         ];
       },
@@ -157,7 +158,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "cover-charge",
             label: "Cover charge",
-            amount: 20,
+            amount: moneyFixture(20),
           },
         ];
       },
@@ -246,7 +247,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "cover-charge",
             label: "Cover charge",
-            amount: 12,
+            amount: moneyFixture(12),
           },
         ];
       },
@@ -315,7 +316,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "mutating-plugin",
             label: "Mutating plugin charge",
-            amount: 12,
+            amount: moneyFixture(12),
           },
         ];
       },
@@ -383,7 +384,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "time-pricing",
             label: "Time charge",
-            amount: 20,
+            amount: moneyFixture(20),
           },
         ];
       },
@@ -397,7 +398,7 @@ describe("settleSession", () => {
             id: "adjustment-1",
             source: "coupon.fixed-off",
             label: "Coupon fixed discount",
-            amount: -6,
+            amount: moneyFixture(-6),
           },
         ];
       },
@@ -434,7 +435,7 @@ describe("settleSession", () => {
         id: "adjustment-1",
         source: "coupon.fixed-off",
         label: "Coupon fixed discount",
-        amount: -6,
+        amount: moneyFixture(-6),
       },
     ]);
     expect(result.assetLedgerEntries).toEqual([
@@ -464,7 +465,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "time-pricing",
             label: "Time charge",
-            amount: 20,
+            amount: moneyFixture(20),
           },
         ];
       },
@@ -481,7 +482,7 @@ describe("settleSession", () => {
                 id: "pass-active",
                 source: "pass.active",
                 label: "Active pass",
-                amount: -20,
+                amount: moneyFixture(-20),
               },
             ]
           : [];
@@ -501,19 +502,19 @@ describe("settleSession", () => {
         {
           assetType: "pass",
           assetCode: "pass.expired",
-          quantity: centsOf(1),
+          quantity: integerFixture(1),
           expiresAt: new Date("2026-06-07T09:59:59.000Z"),
         },
         {
           assetType: "pass",
           assetCode: "pass.future",
-          quantity: centsOf(1),
+          quantity: integerFixture(1),
           activeAt: new Date("2026-06-08T00:00:00.000Z"),
         },
         {
           assetType: "pass",
           assetCode: "pass.active",
-          quantity: centsOf(1),
+          quantity: integerFixture(1),
           activeAt: new Date("2026-06-01T00:00:00.000Z"),
           expiresAt: new Date("2026-06-08T00:00:00.000Z"),
         },
@@ -534,7 +535,7 @@ describe("settleSession", () => {
             id: "charge-1",
             source: "time-pricing",
             label: "Short visit",
-            amount: 4,
+            amount: moneyFixture(4),
           },
         ];
       },
@@ -548,7 +549,7 @@ describe("settleSession", () => {
             id: "adjustment-1",
             source: "pass.workday",
             label: "Workday pass benefit",
-            amount: -10,
+            amount: moneyFixture(-10),
           },
         ];
       },
@@ -587,13 +588,13 @@ describe("settleSession", () => {
             id: "charge-positive",
             source: "split-pricing",
             label: "Base Rate",
-            amount: 25,
+            amount: moneyFixture(25),
           },
           {
             id: "charge-negative",
             source: "split-pricing",
             label: "Discount Rule",
-            amount: -10,
+            amount: moneyFixture(-10),
           },
         ];
       },
@@ -630,13 +631,13 @@ describe("settleSession", () => {
             id: "charge-positive",
             source: "excess-discount",
             label: "Base Rate",
-            amount: 25,
+            amount: moneyFixture(25),
           },
           {
             id: "charge-negative",
             source: "excess-discount",
             label: "Discount Rule",
-            amount: -40,
+            amount: moneyFixture(-40),
           },
         ];
       },
@@ -684,7 +685,7 @@ describe("previewSessionSettlement", () => {
                 id: "charge-1",
                 source: "time",
                 label: "Time charge",
-                amount: 20,
+                amount: moneyFixture(20),
               },
             ];
           },
@@ -699,7 +700,7 @@ describe("previewSessionSettlement", () => {
                 id: "coupon-1",
                 source: "coupon",
                 label: "Coupon",
-                amount: -5,
+                amount: moneyFixture(-5),
               },
             ];
           },
@@ -729,7 +730,7 @@ describe("previewSessionSettlement", () => {
           id: "charge-1",
           source: "time",
           label: "Time charge",
-          amount: 20,
+          amount: moneyFixture(20),
         },
       ],
       adjustments: [
@@ -737,7 +738,7 @@ describe("previewSessionSettlement", () => {
           id: "coupon-1",
           source: "coupon",
           label: "Coupon",
-          amount: -5,
+          amount: moneyFixture(-5),
         },
       ],
       assetHoldings: [
@@ -764,7 +765,7 @@ describe("settlement money precision", () => {
     return {
       id: "time-pricing",
       quote() {
-        return [{ id: "charge-1", source: "time-pricing", label: "Time charge", amount }];
+        return [{ id: "charge-1", source: "time-pricing", label: "Time charge", amount: moneyFixture(amount) }];
       },
     };
   }
@@ -914,7 +915,7 @@ describe("settlement money precision", () => {
     });
 
     expect(yuanOf(result.settlement.total)).toBe(33.33);
-    expect(result.adjustments[0]!.amount).toBe(13.33);
+    expect(result.adjustments[0]!.amount).toBe(moneyFixture(13.33));
     expect(yuanOf(result.assetLedgerEntries[0]!.delta)).toBe(-33.33);
   });
 
@@ -929,7 +930,7 @@ describe("settlement money precision", () => {
               id: `charge-${index}`,
               source: "unit-charges",
               label: "Unit charge",
-              amount: 0.1,
+              amount: centsOf(0.1),
             }));
           },
         },

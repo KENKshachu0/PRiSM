@@ -2,7 +2,7 @@ import { PrismDomainError } from "./errors";
 import {
   type Cents,
   addCents,
-  centsOf,
+  assetQuantityOf,
   isNegativeCents,
   isPositiveCents,
   sumCents,
@@ -77,12 +77,8 @@ export type AssetHoldingChanges = {
  * Builds the write set for a current-holdings projection without treating a
  * player's complete inventory as a replaceable document.
  *
- * Quantity comparison here is deliberately exact (`===`) rather than
- * tolerance-based: this is a "did anything change?" test for persistence, and
- * every caller is expected to have run its quantities through
- * `normalizeQuantity` first so the values are canonical. An error on the strict
- * side only writes one extra row; a tolerance would silently drop a genuine
- * sub-cent change.
+ * Quantities are already integers in their asset's unit, so persistence detects
+ * changes with exact comparison and never needs a floating-point tolerance.
  */
 export function diffAssetHoldings(
   before: readonly AssetHolding[],
@@ -244,7 +240,7 @@ export function grantAssets(input: GrantAssetsInput): GrantAssetsResult {
   const assetLedgerEntries: AssetLedgerEntry[] = [];
 
   for (const grant of input.grants) {
-    const amount = centsOf(grant.amount);
+    const amount = assetQuantityOf(grant.assetType, grant.amount);
     if (!isPositiveCents(amount)) {
       throw new PrismDomainError("Asset grant amount must be positive.", "INVALID_ASSET_GRANT_AMOUNT");
     }
@@ -286,7 +282,7 @@ export function adjustAssets(input: AdjustAssetsInput): GrantAssetsResult {
       throw new PrismDomainError("Asset holding not found.", "ASSET_HOLDING_NOT_FOUND");
     }
 
-    const quantityDelta = centsOf(adjustment.quantityDelta);
+    const quantityDelta = assetQuantityOf(adjustment.assetType, adjustment.quantityDelta);
     const nextQuantity = addCents(target.quantity, quantityDelta);
     if (isNegativeCents(nextQuantity)) {
       throw new PrismDomainError("Insufficient asset quantity.", "INSUFFICIENT_ASSET_QUANTITY");

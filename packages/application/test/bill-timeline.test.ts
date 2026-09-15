@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { expect, test } from "bun:test";
 import { createPriorityTimePricingProvider, applyTimeCapPricing, explainTimeCapPricing, type Session } from "@prism/core";
 import { buildBillTimeline } from "../src/bill-timeline";
@@ -26,7 +27,7 @@ test("engine boundaries drive shared nodes and signed charges; disjoint pairs re
   expect(timeline.tracks[1]?.lane).toBe(timeline.tracks[2]?.lane);
   expect(timeline.tracks[0]?.lane).not.toBe(timeline.tracks[1]?.lane);
   expect(timeline.events.flatMap(e => e.entries).some(e => (e.amount ?? 0) < 0)).toBe(true);
-  expect(timeline.events.flatMap(e => e.entries).reduce((n, e) => n + (e.amount ?? 0), 0)).toBeCloseTo(chargeItems.reduce((n, i) => n + i.amount, 0) + adjustments.reduce((n, i) => n + i.amount, 0));
+  expect(Math.round(timeline.events.flatMap(e => e.entries).reduce((n, e) => n + (e.amount ?? 0), 0) * 100)).toBe(chargeItems.reduce((n, i) => n + i.amount, 0) + adjustments.reduce((n, i) => n + i.amount, 0));
   expect(timeline.events.flatMap(e => e.entries).filter(e => e.kind === "adjustment").every(e => e.trackId == null)).toBe(true);
 });
 
@@ -55,7 +56,7 @@ test("active tail rounded before preview time stays current", () => {
         sessionId: "active",
         source: "plan",
         label: "日间",
-        amount: 2,
+        amount: moneyFixture(2),
         period: { startedAt, endedAt: roundedEnd },
       }],
     }],

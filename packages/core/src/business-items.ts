@@ -5,7 +5,7 @@ export type BusinessItem = {
   kind: string;
   name: string;
   status: BusinessItemStatus;
-  price: number;
+  price: Cents;
   assetType: string | null;
   assetCode: string | null;
   activeAt: Date | null;
@@ -25,7 +25,7 @@ export type BusinessItemOrder = {
   playerId: string;
   sessionId: string;
   status: BusinessItemOrderStatus;
-  price: number;
+  price: Cents;
   assetType: string | null;
   assetCode: string | null;
   metadata: Record<string, unknown> | null;
@@ -34,3 +34,4 @@ export type BusinessItemOrder = {
   fulfilledAt: Date | null;
   cancelledAt: Date | null;
 };
+import type { Cents } from "./money";

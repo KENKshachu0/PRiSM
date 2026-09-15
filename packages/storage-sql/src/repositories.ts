@@ -1,5 +1,11 @@
-import { centsOf, PrismDomainError,
+import {
+  centsOf,
+  assetQuantityOf,
+  assetQuantityToNatural,
   centsOfInteger,
+  type Cents,
+  yuanOf,
+  PrismDomainError,
 } from "@prism/core";
 import { sqlShop, shopValues } from "./shop-scope";
 import type {
@@ -484,13 +490,13 @@ function createPricingEffectRepository(
           effect.name,
           effect.type,
           effect.scope,
-          effect.value,
+          effect.value == null ? null : centsOf(effect.value),
           effect.consumable ? 1 : 0,
           effect.limitPerDay,
           effect.activeAt?.toISOString() ?? null,
           effect.expiresAt?.toISOString() ?? null,
           effect.status ?? "active",
-          effect.config ? JSON.stringify(effect.config) : null,
+          effect.config ? JSON.stringify(mapEffectConfigMoney(effect.config, centsOf)) : null,
         ],
       );
     },
@@ -1100,7 +1106,7 @@ function createRedeemRepository(
           present.activeAt?.toISOString() ?? null,
           present.expiresAt?.toISOString() ?? null,
           present.status ?? "active",
-          JSON.stringify(present.grants),
+          JSON.stringify(serializePresentGrants(present.grants)),
         ],
       );
     },
@@ -1271,10 +1277,10 @@ function createSettlementRepository(
         ? {
             settlement: toSettlement(row),
             chargeItems: rows.flatMap((item) => item.row_kind === "charge" && item.item_id
-              ? [{ id: item.item_id, source: item.item_source!, label: item.item_label!, amount: item.item_amount! }]
+              ? [{ id: item.item_id, source: item.item_source!, label: item.item_label!, amount: centsOfInteger(item.item_amount!) }]
               : []),
             adjustments: rows.flatMap((item) => item.row_kind === "adjustment" && item.item_id
-              ? [{ id: item.item_id, source: item.item_source!, label: item.item_label!, amount: item.item_amount! }]
+              ? [{ id: item.item_id, source: item.item_source!, label: item.item_label!, amount: centsOfInteger(item.item_amount!) }]
               : []),
           }
         : null;
@@ -1357,7 +1363,7 @@ function createPricingHistoryRepository(
     async sumByPlayerAndKeys(playerId, keys) {
       if (keys.length === 0) return {};
 
-      const totals: Record<string, number> = {};
+      const totals: Record<string, Cents> = {};
       const uniqueKeys = new Map<string, PricingHistoryLookupKey>();
       for (const key of keys) {
         uniqueKeys.set(pricingHistoryKey(key), key);
@@ -1401,7 +1407,7 @@ function createPricingHistoryRepository(
             providerId: row.provider_id,
             ruleId: row.rule_id,
             ruleAnchorAt: new Date(row.rule_anchor_at),
-          })] = row.total;
+          })] = centsOfInteger(row.total);
         }
       }
 
@@ -1447,7 +1453,7 @@ function createPricingCapHistoryRepository(
     async sumByPlayerAndKeys(playerId, keys) {
       if (keys.length === 0) return {};
 
-      const totals: Record<string, number> = {};
+      const totals: Record<string, Cents> = {};
       const uniqueKeys = new Map<string, PricingCapHistoryLookupKey>();
       for (const key of keys) {
         uniqueKeys.set(pricingCapHistoryKey(key), key);
@@ -1483,7 +1489,7 @@ function createPricingCapHistoryRepository(
           ],
         );
         for (const row of rows) {
-          totals[`${row.cap_config_id}@${row.cap_rule_id}@${new Date(row.cap_anchor_at).toISOString()}`] = row.total;
+          totals[`${row.cap_config_id}@${row.cap_rule_id}@${new Date(row.cap_anchor_at).toISOString()}`] = centsOfInteger(row.total);
         }
       }
 
@@ -1849,7 +1855,7 @@ type SettlementDetailRow = SettlementRow & {
   item_amount: number | null;
 };
 
-type PricingConfigRow = {
+export type PricingConfigRow = {
   id: string;
   kind: PricingConfig["kind"];
   name: string;
@@ -2039,14 +2045,14 @@ function toPricingEffect(row: PricingEffectRow): PricingEffect {
     name: row.name,
     type: row.type,
     scope: row.scope,
-    value: row.value,
+    value: row.value == null ? null : yuanOf(centsOfInteger(row.value)),
     consumable: row.consumable === 1,
     limitPerDay: row.limit_per_day,
     activeAt: row.active_at ? new Date(row.active_at) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
     status: row.status ?? "active",
     config: row.config_json
-      ? (JSON.parse(row.config_json) as Record<string, unknown>)
+      ? mapEffectConfigMoney(JSON.parse(row.config_json), value => yuanOf(centsOfInteger(value)))
       : null,
   };
 }
@@ -2176,7 +2182,9 @@ function toPresent(row: PresentRow): Present {
     activeAt: row.active_at ? new Date(row.active_at) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
     status: row.status ?? "active",
-    grants: normalizePresentGrants(JSON.parse(row.grants_json)),
+    grants: normalizePresentGrants(JSON.parse(row.grants_json)).map(grant => ({
+      ...grant, amount: assetQuantityToNatural(grant.assetType, centsOfInteger(grant.amount)),
+    })),
   };
 }
 
@@ -2252,7 +2260,7 @@ async function savePlayerCheckout(
   );
 }
 
-function toPricingConfig(row: PricingConfigRow): PricingConfig {
+export function toPricingConfig(row: PricingConfigRow): PricingConfig {
   const base = {
     id: row.id,
     name: row.name,
@@ -2261,7 +2269,7 @@ function toPricingConfig(row: PricingConfigRow): PricingConfig {
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
-  const provider = JSON.parse(row.provider_json) as PricingConfig["provider"];
+  const provider = mapPricingProviderMoney(JSON.parse(row.provider_json), value => yuanOf(centsOfInteger(value)));
 
   switch (row.kind) {
     case "time.priority":
@@ -2304,7 +2312,7 @@ function toBusinessItem(row: BusinessItemRow): BusinessItem {
     kind: row.kind,
     name: row.name,
     status: row.status,
-    price: row.price,
+    price: centsOfInteger(row.price),
     assetType: row.asset_type,
     assetCode: row.asset_code,
     activeAt: row.active_at ? new Date(row.active_at) : null,
@@ -2326,7 +2334,7 @@ function toBusinessItemOrder(row: BusinessItemOrderRow): BusinessItemOrder {
     playerId: row.player_id,
     sessionId: row.session_id,
     status: row.status,
-    price: row.price,
+    price: centsOfInteger(row.price),
     assetType: row.asset_type,
     assetCode: row.asset_code,
     metadata: row.metadata_json
@@ -2378,9 +2386,10 @@ function toApiToken(row: ApiTokenRow): ApiToken {
   };
 }
 
-function serializePricingProviderConfig(
+export function serializePricingProviderConfig(
   provider: PricingConfig["provider"],
 ): unknown {
+  provider = mapPricingProviderMoney(provider, centsOf);
   if (!("rules" in provider)) return provider;
   return {
     ...provider,
@@ -2399,6 +2408,24 @@ function serializePricingProviderConfig(
       };
     }),
   };
+}
+
+function mapPricingProviderMoney(provider: PricingConfig["provider"], convert: (value: number) => number): PricingConfig["provider"] {
+  if ("amount" in provider) return { ...provider, amount: convert(provider.amount) };
+  if ("includedPricingConfigIds" in provider) return {
+    ...provider, rules: provider.rules.map(rule => ({ ...rule, priceCap: convert(rule.priceCap) })),
+  };
+  return { ...provider, rules: provider.rules.map(rule => ({
+    ...rule, pricing: { ...rule.pricing, unitPrice: convert(rule.pricing.unitPrice), priceCap: convert(rule.pricing.priceCap) },
+  })) };
+}
+
+function mapEffectConfigMoney(config: Record<string, unknown>, convert: (value: number) => number): Record<string, unknown> {
+  return typeof config.minSubtotal === "number" ? { ...config, minSubtotal: convert(config.minSubtotal) } : config;
+}
+
+export function serializePresentGrants(grants: Present["grants"]): Present["grants"] {
+  return grants.map(grant => ({ ...grant, amount: assetQuantityOf(grant.assetType, grant.amount) }));
 }
 
 function pricingHistoryKey(key: PricingHistoryLookupKey): string {

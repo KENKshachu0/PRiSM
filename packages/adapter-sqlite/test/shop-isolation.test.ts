@@ -142,7 +142,7 @@ test("legacy SQLite migration preserves referenced balances and rolls back on in
     })(),
   ).toThrow("interruption");
   expect(db.query("SELECT quantity FROM asset_holdings").get()).toEqual({
-    quantity: centsOf(12.34),
+    quantity: 12.34,
   });
   expect(
     (db.query("PRAGMA table_info(players)").all() as { name: string }[]).some(
@@ -151,7 +151,7 @@ test("legacy SQLite migration preserves referenced balances and rolls back on in
   ).toBe(false);
   db.transaction(() => db.exec(migration))();
   expect(db.query("SELECT shop_id,quantity FROM asset_holdings").get()).toEqual(
-    { shop_id: "legacy", quantity: centsOf(12.34) },
+    { shop_id: "legacy", quantity: 12.34 },
   );
   expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   db.close();

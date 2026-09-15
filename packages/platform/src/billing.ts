@@ -2,6 +2,7 @@ import { mahjongRoster } from "./mahjong";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { createD1Repositories } from "@prism/adapter-d1";
+import { toPricingConfig, type PricingConfigRow } from "@prism/storage-sql";
 import { createPrismWorkerDependencies } from "@prism/runtime";
 import {
   createPrismApp,
@@ -408,15 +409,10 @@ export function registerBillingRoutes(app: Hono<AppBindings>) {
       : null;
     const pricing = shop.billing_enabled
       ? await c.env.DB.prepare(
-          "SELECT id,name,kind,provider_json FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active' AND (id IN (SELECT value FROM json_each(?)) OR kind='time.cap')",
+          "SELECT id,name,kind,enabled,status,provider_json,created_at,updated_at FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active' AND (id IN (SELECT value FROM json_each(?)) OR kind='time.cap')",
         )
           .bind(shop.id, shop.entry_pricing_ids_json)
-          .all<{
-            id: string;
-            name: string;
-            kind: string;
-            provider_json: string;
-          }>()
+          .all<PricingConfigRow>()
       : { results: [] };
     const localDate =
       c.req.query("date") ?? formatLocalDate(new Date(), shop.time_zone);
@@ -428,25 +424,22 @@ export function registerBillingRoutes(app: Hono<AppBindings>) {
       jsonError(400, "日期无效", "INVALID_DATE");
     const ids = JSON.parse(shop.entry_pricing_ids_json) as string[];
     const configs = pricing.results
-      .map(({ provider_json, ...row }) => ({
-        ...row,
-        provider: JSON.parse(provider_json),
-      }))
+      .map(toPricingConfig)
       .filter(
         (row) =>
           row.kind !== "time.cap" ||
-          row.provider.includedPricingConfigIds.some((id: string) =>
+          ("includedPricingConfigIds" in row.provider && row.provider.includedPricingConfigIds.some((id: string) =>
             ids.includes(id),
-          ),
+          )),
       );
     const groups = configs.map((row) => {
       const config = {
         ...row,
         provider: {
           ...row.provider,
-          timeZone: row.provider.timeZone ?? shop.time_zone,
-          rules: row.provider.rules?.map(
-            (rule: { dateTimeRange?: { start: string; end: string } }) => ({
+          timeZone: ("timeZone" in row.provider ? row.provider.timeZone : undefined) ?? shop.time_zone,
+          rules: ("rules" in row.provider ? row.provider.rules : undefined)?.map(
+            (rule) => ({
               ...rule,
               ...(rule.dateTimeRange
                 ? {
@@ -488,16 +481,18 @@ export function registerBillingRoutes(app: Hono<AppBindings>) {
             .map((segment) => segment.ruleId),
         );
         const dateTime = new Intl.DateTimeFormat("sv-SE", {
-          timeZone: row.provider.timeZone ?? shop.time_zone,
+          timeZone: ("timeZone" in row.provider ? row.provider.timeZone : undefined) ?? shop.time_zone,
           dateStyle: "short",
           timeStyle: "medium",
           hourCycle: "h23",
         });
         return {
-          ...row,
+          id: row.id,
+          name: row.name,
+          kind: row.kind,
           provider: {
             ...row.provider,
-            rules: row.provider.rules
+            rules: ("rules" in row.provider ? row.provider.rules : undefined)
               ?.filter(
                 (rule: { id: string; status?: string }) =>
                   (rule.status ?? "active") === "active" &&
@@ -508,7 +503,7 @@ export function registerBillingRoutes(app: Hono<AppBindings>) {
                   b.priority - a.priority,
               )
               .map(
-                (rule: { dateTimeRange?: { start: string; end: string } }) => ({
+                (rule) => ({
                   ...rule,
                   ...(rule.dateTimeRange
                     ? {

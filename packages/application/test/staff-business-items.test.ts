@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import type { BusinessItem, BusinessItemRepository } from "@prism/core";
 import { createStaffBusinessItemService } from "../src/index";
@@ -49,7 +50,7 @@ describe("createStaffBusinessItemService", () => {
       kind: "event.entry",
       name: "周末挑战赛报名",
       status: "active",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -77,7 +78,7 @@ describe("createStaffBusinessItemService", () => {
       kind: "room.package",
       name: "夜间包场",
       status: "active",
-      price: 6000,
+      price: moneyFixture(6000),
       assetType: null,
       assetCode: null,
       activeAt: null,

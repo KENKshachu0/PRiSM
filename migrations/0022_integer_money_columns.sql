@@ -1,4 +1,5 @@
-PRAGMA foreign_keys = OFF;
+-- D1 keeps foreign keys enabled. Defer checks until every replacement table exists.
+PRAGMA defer_foreign_keys = ON;
 
 CREATE TABLE asset_holdings_int (
   shop_id TEXT NOT NULL DEFAULT 'legacy',
@@ -6,7 +7,7 @@ CREATE TABLE asset_holdings_int (
   player_id TEXT NOT NULL,
   asset_type TEXT NOT NULL,
   asset_code TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
+  quantity INTEGER NOT NULL CHECK (typeof(quantity) = 'integer'),
   active_at TEXT,
   expires_at TEXT,
   FOREIGN KEY (shop_id, player_id) REFERENCES players(shop_id, id),
@@ -20,7 +21,7 @@ INSERT INTO asset_holdings_int (shop_id, id, player_id, asset_type, asset_code, 
        player_id,
        asset_type,
        asset_code,
-       ROUND(quantity * 100),
+       CASE WHEN asset_type = 'currency' THEN ROUND(quantity * 100) ELSE ROUND(quantity) END,
        active_at,
        expires_at
   FROM asset_holdings;
@@ -36,7 +37,7 @@ CREATE TABLE asset_ledger_entries_int (
   transaction_id TEXT,
   asset_type TEXT NOT NULL,
   asset_code TEXT NOT NULL,
-  delta INTEGER NOT NULL,
+  delta INTEGER NOT NULL CHECK (typeof(delta) = 'integer'),
   reason TEXT NOT NULL,
   ref_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -53,7 +54,7 @@ INSERT INTO asset_ledger_entries_int (shop_id, id, player_id, transaction_id, as
        transaction_id,
        asset_type,
        asset_code,
-       ROUND(delta * 100),
+       CASE WHEN asset_type = 'currency' THEN ROUND(delta * 100) ELSE ROUND(delta) END,
        reason,
        ref_id,
        created_at
@@ -67,8 +68,8 @@ CREATE TABLE player_checkouts_int (
   shop_id TEXT NOT NULL DEFAULT 'legacy',
   id TEXT NOT NULL,
   player_id TEXT NOT NULL,
-  subtotal INTEGER NOT NULL,
-  total INTEGER NOT NULL,
+  subtotal INTEGER NOT NULL CHECK (typeof(subtotal) = 'integer'),
+  total INTEGER NOT NULL CHECK (typeof(total) = 'integer'),
   status TEXT NOT NULL CHECK (status IN ('settled')),
   settled_at TEXT NOT NULL,
   FOREIGN KEY (shop_id, player_id) REFERENCES players(shop_id, id),
@@ -94,8 +95,8 @@ CREATE TABLE settlements_int (
   id TEXT NOT NULL,
   session_id TEXT NOT NULL,
   checkout_id TEXT,
-  subtotal INTEGER NOT NULL,
-  total INTEGER NOT NULL,
+  subtotal INTEGER NOT NULL CHECK (typeof(subtotal) = 'integer'),
+  total INTEGER NOT NULL CHECK (typeof(total) = 'integer'),
   status TEXT NOT NULL CHECK (status IN ('settled')),
   settled_at TEXT NOT NULL,
   FOREIGN KEY (shop_id, session_id) REFERENCES sessions(shop_id, id),
@@ -126,7 +127,7 @@ CREATE TABLE settlement_charge_items_int (
   item_order INTEGER NOT NULL,
   source TEXT NOT NULL,
   label TEXT NOT NULL,
-  amount INTEGER NOT NULL,
+  amount INTEGER NOT NULL CHECK (typeof(amount) = 'integer'),
   PRIMARY KEY (shop_id, session_id, id),
   FOREIGN KEY (shop_id, session_id) REFERENCES sessions(shop_id, id)
 );
@@ -152,7 +153,7 @@ CREATE TABLE settlement_adjustments_int (
   adjustment_order INTEGER NOT NULL,
   source TEXT NOT NULL,
   label TEXT NOT NULL,
-  amount INTEGER NOT NULL,
+  amount INTEGER NOT NULL CHECK (typeof(amount) = 'integer'),
   PRIMARY KEY (shop_id, session_id, id),
   FOREIGN KEY (shop_id, session_id) REFERENCES sessions(shop_id, id)
 );
@@ -180,7 +181,7 @@ CREATE TABLE pricing_history_entries_int (
   rule_id TEXT NOT NULL,
   rule_anchor_at TEXT NOT NULL,
   session_id TEXT NOT NULL,
-  amount INTEGER NOT NULL,
+  amount INTEGER NOT NULL CHECK (typeof(amount) = 'integer'),
   created_at TEXT NOT NULL,
   metadata_json TEXT,
   FOREIGN KEY (shop_id, player_id) REFERENCES players(shop_id, id),
@@ -214,7 +215,7 @@ CREATE TABLE pricing_cap_history_entries_int (
   cap_anchor_at TEXT NOT NULL,
   included_pricing_config_ids_json TEXT NOT NULL,
   session_ids_json TEXT NOT NULL,
-  amount INTEGER NOT NULL,
+  amount INTEGER NOT NULL CHECK (typeof(amount) = 'integer'),
   created_at TEXT NOT NULL,
   metadata_json TEXT,
   FOREIGN KEY (shop_id, player_id) REFERENCES players(shop_id, id),
@@ -245,7 +246,7 @@ CREATE TABLE pricing_effects_int (
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('free', 'discount', 'percentage-discount', 'surcharge')),
   scope TEXT NOT NULL CHECK (scope IN ('session', 'unified')),
-  value INTEGER,
+  value INTEGER CHECK (value IS NULL OR typeof(value) = 'integer'),
   consumable INTEGER NOT NULL DEFAULT 0 CHECK (consumable IN (0, 1)),
   limit_per_day INTEGER,
   active_at TEXT,
@@ -261,7 +262,7 @@ INSERT INTO pricing_effects_int (shop_id, id, name, type, scope, value, consumab
        name,
        type,
        scope,
-       CASE WHEN type IN ('discount','surcharge') THEN ROUND(value * 100) ELSE value END,
+       ROUND(value * 100),
        consumable,
        limit_per_day,
        active_at,
@@ -280,7 +281,7 @@ CREATE TABLE business_items_int (
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-  price INTEGER NOT NULL,
+  price INTEGER NOT NULL CHECK (typeof(price) = 'integer'),
   asset_type TEXT,
   asset_code TEXT,
   active_at TEXT,
@@ -320,7 +321,7 @@ CREATE TABLE business_item_orders_int (
   player_id TEXT NOT NULL,
   session_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('paid', 'fulfilled', 'cancelled')),
-  price INTEGER NOT NULL,
+  price INTEGER NOT NULL CHECK (typeof(price) = 'integer'),
   asset_type TEXT,
   asset_code TEXT,
   metadata_json TEXT,
@@ -357,12 +358,53 @@ DROP TABLE business_item_orders;
 
 ALTER TABLE business_item_orders_int RENAME TO business_item_orders;
 
--- Convert every money column from REAL yuan to INTEGER fen.
---
--- Runs after 0013/0016/etc., so the rebuilt tables keep their shop_id column
--- and composite primary keys. Coordinates (shops.*, machine_login_events.*)
--- are deliberately left as REAL. pricing_effects.value is scaled only for the
--- money-typed effects; percentage-discount rows carry a percent, not yuan.
+-- Configuration money also uses integer fen, percentages use integer basis points.
+UPDATE pricing_configs
+SET provider_json = json_set(provider_json, '$.amount', CAST(ROUND(json_extract(provider_json, '$.amount') * 100) AS INTEGER))
+WHERE kind = 'charge.fixed';
 
+UPDATE pricing_configs
+SET provider_json = json_set(provider_json, '$.rules', json((
+  SELECT json_group_array(json_set(value,
+    '$.pricing.unitPrice', CAST(ROUND(json_extract(value, '$.pricing.unitPrice') * 100) AS INTEGER),
+    '$.pricing.priceCap', CAST(ROUND(json_extract(value, '$.pricing.priceCap') * 100) AS INTEGER)))
+  FROM json_each(provider_json, '$.rules')
+))) WHERE kind = 'time.priority';
 
-PRAGMA foreign_keys = ON;
+UPDATE pricing_configs
+SET provider_json = json_set(provider_json, '$.rules', json((
+  SELECT json_group_array(json_set(value, '$.priceCap', CAST(ROUND(json_extract(value, '$.priceCap') * 100) AS INTEGER)))
+  FROM json_each(provider_json, '$.rules')
+))) WHERE kind = 'time.cap';
+
+UPDATE pricing_configs
+SET provider_json = json_set(provider_json, '$.paidHistory', json((
+  SELECT json_group_object(key, CAST(ROUND(value * 100) AS INTEGER))
+  FROM json_each(provider_json, '$.paidHistory')
+))) WHERE json_type(provider_json, '$.paidHistory') = 'object';
+
+UPDATE pricing_effects
+SET config_json = json_set(config_json, '$.minSubtotal', CAST(ROUND(json_extract(config_json, '$.minSubtotal') * 100) AS INTEGER))
+WHERE json_type(config_json, '$.minSubtotal') IN ('integer', 'real');
+
+UPDATE presents SET grants_json = (
+  SELECT json_group_array(json_set(value, '$.amount', CAST(ROUND(
+    json_extract(value, '$.amount') * CASE WHEN json_extract(value, '$.assetType') = 'currency' THEN 100 ELSE 1 END
+  ) AS INTEGER))) FROM json_each(grants_json)
+);
+
+CREATE INDEX idx_asset_holdings_player ON asset_holdings(shop_id, player_id);
+CREATE INDEX idx_asset_ledger_player_created ON asset_ledger_entries(shop_id, player_id, created_at);
+CREATE INDEX idx_player_checkouts_player_settled ON player_checkouts(shop_id, player_id, settled_at);
+CREATE INDEX idx_settlements_checkout ON settlements(shop_id, checkout_id);
+CREATE INDEX idx_business_items_status_updated ON business_items(shop_id, status, updated_at);
+CREATE INDEX idx_business_items_kind_status ON business_items(shop_id, kind, status);
+CREATE INDEX idx_business_item_orders_player_created ON business_item_orders(shop_id, player_id, created_at);
+CREATE INDEX idx_business_item_orders_item_status ON business_item_orders(shop_id, business_item_id, status);
+CREATE INDEX idx_settlement_charge_items_session_order ON settlement_charge_items(shop_id, session_id, item_order);
+CREATE INDEX idx_settlement_adjustments_session_order ON settlement_adjustments(shop_id, session_id, adjustment_order);
+CREATE INDEX idx_pricing_history_player_rule_anchor ON pricing_history_entries(shop_id, player_id, pricing_config_id, provider_id, rule_id, rule_anchor_at);
+CREATE INDEX idx_pricing_history_session ON pricing_history_entries(shop_id, session_id);
+CREATE INDEX idx_pricing_cap_history_player_rule_anchor ON pricing_cap_history_entries(shop_id, player_id, cap_config_id, cap_rule_id, cap_anchor_at);
+
+PRAGMA defer_foreign_keys = OFF;

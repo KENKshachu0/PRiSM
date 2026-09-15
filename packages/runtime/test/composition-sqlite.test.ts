@@ -1,12 +1,27 @@
+import { serializePricingProviderConfig, serializePresentGrants } from "@prism/storage-sql";
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { sqliteSchema } from "@prism/storage-sql";
 import {
   createPrismRuntimeDependencies,
+  initializeSqliteSchema,
   RuntimeRepositories,
 } from "../src/index";
 import { createPrismApp } from "./test-app";
+
+it("refuses to start billing against a pre-integer SQLite schema", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE players(shop_id TEXT); CREATE TABLE asset_holdings(quantity REAL)");
+  expect(() => initializeSqliteSchema(db)).toThrow("migration 0022");
+  db.close();
+  const fresh = new Database(":memory:");
+  initializeSqliteSchema(fresh);
+  expect(fresh.query("SELECT type FROM pragma_table_info('asset_holdings') WHERE name='quantity'").get())
+    .toEqual({ type: "INTEGER" });
+  fresh.close();
+});
 
 function createDb() {
   const db = new Database(":memory:");
@@ -83,11 +98,11 @@ function insertEffectAssetDefinition(
       input.assetName,
       input.effectType,
       input.scope,
-      input.value ?? null,
+      input.value == null ? null : centsOf(input.value),
       input.consumable ? 1 : 0,
       input.limitPerDay ?? null,
       "active",
-      input.config ? JSON.stringify(input.config) : null,
+      input.config ? JSON.stringify({ ...input.config, ...(typeof input.config.minSubtotal === "number" ? { minSubtotal: centsOf(input.config.minSubtotal) } : {}) }) : null,
     ],
   );
   db.run(
@@ -186,7 +201,7 @@ describe("createPrismRuntimeDependencies", () => {
         null,
         null,
         "active",
-        JSON.stringify([
+        JSON.stringify(serializePresentGrants([
           {
             assetType: "currency",
             assetCode: "currency.paid",
@@ -195,7 +210,7 @@ describe("createPrismRuntimeDependencies", () => {
             activeAt: null,
             expiresAt: null,
           },
-        ]),
+        ])),
       ],
     );
 
@@ -217,7 +232,7 @@ describe("createPrismRuntimeDependencies", () => {
         {
           asset_type: "currency",
           asset_code: "currency.paid",
-          quantity: 80,
+          quantity: centsOf(80),
         },
       ]);
   });
@@ -241,7 +256,7 @@ describe("createPrismRuntimeDependencies", () => {
         "time.priority",
         "标准日夜计费",
         1,
-        JSON.stringify({
+        JSON.stringify(serializePricingProviderConfig({
           id: "time.day-night",
           timeZone: "Asia/Tokyo",
           rules: [
@@ -276,7 +291,7 @@ describe("createPrismRuntimeDependencies", () => {
               },
             },
           ],
-        }),
+        })),
         "2026-06-07T00:00:00.000Z",
         "2026-06-07T00:00:00.000Z",
       ],
@@ -366,7 +381,7 @@ describe("createPrismRuntimeDependencies", () => {
         player_id: "player-1",
         rule_id: "day",
         rule_anchor_at: "2026-06-07T01:00:00.000Z",
-        amount: 40,
+        amount: centsOf(40),
       },
       {
         player_id: "player-1",
@@ -378,7 +393,7 @@ describe("createPrismRuntimeDependencies", () => {
         player_id: "player-2",
         rule_id: "day",
         rule_anchor_at: "2026-06-07T01:00:00.000Z",
-        amount: 16,
+        amount: centsOf(16),
       },
     ]);
   });
@@ -444,7 +459,7 @@ describe("createPrismRuntimeDependencies", () => {
           item.kind,
           item.name,
           item.status,
-          item.price,
+          centsOf(item.price),
           null,
           null,
           item.activeAt,
@@ -510,8 +525,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: centsOf(80),
-        total: centsOf(80),
+        subtotal: 80,
+        total: 80,
       },
       chargeItems: [
         {
@@ -569,7 +584,7 @@ describe("createPrismRuntimeDependencies", () => {
                 id: `${context.session.id}:manual-time`,
                 source: "manual-time",
                 label: "按时计费",
-                amount: 80,
+                amount: moneyFixture(80),
               },
             ];
           },
@@ -592,8 +607,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: centsOf(80),
-        total: centsOf(0),
+        subtotal: 80,
+        total: 0,
       },
       adjustments: [
         {
@@ -628,7 +643,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-coupon",
         "player-1",
         "coupon",
-        "coupon.weekday-gold", 200,
+        "coupon.weekday-gold", 2,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -668,13 +683,13 @@ describe("createPrismRuntimeDependencies", () => {
                 id: `${context.session.id}:gaming-charge`,
                 source: "pc-gaming",
                 label: "游戏计费",
-                amount: 80,
+                amount: moneyFixture(80),
                 pricingHistory: {
                   pricingConfigId: "pc-gaming",
                   providerId: "pc-gaming",
                   ruleId: "pc-gaming-rule",
                   ruleAnchorAt: context.session.startedAt,
-                  amount: 80,
+                  amount: moneyFixture(80),
                 },
               },
             ];
@@ -697,7 +712,7 @@ describe("createPrismRuntimeDependencies", () => {
 
     expect(previewResponse.status).toBe(200);
     const json = await previewResponse.json();
-    expect(yuanOf(json.settlementPreview.total)).toBe(50);
+    expect(json.settlementPreview.total).toBe(50);
     expect(json.adjustments).toContainEqual(
       expect.objectContaining({
         source: "coupon.weekday-gold",
@@ -716,7 +731,7 @@ describe("createPrismRuntimeDependencies", () => {
     const holdingRow = db
       .query("SELECT quantity FROM asset_holdings WHERE id = ?")
       .get("holding-coupon") as any;
-    expect(yuanOf(holdingRow.quantity)).toBe(1);
+    expect(holdingRow.quantity).toBe(1);
   });
 
   it("applies configurable session-scope coupons with date range constraints", async () => {
@@ -741,7 +756,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-coupon",
         "player-1",
         "coupon",
-        "coupon.date-limited", 200,
+        "coupon.date-limited", 2,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -780,7 +795,7 @@ describe("createPrismRuntimeDependencies", () => {
                 id: `${context.session.id}:gaming-charge`,
                 source: "pc-gaming",
                 label: "游戏计费",
-                amount: 80,
+                amount: moneyFixture(80),
               },
             ];
           },
@@ -802,7 +817,7 @@ describe("createPrismRuntimeDependencies", () => {
     });
     expect(preview1.status).toBe(200);
     const json1 = await preview1.json();
-    expect(yuanOf(json1.settlementPreview.total)).toBe(50);
+    expect(json1.settlementPreview.total).toBe(50);
 
     await app.request("/rpc/player/checkout/confirm", {
       method: "POST",
@@ -834,7 +849,7 @@ describe("createPrismRuntimeDependencies", () => {
     });
     expect(preview2.status).toBe(200);
     const json2 = await preview2.json();
-    expect(yuanOf(json2.settlementPreview.total)).toBe(80);
+    expect(json2.settlementPreview.total).toBe(80);
   });
 
   it("applies configurable unified-scope monthly card with daily limits across checkouts", async () => {
@@ -915,13 +930,13 @@ describe("createPrismRuntimeDependencies", () => {
                 id: `${context.session.id}:gaming-charge`,
                 source: "pc-gaming",
                 label: "游戏计费",
-                amount: 80,
+                amount: moneyFixture(80),
                 pricingHistory: {
                   pricingConfigId: "pc-gaming",
                   providerId: "pc-gaming",
                   ruleId: "pc-gaming-rule",
                   ruleAnchorAt: context.session.startedAt,
-                  amount: 80,
+                  amount: moneyFixture(80),
                 },
               },
             ];
@@ -1000,7 +1015,7 @@ describe("createPrismRuntimeDependencies", () => {
                     id: `${context.session.id}:exam-ticket`,
                     source: "plugin.exam-ticket",
                     label: "准考证活动",
-                    amount: 120,
+                    amount: moneyFixture(120),
                   },
                 ];
               },
@@ -1021,7 +1036,7 @@ describe("createPrismRuntimeDependencies", () => {
                     id: `${context.session.id}:exam-ticket-discount`,
                     source: "plugin.exam-ticket",
                     label: "准考证活动券",
-                    amount: -20,
+                    amount: moneyFixture(-20),
                   },
                 ];
               },
@@ -1089,8 +1104,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: centsOf(120),
-        total: centsOf(100),
+        subtotal: 120,
+        total: 100,
       },
       chargeItems: [
         {
@@ -1140,7 +1155,7 @@ describe("createPrismRuntimeDependencies", () => {
                 id: `${context.session.id}:flat-test`,
                 source: "flat-test",
                 label: "Flat test",
-                amount: 999,
+                amount: moneyFixture(999),
               },
             ];
           },
@@ -1604,8 +1619,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: centsOf(20),
-        total: centsOf(0),
+        subtotal: 20,
+        total: 0,
         status: "preview",
       },
       adjustments: [
@@ -2466,7 +2481,7 @@ describe("createPrismRuntimeDependencies", () => {
         "event.entry",
         "周末挑战赛报名",
         "active",
-        120,
+        centsOf(120),
         "ticket",
         "event.weekend",
         "2026-06-07T00:00:00.000Z",
@@ -2595,16 +2610,16 @@ describe("createPrismRuntimeDependencies", () => {
         "迁移礼物",
         0,
         "active",
-        JSON.stringify([
+        JSON.stringify(serializePresentGrants([
           {
             assetType: "currency",
             assetCode: "currency.free",
             amount: 10,
             mergeStrategy: "stack",
             activeAt: null,
-            expiresAt: "2026-06-30T00:00:00.000Z",
+            expiresAt: new Date("2026-06-30T00:00:00.000Z"),
           },
-        ]),
+        ])),
       ],
     );
     const app = createPrismApp(

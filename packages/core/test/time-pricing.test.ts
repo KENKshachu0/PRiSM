@@ -1,3 +1,4 @@
+import { type Cents, yuanOf, centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   applyTimeCapPricing,
@@ -6,12 +7,12 @@ import {
   createTimePricingProvider,
 } from "../src/index";
 
-function publicChargeItems(items: ReadonlyArray<{ id: string; source: string; label: string; amount: number }>) {
+function publicChargeItems(items: ReadonlyArray<{ id: string; source: string; label: string; amount: Cents }>) {
   return items.map((item) => ({
     id: item.id,
     source: item.source,
     label: item.label,
-    amount: item.amount,
+    amount: yuanOf(item.amount),
   }));
 }
 
@@ -102,7 +103,7 @@ describe("createTimePricingProvider", () => {
       now: new Date("2026-06-07T10:02:00.000Z"),
     });
 
-    expect(chargeItems[0].amount).toBe(0);
+    expect(chargeItems[0].amount).toBe(moneyFixture(0));
   });
 
   it("invalidates first grace period when machine was operated", async () => {
@@ -129,7 +130,7 @@ describe("createTimePricingProvider", () => {
       now: new Date("2026-06-07T10:02:00.000Z"),
     });
 
-    expect(chargeItems2m[0].amount).toBe(10);
+    expect(chargeItems2m[0].amount).toBe(moneyFixture(10));
 
     // Immediate logout (0 minutes), device was operated
     const chargeItems0m = await provider.quote({
@@ -145,7 +146,7 @@ describe("createTimePricingProvider", () => {
       now: new Date("2026-06-07T10:00:00.000Z"),
     });
 
-    expect(chargeItems0m[0].amount).toBe(10);
+    expect(chargeItems0m[0].amount).toBe(moneyFixture(10));
   });
 });
 
@@ -172,7 +173,7 @@ describe("applyTimeCapPricing", () => {
           id: "session-1:base",
           source: "time.base",
           label: "音游",
-          amount: 96,
+          amount: moneyFixture(96),
           period: {
             startedAt: new Date("2026-07-09T02:00:00.000Z"),
             endedAt: new Date("2026-07-09T10:00:00.000Z"),
@@ -182,14 +183,14 @@ describe("applyTimeCapPricing", () => {
             providerId: "time.base",
             ruleId: "day",
             ruleAnchorAt: new Date("2026-07-09T02:00:00.000Z"),
-            amount: 96,
+            amount: moneyFixture(96),
           },
         },
         {
           id: "session-1:discount",
           source: "time.mahjong",
           label: "四口麻将",
-          amount: -24,
+          amount: moneyFixture(-24),
           period: {
             startedAt: new Date("2026-07-09T02:00:00.000Z"),
             endedAt: new Date("2026-07-09T10:00:00.000Z"),
@@ -199,14 +200,14 @@ describe("applyTimeCapPricing", () => {
             providerId: "time.mahjong",
             ruleId: "day",
             ruleAnchorAt: new Date("2026-07-09T02:00:00.000Z"),
-            amount: -24,
+            amount: moneyFixture(-24),
           },
         },
         {
           id: "session-1:private-room",
           source: "time.private-room",
           label: "包间",
-          amount: 20,
+          amount: moneyFixture(20),
           period: {
             startedAt: new Date("2026-07-09T02:00:00.000Z"),
             endedAt: new Date("2026-07-09T10:00:00.000Z"),
@@ -216,7 +217,7 @@ describe("applyTimeCapPricing", () => {
             providerId: "time.private-room",
             ruleId: "day",
             ruleAnchorAt: new Date("2026-07-09T02:00:00.000Z"),
-            amount: 20,
+            amount: moneyFixture(20),
           },
         },
       ],
@@ -227,13 +228,13 @@ describe("applyTimeCapPricing", () => {
         id: "time-cap:cap-config:day:2026-07-09T02:00:00.000Z",
         source: "time.cap:cap-config:day",
         label: "日场全局封顶",
-        amount: -3,
+        amount: moneyFixture(-3),
         pricingCapHistory: {
           capConfigId: "cap-config",
           capRuleId: "day",
           capAnchorAt: new Date("2026-07-09T02:00:00.000Z"),
           includedPricingConfigIds: ["pricing-base", "pricing-discount"],
-          amount: 69,
+          amount: moneyFixture(69),
         },
       },
     ]);
@@ -246,7 +247,7 @@ describe("applyTimeCapPricing", () => {
         pricingConfigId: "cap-config",
         includedPricingConfigIds: ["pricing-base"],
         paidHistory: {
-          "cap-config@day@2026-07-09T02:00:00.000Z": 60,
+          "cap-config@day@2026-07-09T02:00:00.000Z": moneyFixture(60),
         },
         rules: [
           {
@@ -264,7 +265,7 @@ describe("applyTimeCapPricing", () => {
           id: "session-2:base",
           source: "time.base",
           label: "音游",
-          amount: 24,
+          amount: moneyFixture(24),
           period: {
             startedAt: new Date("2026-07-09T06:00:00.000Z"),
             endedAt: new Date("2026-07-09T08:00:00.000Z"),
@@ -274,7 +275,7 @@ describe("applyTimeCapPricing", () => {
             providerId: "time.base",
             ruleId: "day",
             ruleAnchorAt: new Date("2026-07-09T02:00:00.000Z"),
-            amount: 24,
+            amount: moneyFixture(24),
           },
         },
       ],
@@ -285,8 +286,8 @@ describe("applyTimeCapPricing", () => {
       historyAmount: adjustment.pricingCapHistory?.amount,
     }))).toEqual([
       {
-        amount: -15,
-        historyAmount: 9,
+        amount: moneyFixture(-15),
+        historyAmount: moneyFixture(9),
       },
     ]);
   });
@@ -365,7 +366,7 @@ describe("createPriorityTimePricingProvider", () => {
       assetHoldings: [],
       now: new Date("2026-06-07T10:03:00.000Z"),
     });
-    expect(freeItems[0].amount).toBe(0);
+    expect(freeItems[0].amount).toBe(moneyFixture(0));
 
     // 2. With device action, 3 minutes charges 1 unit (15)
     const operated3m = await provider.quote({
@@ -380,7 +381,7 @@ describe("createPriorityTimePricingProvider", () => {
       assetHoldings: [],
       now: new Date("2026-06-07T10:03:00.000Z"),
     });
-    expect(operated3m[0].amount).toBe(15);
+    expect(operated3m[0].amount).toBe(moneyFixture(15));
 
     // 3. With device action, instant logout (0 min) charges 1 unit (15)
     const operated0m = await provider.quote({
@@ -395,7 +396,7 @@ describe("createPriorityTimePricingProvider", () => {
       assetHoldings: [],
       now: new Date("2026-06-07T10:00:00.000Z"),
     });
-    expect(operated0m[0].amount).toBe(15);
+    expect(operated0m[0].amount).toBe(moneyFixture(15));
 
     // 4. With device action, 32 minutes (30 min unit + 2 min extra, within 5 min roundGraceMinutes) charges 1 unit (15), not 2 units
     const operated32m = await provider.quote({
@@ -410,7 +411,7 @@ describe("createPriorityTimePricingProvider", () => {
       assetHoldings: [],
       now: new Date("2026-06-07T10:32:00.000Z"),
     });
-    expect(operated32m[0].amount).toBe(15);
+    expect(operated32m[0].amount).toBe(moneyFixture(15));
   });
 
   it("splits charges when a higher priority rule starts", async () => {
@@ -829,7 +830,7 @@ describe("createPriorityTimePricingProvider", () => {
     const provider = createPriorityTimePricingProvider({
       id: "time.priority",
       paidHistory: {
-        "time.priority@time.priority@day@2026-06-07T08:00:00.000Z": 15,
+        "time.priority@time.priority@day@2026-06-07T08:00:00.000Z": moneyFixture(15),
       },
       rules: [
         {
@@ -872,7 +873,7 @@ describe("createPriorityTimePricingProvider", () => {
       providerId: "time.priority",
       ruleId: "day",
       ruleAnchorAt: new Date("2026-06-07T08:00:00.000Z"),
-      amount: 5,
+      amount: moneyFixture(5),
     });
   });
 
@@ -1091,7 +1092,7 @@ describe("createPriorityTimePricingProvider", () => {
     expect(beforeFestival).toMatchObject([
       {
         label: "标准日间",
-        amount: 8,
+        amount: moneyFixture(8),
       },
     ]);
 
@@ -1109,7 +1110,7 @@ describe("createPriorityTimePricingProvider", () => {
     expect(duringFestivalDay).toMatchObject([
       {
         label: "春节日间",
-        amount: 6,
+        amount: moneyFixture(6),
       },
     ]);
 
@@ -1127,7 +1128,7 @@ describe("createPriorityTimePricingProvider", () => {
     expect(duringFestivalNight).toMatchObject([
       {
         label: "春节夜间",
-        amount: 6,
+        amount: moneyFixture(6),
       },
     ]);
 
@@ -1145,7 +1146,7 @@ describe("createPriorityTimePricingProvider", () => {
     expect(afterFestivalBoundary).toMatchObject([
       {
         label: "标准日间",
-        amount: 8,
+        amount: moneyFixture(8),
       },
     ]);
   });

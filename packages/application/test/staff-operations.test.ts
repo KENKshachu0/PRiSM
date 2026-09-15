@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { createStaffOperationsService } from "../src/staff-operations";
@@ -72,7 +73,7 @@ it('live list skips empty venues and bounds preview concurrency to four players'
         peak = Math.max(peak, ++running);
         await new Promise(resolve => setTimeout(resolve, 5));
         running--;
-        return {settlementPreview: {total: 3}, sessionPreviews: []};
+        return {settlementPreview: {total: moneyFixture(3)}, sessionPreviews: []};
       },
     },
   });

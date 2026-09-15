@@ -1,5 +1,5 @@
-import { centsOf } from "@prism/core";
-import { sqlShop, shopValues } from "@prism/storage-sql";
+import { assetQuantityOf, centsOf, subCents, sumCents } from "@prism/core";
+import { sqlShop, shopValues, serializePricingProviderConfig, serializePresentGrants } from "@prism/storage-sql";
 import type {
   AssetDefinition,
   AssetHolding,
@@ -429,7 +429,7 @@ export async function importPrismNeoMigrationPlan(input: ImportPrismNeoMigration
       config.kind,
       config.name,
       config.enabled ? 1 : 0,
-      JSON.stringify(config.kind === "time.priority" ? serializePricingProviderForSql(config.provider) : config.provider),
+      JSON.stringify(serializePricingProviderConfig(config.provider)),
       config.createdAt.toISOString(),
       config.updatedAt.toISOString(),
     ]),
@@ -477,7 +477,7 @@ export async function importPrismNeoMigrationPlan(input: ImportPrismNeoMigration
       present.id,
       present.name,
       present.oncePerPlayer ? 1 : 0,
-      JSON.stringify(present.grants),
+      JSON.stringify(serializePresentGrants(present.grants)),
     ]),
     (values) => `INSERT INTO presents (shop_id, id, name, once_per_player, grants_json)
        VALUES ${shopValues(executor, values)}
@@ -860,7 +860,7 @@ function toAssetHolding(holding: PrismNeoUserAsset): MigratedAssetHolding {
     playerId: legacyUserId(holding.userId),
     assetType: mapped.type,
     assetCode: mapped.code,
-    quantity: centsOf(holding.count),
+    quantity: assetQuantityOf(mapped.type, holding.count),
     activeAt: holding.activeAt ?? null,
     expiresAt: holding.expireAt ?? null,
   };
@@ -873,7 +873,7 @@ function toAssetLedgerEntry(entry: PrismNeoUserAssetLog, exportedAt: Date): Migr
     playerId: legacyUserId(entry.userId),
     assetType: mapped.type,
     assetCode: mapped.code,
-    delta: centsOf(entry.changeAmount),
+    delta: assetQuantityOf(mapped.type, entry.changeAmount),
     reason: `legacy.${entry.action}`,
     refId: entry.userAssetId ? `legacy:user-asset:${entry.userAssetId}` : entry.comment ?? `legacy:user-asset-log:${entry.id}`,
     createdAt: entry.createdAt ?? exportedAt,
@@ -911,15 +911,15 @@ function toSettlements(
     const sessionRecords = (billingRecordsByUser.get(legacyUserId(session.userId)) ?? []).filter(
       (record) => record.billingStart >= session.createdAt && record.billingEnd <= session.closedAt!,
     );
-    const subtotal = session.billingCost ?? sum(sessionRecords.map((record) => record.cost));
-    const total = session.finalCost;
+    const subtotal = session.billingCost == null ? sumCents(sessionRecords.map((record) => centsOf(record.cost))) : centsOf(session.billingCost);
+    const total = centsOf(session.finalCost);
     const chargeItems =
       sessionRecords.length > 0
         ? sessionRecords.map((record) => ({
             id: `legacy:billing-record:${record.id}`,
             source: `legacy.billing-rule.${record.ruleId}`,
             label: `Legacy billing record ${record.id}`,
-            amount: record.cost,
+            amount: centsOf(record.cost),
           }))
         : [
             {
@@ -929,14 +929,14 @@ function toSettlements(
               amount: subtotal,
             },
           ];
-    const delta = total - subtotal;
+    const delta = subCents(total, subtotal);
 
     return [
       {
         settlement: {
           sessionId: legacySessionId(session.id),
-          subtotal: centsOf(subtotal),
-          total: centsOf(total),
+          subtotal,
+          total,
           status: "settled",
           settledAt: session.closedAt,
         },
@@ -988,7 +988,7 @@ function toPricingHistoryEntries(records: readonly PrismNeoBillingRecord[]): Pri
     ruleId: `legacy.rule.${record.ruleId}`,
     ruleAnchorAt: toLegacyRuleAnchorDate(record.ruleStartTimeStamp),
     sessionId: `legacy:billing-record:${record.id}`,
-    amount: record.cost,
+    amount: centsOf(record.cost),
     createdAt: record.billingEnd,
     metadata: {
       legacy: {
@@ -1035,21 +1035,6 @@ function toPricingRule(rule: PrismNeoBillingRule): TimePriorityPricingProvider["
       start: rule.timeRange.start,
       end: rule.timeRange.end,
     },
-  };
-}
-
-function serializePricingProviderForSql(provider: TimePriorityPricingProvider): unknown {
-  return {
-    ...provider,
-    rules: provider.rules.map((rule) => ({
-      ...rule,
-      dateTimeRange: rule.dateTimeRange
-        ? {
-            start: rule.dateTimeRange.start.toISOString(),
-            end: rule.dateTimeRange.end.toISOString(),
-          }
-        : undefined,
-    })),
   };
 }
 
@@ -1184,8 +1169,4 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, 
     groups.set(groupKey, group);
   }
   return groups;
-}
-
-function sum(values: readonly number[]): number {
-  return values.reduce((total, value) => total + value, 0);
 }

@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
@@ -66,14 +67,14 @@ describe("asset definition effects", () => {
       },
       subtotal: centsOf(10),
       chargeItems: [],
-      assetHoldings: [{ assetType: "coupon", assetCode: "three-off", quantity: centsOf(1) }],
+      assetHoldings: [{ assetType: "coupon", assetCode: "three-off", quantity: integerFixture(1) }],
       timeZone: "Asia/Tokyo",
       now: new Date("2026-07-16T10:00:00.000Z"),
     })).resolves.toEqual([{
       id: "session-1:asset-definition:coupon:three-off:discount",
       source: "coupon.three-off",
       label: "减三元",
-      amount: -3,
+      amount: moneyFixture(-3),
     }]);
   });
 });

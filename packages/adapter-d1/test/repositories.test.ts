@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
@@ -272,7 +273,7 @@ describe("createD1Repositories", () => {
         ruleId: "day",
         ruleAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         sessionId: "session-1",
-        amount: 24,
+        amount: moneyFixture(24),
         createdAt: new Date("2026-06-07T04:00:00.000Z"),
         metadata: null,
       },
@@ -284,7 +285,7 @@ describe("createD1Repositories", () => {
         ruleId: "day",
         ruleAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         sessionId: "session-2",
-        amount: 16,
+        amount: moneyFixture(16),
         createdAt: new Date("2026-06-07T08:00:00.000Z"),
         metadata: null,
       },
@@ -300,7 +301,7 @@ describe("createD1Repositories", () => {
         },
       ]),
     ).resolves.toEqual({
-      "pricing-day-night@time.day-night@day@2026-06-07T01:00:00.000Z": 40,
+      "pricing-day-night@time.day-night@day@2026-06-07T01:00:00.000Z": moneyFixture(40),
     });
   });
 
@@ -320,7 +321,7 @@ describe("createD1Repositories", () => {
         capAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         includedPricingConfigIds: ["pricing-base"],
         sessionIds: ["session-1"],
-        amount: 30,
+        amount: moneyFixture(30),
         createdAt: new Date("2026-06-07T04:00:00.000Z"),
         metadata: null,
       },
@@ -332,7 +333,7 @@ describe("createD1Repositories", () => {
         capAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         includedPricingConfigIds: ["pricing-base", "pricing-discount"],
         sessionIds: ["session-2"],
-        amount: 10,
+        amount: moneyFixture(10),
         createdAt: new Date("2026-06-07T08:00:00.000Z"),
         metadata: null,
       },
@@ -348,7 +349,7 @@ describe("createD1Repositories", () => {
         },
       ]),
     ).resolves.toEqual({
-      "cap-config@day@2026-06-07T01:00:00.000Z": 40,
+      "cap-config@day@2026-06-07T01:00:00.000Z": moneyFixture(40),
     });
   });
 
@@ -364,7 +365,7 @@ describe("createD1Repositories", () => {
       kind: "event.entry",
       name: "预约活动报名",
       status: "active",
-      price: 900,
+      price: moneyFixture(900),
       assetType: "ticket",
       assetCode: "reservation",
       activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -380,7 +381,7 @@ describe("createD1Repositories", () => {
       kind: "service.fee",
       name: "现场服务费",
       status: "archived",
-      price: 300,
+      price: moneyFixture(300),
       assetType: null,
       assetCode: null,
       activeAt: null,
@@ -397,7 +398,7 @@ describe("createD1Repositories", () => {
       kind: "event.entry",
       name: "预约活动报名",
       status: "active",
-      price: 900,
+      price: moneyFixture(900),
       assetType: "ticket",
       assetCode: "reservation",
       activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -414,7 +415,7 @@ describe("createD1Repositories", () => {
         kind: "event.entry",
         name: "预约活动报名",
         status: "active",
-        price: 900,
+        price: moneyFixture(900),
         assetType: "ticket",
         assetCode: "reservation",
         activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -430,7 +431,7 @@ describe("createD1Repositories", () => {
         kind: "service.fee",
         name: "现场服务费",
         status: "archived",
-        price: 300,
+        price: moneyFixture(300),
         assetType: null,
         assetCode: null,
         activeAt: null,
@@ -459,7 +460,7 @@ describe("createD1Repositories", () => {
       kind: "service.fee",
       name: "现场服务费",
       status: "active",
-      price: 300,
+      price: moneyFixture(300),
       assetType: null,
       assetCode: null,
       activeAt: null,
@@ -477,7 +478,7 @@ describe("createD1Repositories", () => {
       playerId: "player-1",
       sessionId: "session-1",
       status: "fulfilled",
-      price: 300,
+      price: moneyFixture(300),
       assetType: null,
       assetCode: null,
       metadata: null,
@@ -715,7 +716,7 @@ describe("createD1Repositories", () => {
           id: "charge-time",
           source: "time.d1",
           label: "D1 time",
-          amount: 20,
+          amount: moneyFixture(20),
         },
       ],
       adjustments: [
@@ -723,7 +724,7 @@ describe("createD1Repositories", () => {
           id: "adjustment-coupon",
           source: "coupon.d1",
           label: "D1 coupon",
-          amount: -5,
+          amount: moneyFixture(-5),
         },
       ],
     });
@@ -742,7 +743,7 @@ describe("createD1Repositories", () => {
           id: "charge-time",
           source: "time.d1",
           label: "D1 time",
-          amount: 20,
+          amount: moneyFixture(20),
         },
       ],
       adjustments: [
@@ -750,7 +751,7 @@ describe("createD1Repositories", () => {
           id: "adjustment-coupon",
           source: "coupon.d1",
           label: "D1 coupon",
-          amount: -5,
+          amount: moneyFixture(-5),
         },
       ],
     });

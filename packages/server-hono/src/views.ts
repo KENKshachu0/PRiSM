@@ -16,9 +16,10 @@ import type {
   Present,
   RedeemCode,
   Session,
+  SettlementAdjustment,
   TimeCapPricingWindow,
 } from "@prism/core";
-import { intOf, yuanOf } from "@prism/core";
+import { assetQuantityToNatural, yuanOf } from "@prism/core";
 import type { StaffUserView } from "./types";
 import type {
   PlayerAssets,
@@ -42,7 +43,7 @@ import type {
 export function toPlayerSummaryView(summary: PlayerSummary): PlayerSummaryView {
   return {
     player: summary.player,
-    wallet: summary.wallet,
+    wallet: summary.wallet.map((entry) => ({ ...entry, quantity: yuanOf(entry.quantity) })),
     activeSession: summary.activeSession
       ? {
           id: summary.activeSession.id,
@@ -58,13 +59,13 @@ export function toPlayerAssetsView(
   return {
     holdings: assets.holdings.map((holding) => ({
       ...holding,
-      quantity: holding.assetType === "currency" ? yuanOf(holding.quantity) : intOf(holding.quantity),
+      quantity: assetQuantityToNatural(holding.assetType, holding.quantity),
       activeAt: holding.activeAt?.toISOString() ?? null,
       expiresAt: holding.expiresAt?.toISOString() ?? null,
     })),
     ledgerEntries: assets.ledgerEntries.map((entry) => ({
       ...entry,
-      delta: entry.assetType === "currency" ? yuanOf(entry.delta) : intOf(entry.delta),
+      delta: assetQuantityToNatural(entry.assetType, entry.delta),
       createdAt: entry.createdAt.toISOString(),
     })),
   };
@@ -111,8 +112,8 @@ export function toSessionHistoryDetailView(
       total: session.total === null ? null : yuanOf(session.total),
       status: session.status,
       settledAt: session.settledAt?.toISOString() ?? null,
-      chargeItems: session.chargeItems,
-      adjustments: session.adjustments,
+      chargeItems: session.chargeItems.map(toChargeItemView),
+      adjustments: session.adjustments.map(toAdjustmentView),
     },
   };
 }
@@ -239,7 +240,7 @@ export function toStaffReportsSummaryView(
     summary: {
       from: summary.from.toISOString(),
       to: summary.to.toISOString(),
-      revenueTotal: summary.revenueTotal,
+      revenueTotal: yuanOf(summary.revenueTotal),
       sessionCount: summary.sessionCount,
       assetGrantTotal: summary.assetGrantTotal,
       coinCommandCount: summary.coinCommandCount,
@@ -272,7 +273,7 @@ export function toStaffReportPlayerView(
     playerDisplayName: player.playerDisplayName,
     settlementCount: player.settlementCount,
     totalDurationMinutes: player.totalDurationMinutes,
-    revenueTotal: player.revenueTotal,
+    revenueTotal: yuanOf(player.revenueTotal),
     lastSettledAt: player.lastSettledAt.toISOString(),
   };
 }
@@ -294,16 +295,19 @@ export function toPlayerCheckoutPreviewView(
       startedAt: preview.startedAt.toISOString(),
       endedAt: preview.endedAt?.toISOString() ?? null,
       status: preview.status,
-      subtotal: preview.subtotal,
-      total: preview.total,
+      subtotal: yuanOf(preview.subtotal),
+      total: yuanOf(preview.total),
       chargeItems: preview.chargeItems.map(toChargeItemView),
-      adjustments: preview.adjustments,
+      adjustments: preview.adjustments.map(toAdjustmentView),
     })),
     chargeItems: result.chargeItems.map(toChargeItemView),
-    adjustments: result.adjustments,
-    checkoutAdjustments: result.checkoutAdjustments,
-    pricingCapAdjustments: result.pricingCapAdjustments,
-    wallet: result.wallet,
+    adjustments: result.adjustments.map(toAdjustmentView),
+    checkoutAdjustments: result.checkoutAdjustments.map(toAdjustmentView),
+    pricingCapAdjustments: result.pricingCapAdjustments.map(toAdjustmentView),
+    wallet: {
+      balanceBefore: yuanOf(result.wallet.balanceBefore),
+      balanceAfter: yuanOf(result.wallet.balanceAfter),
+    },
     globalCapWindows: result.globalCapWindows.map(toGlobalCapWindowView),
   };
 }
@@ -315,6 +319,8 @@ export function toPlayerCheckoutResultView(
   return {
     playerSettlement: {
       ...result.playerSettlement,
+      subtotal: yuanOf(result.playerSettlement.subtotal),
+      total: yuanOf(result.playerSettlement.total),
       settledAt: result.playerSettlement.settledAt.toISOString(),
     },
     settlements: result.settlements.map((record) => {
@@ -322,6 +328,8 @@ export function toPlayerCheckoutResultView(
       return ({
       settlement: {
         ...record.settlement,
+        subtotal: yuanOf(record.settlement.subtotal),
+        total: yuanOf(record.settlement.total),
         settledAt: record.settlement.settledAt.toISOString(),
         ...(detail ? {
           label: detail.label,
@@ -330,22 +338,36 @@ export function toPlayerCheckoutResultView(
         } : {}),
       },
       chargeItems: record.chargeItems.map(toChargeItemView),
-      adjustments: record.adjustments,
+      adjustments: record.adjustments.map(toAdjustmentView),
       });
     }),
     chargeItems: result.chargeItems.map(toChargeItemView),
-    adjustments: result.adjustments,
-    checkoutAdjustments: result.checkoutAdjustments,
-    pricingCapAdjustments: result.pricingCapAdjustments,
+    adjustments: result.adjustments.map(toAdjustmentView),
+    checkoutAdjustments: result.checkoutAdjustments.map(toAdjustmentView),
+    pricingCapAdjustments: result.pricingCapAdjustments.map(toAdjustmentView),
     globalCapWindows: result.globalCapWindows.map(toGlobalCapWindowView),
-    assetLedgerEntries: result.assetLedgerEntries,
-    wallet: result.wallet,
+    assetLedgerEntries: result.assetLedgerEntries.map((entry) => ({
+      ...entry,
+      delta: assetQuantityToNatural(entry.assetType, entry.delta),
+    })),
+    wallet: {
+      balanceBefore: yuanOf(result.wallet.balanceBefore),
+      balanceAfter: yuanOf(result.wallet.balanceAfter),
+    },
   };
 }
 
 function toGlobalCapWindowView(window: TimeCapPricingWindow): Record<string, unknown> {
   return {
     ...window,
+    priceCap: yuanOf(window.priceCap),
+    paidBefore: yuanOf(window.paidBefore),
+    currentAmount: yuanOf(window.currentAmount),
+    amountApplied: yuanOf(window.amountApplied),
+    contributions: window.contributions.map((contribution) => ({
+      ...contribution,
+      amount: yuanOf(contribution.amount),
+    })),
     windowStartedAt: window.windowStartedAt.toISOString(),
     windowEndedAt: window.windowEndedAt.toISOString(),
   };
@@ -356,10 +378,14 @@ function toChargeItemView(item: ChargeItem): Record<string, unknown> {
     id: item.id,
     source: item.source,
     label: item.label,
-    amount: item.amount,
+    amount: yuanOf(item.amount),
     period: item.period,
     pricingExplanation: item.pricingExplanation,
   };
+}
+
+function toAdjustmentView(adjustment: SettlementAdjustment): Record<string, unknown> {
+  return { ...adjustment, amount: yuanOf(adjustment.amount) };
 }
 
 export function toRedeemGiftView(
@@ -370,9 +396,18 @@ export function toRedeemGiftView(
       ...result.redeemRecord,
       redeemedAt: result.redeemRecord.redeemedAt.toISOString(),
     },
-    grantedAssets: result.grantedAssets,
-    currentHoldings: result.availableHoldings,
-    assetLedgerEntries: result.assetLedgerEntries,
+    grantedAssets: result.grantedAssets.map((holding) => ({
+      ...holding,
+      quantity: assetQuantityToNatural(holding.assetType, holding.quantity),
+    })),
+    currentHoldings: result.availableHoldings.map((holding) => ({
+      ...holding,
+      quantity: assetQuantityToNatural(holding.assetType, holding.quantity),
+    })),
+    assetLedgerEntries: result.assetLedgerEntries.map((entry) => ({
+      ...entry,
+      delta: assetQuantityToNatural(entry.assetType, entry.delta),
+    })),
   };
 }
 
@@ -382,10 +417,14 @@ export function toGrantAssetsView(
   return {
     holdings: result.holdings.map((holding) => ({
       ...holding,
+      quantity: assetQuantityToNatural(holding.assetType, holding.quantity),
       activeAt: holding.activeAt?.toISOString() ?? null,
       expiresAt: holding.expiresAt?.toISOString() ?? null,
     })),
-    assetLedgerEntries: result.assetLedgerEntries,
+    assetLedgerEntries: result.assetLedgerEntries.map((entry) => ({
+      ...entry,
+      delta: assetQuantityToNatural(entry.assetType, entry.delta),
+    })),
   };
 }
 
@@ -533,7 +572,7 @@ export function toBusinessItemManagementView(
     kind: item.kind,
     name: item.name,
     status: item.status,
-    price: item.price,
+    price: yuanOf(item.price),
     assetType: item.assetType,
     assetCode: item.assetCode,
     activeAt: item.activeAt?.toISOString() ?? null,
@@ -555,7 +594,7 @@ export function toBusinessItemOrderView(
     playerId: order.playerId,
     sessionId: order.sessionId,
     status: order.status,
-    price: order.price,
+    price: yuanOf(order.price),
     assetType: order.assetType,
     assetCode: order.assetCode,
     metadata: order.metadata,

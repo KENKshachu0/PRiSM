@@ -1,4 +1,4 @@
-import { yuanOf } from "@prism/core";
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetDefinition,
@@ -183,7 +183,7 @@ const pricing: PricingProvider = {
         id: "charge-1",
         source: "time",
         label: "Time",
-        amount: 20,
+        amount: moneyFixture(20),
       },
     ];
   },
@@ -198,7 +198,7 @@ function fixedPricingProvider(amount: number): PricingProvider {
           id: `charge-${amount}`,
           source: "time",
           label: "Time",
-          amount,
+          amount: moneyFixture(amount),
         },
       ];
     },
@@ -216,7 +216,7 @@ function durationPricingProvider(): PricingProvider {
           id: `charge-${context.session.id}`,
           source: "time",
           label: "Time",
-          amount,
+          amount: moneyFixture(amount),
         },
       ];
     },
@@ -243,7 +243,7 @@ function configuredPricingProvider(input: {
           ...(input.includeSessionId === false ? {} : { sessionId: context.session.id }),
           source: input.providerId,
           label: input.label,
-          amount: input.amount,
+          amount: moneyFixture(input.amount),
           period: {
             startedAt,
             endedAt,
@@ -253,7 +253,7 @@ function configuredPricingProvider(input: {
             providerId: input.providerId,
             ruleId: "day",
             ruleAnchorAt: new Date("2026-07-09T02:00:00.000Z"),
-            amount: input.amount,
+            amount: moneyFixture(input.amount),
           },
         },
       ];
@@ -396,8 +396,8 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-1"],
-      subtotal: 20,
-      total: 20,
+      subtotal: moneyFixture(20),
+      total: moneyFixture(20),
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
@@ -554,8 +554,8 @@ describe("createSettlementService", () => {
       subtotal: item.subtotal,
       total: item.total,
     }))).toEqual([
-      { sessionId: "session-closed", subtotal: 30, total: 30 },
-      { sessionId: "session-active", subtotal: 30, total: 30 },
+      { sessionId: "session-closed", subtotal: moneyFixture(30), total: moneyFixture(30) },
+      { sessionId: "session-active", subtotal: moneyFixture(30), total: moneyFixture(30) },
     ]);
     expect(sessions.saved.find((session) => session.id === "session-active")?.status).toBe("active");
     expect(settlements.saved).toEqual([]);
@@ -615,8 +615,8 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-closed", "session-music", "session-mahjong"],
-      subtotal: 105,
-      total: 105,
+      subtotal: moneyFixture(105),
+      total: moneyFixture(105),
       status: "settled",
       settledAt: new Date("2026-06-07T11:30:00.000Z"),
     });
@@ -653,8 +653,8 @@ describe("createSettlementService", () => {
     expect(settlements.checkouts).toEqual([{
       id: "player-checkout:session-mahjong",
       playerId: "player-1",
-      subtotal: 105,
-      total: 105,
+      subtotal: moneyFixture(105),
+      total: moneyFixture(105),
       status: "settled",
       settledAt: new Date("2026-06-07T11:30:00.000Z"),
     }]);
@@ -667,7 +667,7 @@ describe("createSettlementService", () => {
         createdAt: new Date("2026-06-07T11:30:00.000Z"),
         metadata: {
           sessions: ["session-closed", "session-music", "session-mahjong"],
-          total: 105,
+          total: centsOf(105),
         },
       },
     ]);
@@ -720,8 +720,8 @@ describe("createSettlementService", () => {
 
     const preview = await service.previewCheckout({ playerId: "player-1" });
     expect(preview.sessionPreviews.map(({ sessionId, total }) => ({ sessionId, total }))).toEqual([
-      { sessionId: "session-charge", total: 10 },
-      { sessionId: "session-discount", total: -3 },
+      { sessionId: "session-charge", total: moneyFixture(10) },
+      { sessionId: "session-discount", total: moneyFixture(-3) },
     ]);
     expect(yuanOf(preview.settlementPreview.total)).toBe(7);
 
@@ -734,7 +734,7 @@ describe("createSettlementService", () => {
       { sessionId: "session-charge", subtotal: centsOf(10), total: centsOf(10) },
       { sessionId: "session-discount", subtotal: centsOf(-3), total: centsOf(-3) },
     ]);
-    expect(result.playerSettlement).toMatchObject({ subtotal: 7, total: 7 });
+    expect(result.playerSettlement).toMatchObject({ subtotal: moneyFixture(7), total: moneyFixture(7) });
     expect(assets.ledgerEntries).toContainEqual(expect.objectContaining({ delta: centsOf(-7) }));
   });
 
@@ -780,14 +780,14 @@ describe("createSettlementService", () => {
 
     const preview = await service.previewCheckout({ playerId: "player-1" });
     expect(preview.sessionPreviews.map(({ sessionId, total }) => ({ sessionId, total }))).toEqual([
-      { sessionId: "session-charge", total: 2 },
-      { sessionId: "session-discount", total: -5 },
+      { sessionId: "session-charge", total: moneyFixture(2) },
+      { sessionId: "session-discount", total: moneyFixture(-5) },
     ]);
     expect(yuanOf(preview.settlementPreview.total)).toBe(0);
 
     const result = await service.checkout({ playerId: "player-1" });
     expect(result.settlements.map(({ settlement }) => yuanOf(settlement.total))).toEqual([2, -5]);
-    expect(result.playerSettlement.total).toBe(0);
+    expect(result.playerSettlement.total).toBe(moneyFixture(0));
     expect(assets.ledgerEntries).toEqual([]);
     expect(assets.assetTransactions[0]?.metadata).toMatchObject({ total: 0 });
   });
@@ -829,7 +829,7 @@ describe("createSettlementService", () => {
                 id: "charge-1",
                 source: "session-time",
                 label: "Time",
-                amount: 25,
+                amount: moneyFixture(25),
               },
             ];
           },
@@ -852,7 +852,7 @@ describe("createSettlementService", () => {
         createdAt: new Date("2026-06-07T11:00:00.000Z"),
         metadata: {
           sessions: ["session-1"],
-          total: 25,
+          total: centsOf(25),
         },
       },
     ]);
@@ -913,8 +913,8 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-1"],
-      subtotal: 20,
-      total: 5,
+      subtotal: moneyFixture(20),
+      total: moneyFixture(5),
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
@@ -923,7 +923,7 @@ describe("createSettlementService", () => {
         id: "session-1:staff.override",
         source: "staff.override:staff-1",
         label: "Staff override: machine fault",
-        amount: -15,
+        amount: moneyFixture(-15),
       },
     ]);
     expect(assets.savedHoldings).toEqual([
@@ -954,7 +954,7 @@ describe("createSettlementService", () => {
         id: "holding-discount",
         assetType: "ticket",
         assetCode: "freemother",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
       },
       {
         id: "holding-wallet",
@@ -996,9 +996,9 @@ describe("createSettlementService", () => {
 
     const result = await service.checkout({ playerId: "player-1" });
 
-    expect(result.playerSettlement).toMatchObject({ subtotal: 12, total: 0 });
+    expect(result.playerSettlement).toMatchObject({ subtotal: moneyFixture(12), total: moneyFixture(0) });
     expect(result.checkoutAdjustments).toEqual([
-      expect.objectContaining({ source: "ticket.freemother", label: "老冯", amount: -12 }),
+      expect.objectContaining({ source: "ticket.freemother", label: "老冯", amount: moneyFixture(-12) }),
     ]);
     expect(result.pricingCapAdjustments).toEqual([]);
     expect(result.globalCapWindows).toEqual([]);
@@ -1030,7 +1030,7 @@ describe("createSettlementService", () => {
         id: "holding-vip-day",
         assetType: "pass",
         assetCode: "pass.daily-vip",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
       },
       {
         id: "holding-wallet",
@@ -1079,7 +1079,7 @@ describe("createSettlementService", () => {
       playerId: "player-1",
     });
 
-    expect(result.playerSettlement.total).toBe(20);
+    expect(result.playerSettlement.total).toBe(moneyFixture(20));
 
     const savedSettlements = settlements.saved;
     expect(savedSettlements.length).toBe(2);
@@ -1163,14 +1163,14 @@ describe("createSettlementService", () => {
     });
 
     expect(result.playerSettlement).toMatchObject({
-      subtotal: 92,
-      total: 89,
+      subtotal: moneyFixture(92),
+      total: moneyFixture(89),
     });
     expect(result.adjustments).toEqual([
       expect.objectContaining({
         source: "time.cap:cap-config:day",
         label: "日场全局封顶",
-        amount: -3,
+        amount: moneyFixture(-3),
       }),
     ]);
     expect(result.checkoutAdjustments).toEqual([]);
@@ -1178,15 +1178,15 @@ describe("createSettlementService", () => {
       expect.objectContaining({
         source: "time.cap:cap-config:day",
         label: "日场全局封顶",
-        amount: -3,
+        amount: moneyFixture(-3),
       }),
     ]);
     expect(result.globalCapWindows).toEqual([
       expect.objectContaining({
         ruleLabel: "日场全局封顶",
-        currentAmount: 72,
-        amountApplied: 69,
-        priceCap: 69,
+        currentAmount: moneyFixture(72),
+        amountApplied: moneyFixture(69),
+        priceCap: moneyFixture(69),
       }),
     ]);
     expect(pricingCapHistory.entries).toEqual([
@@ -1194,7 +1194,7 @@ describe("createSettlementService", () => {
         playerId: "player-1",
         capConfigId: "cap-config",
         capRuleId: "day",
-        amount: 69,
+        amount: centsOf(69),
       }),
     ]);
   });
@@ -1219,7 +1219,7 @@ describe("createSettlementService", () => {
       },
     ]);
     const pricingCapHistory = new MemoryPricingCapHistoryRepository({
-      "cap-config@day@2026-07-09T02:00:00.000Z": 50,
+      "cap-config@day@2026-07-09T02:00:00.000Z": centsOf(50),
     });
     const service = createSettlementService({
       sessions,
@@ -1257,11 +1257,11 @@ describe("createSettlementService", () => {
     const result = await service.previewCheckout({ playerId: "player-1" });
 
     expect(result.globalCapWindows).toEqual([
-      expect.objectContaining({ paidBefore: 50, currentAmount: 40, priceCap: 79, amountApplied: 29 }),
+      expect.objectContaining({ paidBefore: moneyFixture(50), currentAmount: moneyFixture(40), priceCap: moneyFixture(79), amountApplied: moneyFixture(29) }),
     ]);
     expect(result.globalCapWindows[0].contributions).toEqual([
-      { sessionId: "session-a", pricingConfigId: "pricing-base", amount: 7.25 },
-      { sessionId: "session-z", pricingConfigId: "pricing-base", amount: 21.75 },
+      { sessionId: "session-a", pricingConfigId: "pricing-base", amount: moneyFixture(7.25) },
+      { sessionId: "session-z", pricingConfigId: "pricing-base", amount: moneyFixture(21.75) },
     ]);
     expect(result.globalCapWindows[0].contributions.reduce((sum, item) => sum + item.amount, 0))
       .toBe(result.globalCapWindows[0].amountApplied);
@@ -1333,7 +1333,7 @@ describe("createSettlementService", () => {
     const result = await service.previewCheckout({ playerId: "player-1" });
     const window = result.globalCapWindows[0];
 
-    expect(window.amountApplied).toBe(38_633_722_597);
+    expect(window.amountApplied).toBe(moneyFixture(38_633_722_597));
     expect(window.contributions.map((contribution) => contribution.sessionId))
       .toEqual(["session-a", "session-b", "session-c"]);
   });

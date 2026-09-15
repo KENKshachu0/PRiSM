@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -65,10 +66,10 @@ test("SQL repositories batch repeated reads and writes", async () => {
   await repositories.settlements.saveSettlement({
     settlement: { sessionId: "session-1", subtotal: centsOf(10), total: centsOf(8), status: "settled", settledAt: now },
     chargeItems: [
-      { id: "charge-1", source: "pricing", label: "Usage", amount: 10 },
-      { id: "charge-2", source: "pricing", label: "Fee", amount: 2 },
+      { id: "charge-1", source: "pricing", label: "Usage", amount: moneyFixture(10) },
+      { id: "charge-2", source: "pricing", label: "Fee", amount: moneyFixture(2) },
     ],
-    adjustments: [{ id: "adjustment-1", source: "coupon", label: "Coupon", amount: -4 }],
+    adjustments: [{ id: "adjustment-1", source: "coupon", label: "Coupon", amount: moneyFixture(-4) }],
   });
   expect(statements).toHaveLength(5);
 
@@ -112,7 +113,7 @@ function pricingHistoryEntry(id: string, ruleId: string, at: Date) {
     ruleId,
     ruleAnchorAt: at,
     sessionId: "session-1",
-    amount: 1,
+    amount: centsOf(1),
     createdAt: at,
     metadata: null,
   };

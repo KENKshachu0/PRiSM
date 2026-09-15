@@ -36,6 +36,19 @@ if (
   db.transaction(() => db.exec(migration))();
   console.log("Created pre-migration SQLite backup:", backupPath);
 }
+const quantityColumn = db.query<{ name: string; type: string }, []>(
+  "PRAGMA table_info(asset_holdings)",
+).all().find(column => column.name === "quantity");
+if (quantityColumn && quantityColumn.type.toUpperCase() !== "INTEGER") {
+  const migration = await Bun.file(new URL(
+    "../../../migrations/0022_integer_money_columns.sql", import.meta.url,
+  )).text();
+  const backupPath = `${databasePath}.before-integer-money-${Date.now()}.sqlite`;
+  db.run("VACUUM INTO ?", [backupPath]);
+  db.run("PRAGMA foreign_keys=ON");
+  db.transaction(() => db.exec(migration))();
+  console.log("Created pre-integer-money SQLite backup:", backupPath);
+}
 initializeSqliteSchema(db);
 
 const dependencies = createPrismLocalDependencies({

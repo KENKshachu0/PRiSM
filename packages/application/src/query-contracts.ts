@@ -15,7 +15,7 @@ export type PlayerSummary = {
   };
   wallet: Array<{
     assetCode: string;
-    quantity: number;
+    quantity: Cents;
   }>;
   activeSession: {
     id: string;
@@ -69,13 +69,13 @@ export type SessionHistoryDetail = SessionHistoryListItem & {
     id: string;
     source: string;
     label: string;
-    amount: number;
+    amount: Cents;
   }>;
   adjustments: Array<{
     id: string;
     source: string;
     label: string;
-    amount: number;
+    amount: Cents;
   }>;
 };
 
@@ -151,7 +151,7 @@ export type StaffReportsSummaryInput = {
 };
 
 export type StaffReportsSummary = StaffReportsSummaryInput & {
-  revenueTotal: number;
+  revenueTotal: Cents;
   sessionCount: number;
   assetGrantTotal: number;
   coinCommandCount: number;
@@ -175,7 +175,7 @@ export type StaffReportPlayerListItem = {
   playerDisplayName: string;
   settlementCount: number;
   totalDurationMinutes: number;
-  revenueTotal: number;
+  revenueTotal: Cents;
   lastSettledAt: Date;
 };
 

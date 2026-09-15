@@ -701,6 +701,11 @@ export function initializeSqliteSchema(db: Database): void {
   if (columns.length && !columns.some(column => column.name === "shop_id")) {
     throw new Error("SQLite schema requires migration 0016; start with dev:local to create a backup and upgrade.");
   }
+  const quantity = db.query<{ name: string; type: string }, []>("PRAGMA table_info(asset_holdings)").all()
+    .find(column => column.name === "quantity");
+  if (quantity && quantity.type.toUpperCase() !== "INTEGER") {
+    throw new Error("SQLite schema requires migration 0022; start with dev:local to create a backup and upgrade.");
+  }
   db.run("PRAGMA foreign_keys = ON");
   for (const statement of sqliteSchema) db.run(statement);
 }

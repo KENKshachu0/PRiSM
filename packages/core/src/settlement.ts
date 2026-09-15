@@ -3,6 +3,7 @@ import { PrismDomainError } from "./errors";
 import {
   type Cents,
   addCents,
+  maxCents,
   centsOf,
   compareCents,
   isNegativeCents,
@@ -12,13 +13,7 @@ import {
   negCents,
   subCents,
   sumCents,
-  compareMoney,
-  isNegativeQuantity,
-  isPositiveQuantity,
-  isZeroQuantity,
-  normalizeQuantity,
-  quantizeMoney,
-  sumMoney,
+  ZERO_CENTS,
 } from "./money";
 import type { PricingSegmentExplanation } from "./pricing-time";
 import type { Session } from "./session";
@@ -28,7 +23,7 @@ export type ChargeItem = {
   sessionId?: string;
   source: string;
   label: string;
-  amount: number;
+  amount: Cents;
   period?: {
     startedAt: Date;
     endedAt: Date;
@@ -42,14 +37,14 @@ export type PricingHistoryContribution = {
   providerId: string;
   ruleId: string;
   ruleAnchorAt: Date;
-  amount: number;
+  amount: Cents;
 };
 
 export type SettlementAdjustment = {
   id: string;
   source: string;
   label: string;
-  amount: number;
+  amount: Cents;
   pricingCapHistory?: PricingCapHistoryContribution;
 };
 
@@ -58,7 +53,7 @@ export type PricingCapHistoryContribution = {
   capRuleId: string;
   capAnchorAt: Date;
   includedPricingConfigIds: string[];
-  amount: number;
+  amount: Cents;
 };
 
 export type PastAppliedAdjustment = {
@@ -77,8 +72,8 @@ export type Settlement = {
 export type PlayerCheckout = {
   id: string;
   playerId: string;
-  subtotal: number;
-  total: number;
+  subtotal: Cents;
+  total: Cents;
   status: "settled";
   settledAt: Date;
 };
@@ -112,7 +107,7 @@ export type AssetEffectContext = {
   session: Session;
   chargeItems: readonly ChargeItem[];
   assetHoldings: readonly AssetHolding[];
-  subtotal: number;
+  subtotal: Cents;
   now: Date;
   timeZone?: string;
   pastAppliedAdjustments?: readonly PastAppliedAdjustment[];
@@ -160,13 +155,8 @@ export async function settleSession(input: SettleSessionInput): Promise<SettleSe
   const assetHoldings = input.assetHoldings.map((account) => ({ ...account }));
   const quote = await quoteSessionSettlement(input, availableHoldingsAt(assetHoldings, input.now));
   const { chargeItems, subtotal, adjustments, total } = applyOverride(input, quote);
-  // The pricing engine works in yuan and owns the persisted cap history, so it
-  // stays yuan; the settled amounts and the holdings they are paid from are
-  // cents. This call is the boundary between the two.
-  const subtotalCents = centsOf(subtotal);
-  const totalCents = centsOf(total);
   const assetLedgerEntries = deductCurrency(assetHoldings, {
-    amount: totalCents,
+    amount: total,
     reason: "session.settlement",
     refId: input.session.id,
     now: input.now,
@@ -175,8 +165,8 @@ export async function settleSession(input: SettleSessionInput): Promise<SettleSe
   return {
     settlement: {
       sessionId: input.session.id,
-      subtotal: subtotalCents,
-      total: totalCents,
+      subtotal,
+      total,
       status: "settled",
       settledAt: input.now,
     },
@@ -197,8 +187,8 @@ export async function previewSessionSettlement(input: SettleSessionInput): Promi
   return {
     settlementPreview: {
       sessionId: input.session.id,
-      subtotal: centsOf(subtotal),
-      total: centsOf(total),
+      subtotal,
+      total,
       status: "preview",
       previewedAt: input.now,
     },
@@ -212,24 +202,24 @@ function applyOverride(
   input: SettleSessionInput,
   quote: {
     chargeItems: ChargeItem[];
-    subtotal: number;
+    subtotal: Cents;
     adjustments: SettlementAdjustment[];
-    total: number;
+    total: Cents;
   },
 ): {
   chargeItems: ChargeItem[];
-  subtotal: number;
+  subtotal: Cents;
   adjustments: SettlementAdjustment[];
-  total: number;
+  total: Cents;
 } {
   if (!input.overrideTotal) return quote;
 
-  const overrideTotal = quantizeMoney(input.overrideTotal.total);
-  if (!Number.isFinite(overrideTotal) || isNegativeQuantity(overrideTotal)) {
+  const overrideTotal = centsOf(input.overrideTotal.total);
+  if (isNegativeCents(overrideTotal)) {
     throw new PrismDomainError("Override total must be a non-negative finite number.", "INVALID_OVERRIDE_TOTAL");
   }
 
-  const amount = quantizeMoney(overrideTotal - quote.total);
+  const amount = subCents(overrideTotal, quote.total);
   return {
     chargeItems: quote.chargeItems,
     subtotal: quote.subtotal,
@@ -251,9 +241,9 @@ async function quoteSessionSettlement(
   assetHoldings: readonly AssetHolding[],
 ): Promise<{
   chargeItems: ChargeItem[];
-  subtotal: number;
+  subtotal: Cents;
   adjustments: SettlementAdjustment[];
-  total: number;
+  total: Cents;
 }> {
   const chargeItems = await collectChargeItems(input, assetHoldings);
   const subtotal = sumCharges(chargeItems);
@@ -284,7 +274,7 @@ async function collectAdjustments(
   input: SettleSessionInput,
   assetHoldings: readonly AssetHolding[],
   chargeItems: readonly ChargeItem[],
-  subtotal: number,
+  subtotal: Cents,
 ): Promise<SettlementAdjustment[]> {
   const adjustments: SettlementAdjustment[] = [];
 
@@ -304,24 +294,24 @@ async function collectAdjustments(
   return adjustments;
 }
 
-function sumCharges(chargeItems: readonly ChargeItem[]): number {
+function sumCharges(chargeItems: readonly ChargeItem[]): Cents {
   for (const item of chargeItems) {
-    if (!Number.isFinite(item.amount)) {
+    if (!Number.isSafeInteger(item.amount)) {
       throw new PrismDomainError("Charge item amount must be a finite number.", "INVALID_CHARGE_AMOUNT");
     }
   }
-  return sumMoney(chargeItems.map((item) => item.amount));
+  return sumCents(chargeItems.map((item) => item.amount));
 }
 
-function applyAdjustments(subtotal: number, adjustments: readonly SettlementAdjustment[]): number {
+function applyAdjustments(subtotal: Cents, adjustments: readonly SettlementAdjustment[]): Cents {
   let total = subtotal;
   for (const adjustment of adjustments) {
-    if (!Number.isFinite(adjustment.amount)) {
+    if (!Number.isSafeInteger(adjustment.amount)) {
       throw new PrismDomainError("Settlement adjustment amount must be finite.", "INVALID_ADJUSTMENT_AMOUNT");
     }
-    total += adjustment.amount;
+    total = addCents(total, adjustment.amount);
   }
-  return normalizeQuantity(Math.max(0, total));
+  return maxCents(ZERO_CENTS, total);
 }
 
 export function deductCurrency(
@@ -385,7 +375,7 @@ function availableHoldingsAt(assetHoldings: readonly AssetHolding[], now: Date):
 }
 
 function isHoldingAvailableAt(holding: AssetHolding, now: Date): boolean {
-  if (!isPositiveQuantity(holding.quantity)) return false;
+  if (!isPositiveCents(holding.quantity)) return false;
   if (holding.activeAt && holding.activeAt > now) return false;
   if (holding.expiresAt && holding.expiresAt <= now) return false;
   return true;

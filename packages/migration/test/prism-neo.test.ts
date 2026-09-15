@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { createPrismNeoMigrationPlan } from "../src";
@@ -254,7 +255,7 @@ describe("createPrismNeoMigrationPlan", () => {
       playerId: "legacy:user:7",
       assetType: "title",
       assetCode: "legacy.title.9",
-      quantity: centsOf(1),
+      quantity: integerFixture(1),
       activeAt: null,
       expiresAt: null,
     });
@@ -299,7 +300,7 @@ describe("createPrismNeoMigrationPlan", () => {
             id: "legacy:billing-record:401",
             source: "legacy.billing-rule.2",
             label: "Legacy billing record 401",
-            amount: 90,
+            amount: moneyFixture(90),
           },
         ],
         adjustments: [
@@ -307,7 +308,7 @@ describe("createPrismNeoMigrationPlan", () => {
             id: "legacy:session-cost-delta:51",
             source: "legacy.session",
             label: "Legacy final cost delta",
-            amount: -30,
+            amount: moneyFixture(-30),
           },
         ],
       },
@@ -339,7 +340,7 @@ describe("createPrismNeoMigrationPlan", () => {
         ruleId: "legacy.rule.2",
         ruleAnchorAt: new Date("2026-01-01T00:00:00.000Z"),
         sessionId: "legacy:billing-record:401",
-        amount: 90,
+        amount: moneyFixture(90),
         createdAt: new Date("2026-01-03T11:30:00.000Z"),
         metadata: {
           legacy: {
@@ -358,7 +359,7 @@ describe("createPrismNeoMigrationPlan", () => {
         ruleId: "legacy.rule.2",
         ruleAnchorAt: new Date("2026-01-01T00:00:00.000Z"),
         sessionId: "legacy:billing-record:402",
-        amount: 30,
+        amount: moneyFixture(30),
         createdAt: new Date("2026-01-04T10:30:00.000Z"),
         metadata: {
           legacy: {

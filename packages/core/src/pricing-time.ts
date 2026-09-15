@@ -1,4 +1,18 @@
 import { PrismDomainError } from "./errors";
+import {
+  type Cents,
+  addCents,
+  allocate,
+  centsOf,
+  compareCents,
+  isPositiveCents,
+  maxCents,
+  minCents,
+  mulDivRound,
+  subCents,
+  yuanOf,
+  ZERO_CENTS,
+} from "./money";
 import type { ChargeItem, PricingProvider, SettlementAdjustment } from "./settlement";
 
 export type UnitPricingConfig = {
@@ -56,7 +70,7 @@ export type PriorityTimePricingProviderConfig = {
   pricingConfigId?: string;
   rules: readonly PriorityTimePricingRule[];
   timeZone?: string;
-  paidHistory?: Record<string, number>;
+  paidHistory?: Record<string, Cents>;
 };
 
 export type TimeCapPricingProviderConfig = {
@@ -65,7 +79,7 @@ export type TimeCapPricingProviderConfig = {
   includedPricingConfigIds: readonly string[];
   rules: readonly TimeCapPricingRule[];
   timeZone?: string;
-  paidHistory?: Record<string, number>;
+  paidHistory?: Record<string, Cents>;
 };
 
 export type TimeCapPricingHistoryLookupKey = {
@@ -140,11 +154,11 @@ export type TimeCapPricingWindow = {
   ruleLabel: string;
   windowStartedAt: Date;
   windowEndedAt: Date;
-  priceCap: number;
-  paidBefore: number;
-  currentAmount: number;
-  amountApplied: number;
-  contributions: Array<{ sessionId: string; pricingConfigId: string; amount: number }>;
+  priceCap: Cents;
+  paidBefore: Cents;
+  currentAmount: Cents;
+  amountApplied: Cents;
+  contributions: Array<{ sessionId: string; pricingConfigId: string; amount: Cents }>;
 };
 
 export function createTimePricingProvider(config: TimePricingProviderConfig): PricingProvider {
@@ -180,7 +194,9 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
     quote(context) {
       const endedAt = context.session.endedAt ?? context.now;
       const charges: ChargeItem[] = [];
-      const currentPaidHistory: Record<string, number> = { ...(config.paidHistory ?? {}) };
+      const currentPaidHistory: Record<string, Cents> = Object.fromEntries(
+        Object.entries(config.paidHistory ?? {}),
+      );
       let cursor = new Date(context.session.startedAt);
       const hasDeviceActivity = Boolean(
         context.session.metadata?.deviceOperated || context.session.metadata?.hasDeviceActivity,
@@ -208,7 +224,7 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
           rule,
           timeZone,
         );
-        const paidBefore = currentPaidHistory[historyKey] ?? 0;
+        const paidBefore = currentPaidHistory[historyKey] ?? ZERO_CENTS;
         const amount = calculateUnitPriceWithHistory(
           durationMinutes,
           rule.pricing,
@@ -216,8 +232,8 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
           invalidateFirstGrace,
         );
         const units = calculateUnits(durationMinutes, rule.pricing, invalidateFirstGrace);
-        currentPaidHistory[historyKey] = paidBefore + amount;
-        if (amount > 0) {
+        currentPaidHistory[historyKey] = addCents(paidBefore, amount);
+        if (isPositiveCents(amount)) {
           invalidateFirstGrace = false;
         }
 
@@ -243,7 +259,7 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
             units,
             planName: config.name,
             pricing: { ...rule.pricing },
-            paidBefore,
+            paidBefore: yuanOf(paidBefore),
             pricingConfigId: config.pricingConfigId ?? config.id,
             providerId: config.id,
             ruleId: rule.id,
@@ -254,7 +270,10 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
             },
             ruleTimeRange: rule.timeRange ?? null,
             intervalCap: rule.pricing.priceCap,
-            intervalCapReached: paidBefore + amount >= rule.pricing.priceCap,
+            intervalCapReached: compareCents(
+              addCents(paidBefore, amount),
+              centsOf(rule.pricing.priceCap),
+            ) >= 0,
           },
         });
 
@@ -310,9 +329,9 @@ export function applyTimeCapPricing(input: {
   return explainTimeCapPricing(input)
     .map((window) => ({
       window,
-      adjustmentAmount: window.amountApplied - window.currentAmount,
+      adjustmentAmount: subCents(window.amountApplied, window.currentAmount),
     }))
-    .filter(({ window, adjustmentAmount }) => adjustmentAmount !== 0 || window.amountApplied > 0)
+    .filter(({ window, adjustmentAmount }) => isPositiveCents(adjustmentAmount) || adjustmentAmount !== 0 || isPositiveCents(window.amountApplied))
     .map(({ window, adjustmentAmount }) => ({
       id: `time-cap:${window.capConfigId}:${window.capRuleId}:${window.windowStartedAt.toISOString()}`,
       source: `time.cap:${window.capConfigId}:${window.capRuleId}`,
@@ -323,7 +342,7 @@ export function applyTimeCapPricing(input: {
         capRuleId: window.capRuleId,
         capAnchorAt: window.windowStartedAt,
         includedPricingConfigIds: [...input.config.includedPricingConfigIds],
-        amount: Math.max(0, window.amountApplied),
+        amount: maxCents(ZERO_CENTS, window.amountApplied),
       },
     }));
 }
@@ -331,7 +350,7 @@ export function applyTimeCapPricing(input: {
 export function explainTimeCapPricing(input: {
   config: TimeCapPricingProviderConfig;
   chargeItems: readonly ChargeItem[];
-  paidHistory?: Record<string, number>;
+  paidHistory?: Record<string, Cents>;
 }): TimeCapPricingWindow[] {
   const rules = activeRules(input.config.rules).sort((a, b) => b.priority - a.priority);
   const timeZone = input.config.timeZone ?? "UTC";
@@ -340,8 +359,8 @@ export function explainTimeCapPricing(input: {
   const buckets = new Map<string, {
     rule: TimeCapPricingRule;
     capAnchorAt: Date;
-    amount: number;
-    contributions: Map<string, { sessionId: string; pricingConfigId: string; amount: number }>;
+    amount: Cents;
+    contributions: Map<string, { sessionId: string; pricingConfigId: string; amount: Cents }>;
   }>();
 
   for (const item of input.chargeItems) {
@@ -352,6 +371,12 @@ export function explainTimeCapPricing(input: {
     const totalMs = endedAt.getTime() - startedAt.getTime();
     if (totalMs <= 0) continue;
 
+    const segments: Array<{
+      rule: TimeCapPricingRule;
+      capAnchorAt: Date;
+      key: string;
+      weight: number;
+    }> = [];
     let cursor = startedAt;
     while (cursor < endedAt) {
       const rule = findActiveRule(cursor, rules, timeZone);
@@ -361,37 +386,48 @@ export function explainTimeCapPricing(input: {
       }
       const nextBoundary = findNextPriorityBoundary(cursor, endedAt, rule, rules, timeZone);
       const overlapMs = nextBoundary.getTime() - cursor.getTime();
-      const proratedAmount = item.amount * (overlapMs / totalMs);
       const capAnchorAt = getRuleAnchor(cursor, rule, timeZone);
       const key = buildTimeCapHistoryKey(capConfigId, rule.id, capAnchorAt);
+      segments.push({ rule, capAnchorAt, key, weight: overlapMs });
+      cursor = nextBoundary;
+    }
+
+    const weights = segments.map((segment) => segment.weight);
+    // Retain the portion outside cap windows; it must not be discounted.
+    weights.push(totalMs - weights.reduce((sum, weight) => sum + weight, 0));
+    const proratedAmounts = allocate(item.amount, weights);
+    segments.forEach((segment, index) => {
+      const proratedAmount = proratedAmounts[index] ?? ZERO_CENTS;
+      const { rule, capAnchorAt, key } = segment;
       const bucket = buckets.get(key) ?? {
         rule,
         capAnchorAt,
-        amount: 0,
+        amount: ZERO_CENTS,
         contributions: new Map(),
       };
-      bucket.amount += proratedAmount;
+      bucket.amount = addCents(bucket.amount, proratedAmount);
       if (item.sessionId) {
         const contributionKey = JSON.stringify([item.sessionId, pricingConfigId]);
         const contribution = bucket.contributions.get(contributionKey) ?? {
           sessionId: item.sessionId,
           pricingConfigId,
-          amount: 0,
+          amount: ZERO_CENTS,
         };
-        contribution.amount += proratedAmount;
+        contribution.amount = addCents(contribution.amount, proratedAmount);
         bucket.contributions.set(contributionKey, contribution);
       }
       buckets.set(key, bucket);
-      cursor = nextBoundary;
-    }
+    });
   }
 
   const windows: TimeCapPricingWindow[] = [];
-  const currentPaidHistory: Record<string, number> = { ...(input.paidHistory ?? input.config.paidHistory ?? {}) };
+  const currentPaidHistory: Record<string, Cents> = Object.fromEntries(
+    Object.entries(input.paidHistory ?? input.config.paidHistory ?? {}),
+  );
   for (const [key, bucket] of buckets) {
-    const paidBefore = currentPaidHistory[key] ?? 0;
-    const target = calculateCapWindowTarget(bucket.amount, bucket.rule.priceCap, paidBefore);
-    currentPaidHistory[key] = paidBefore + Math.max(0, target);
+    const paidBefore = currentPaidHistory[key] ?? ZERO_CENTS;
+    const target = calculateCapWindowTarget(bucket.amount, centsOf(bucket.rule.priceCap), paidBefore);
+    currentPaidHistory[key] = addCents(paidBefore, maxCents(ZERO_CENTS, target));
     windows.push({
       key,
       capConfigId,
@@ -399,7 +435,7 @@ export function explainTimeCapPricing(input: {
       ruleLabel: bucket.rule.label,
       windowStartedAt: bucket.capAnchorAt,
       windowEndedAt: getRuleNaturalEnd(bucket.capAnchorAt, bucket.rule, timeZone),
-      priceCap: bucket.rule.priceCap,
+      priceCap: centsOf(bucket.rule.priceCap),
       paidBefore,
       currentAmount: bucket.amount,
       amountApplied: target,
@@ -544,18 +580,18 @@ function activeRules<T extends TimeRuleLike>(rules: readonly T[]): T[] {
   return rules.filter((rule) => (rule.status ?? "active") === "active");
 }
 
-function calculateCapWindowTarget(currentAmount: number, priceCap: number, paidBefore: number): number {
-  if (paidBefore >= priceCap) return 0;
-  if (currentAmount <= 0) return currentAmount;
-  return Math.max(0, Math.min(currentAmount, priceCap - paidBefore));
+function calculateCapWindowTarget(currentAmount: Cents, priceCap: Cents, paidBefore: Cents): Cents {
+  if (compareCents(paidBefore, priceCap) >= 0) return ZERO_CENTS;
+  if (compareCents(currentAmount, ZERO_CENTS) <= 0) return currentAmount;
+  return minCents(currentAmount, maxCents(ZERO_CENTS, subCents(priceCap, paidBefore)));
 }
 
 function calculateUnitPrice(
   durationMinutes: number,
   config: UnitPricingConfig,
   invalidateFirstGrace?: boolean,
-): number {
-  if (durationMinutes <= 0 && !invalidateFirstGrace) return 0;
+): Cents {
+  if (durationMinutes <= 0 && !invalidateFirstGrace) return ZERO_CENTS;
 
   return calculateRawUnitPrice(durationMinutes, config, invalidateFirstGrace);
 }
@@ -563,27 +599,28 @@ function calculateUnitPrice(
 function calculateUnitPriceWithHistory(
   durationMinutes: number,
   config: UnitPricingConfig,
-  paidBefore: number,
+  paidBefore: Cents,
   invalidateFirstGrace?: boolean,
-): number {
-  if (durationMinutes <= 0 && !invalidateFirstGrace) return 0;
+): Cents {
+  if (durationMinutes <= 0 && !invalidateFirstGrace) return ZERO_CENTS;
 
-  const raw = calculateRawUnitPrice(durationMinutes, {
-    ...config,
-    priceCap: Number.MAX_SAFE_INTEGER,
-  }, invalidateFirstGrace);
-  if (raw <= 0) return raw;
+  const raw = calculateRawUnitPrice(durationMinutes, config, invalidateFirstGrace, true);
+  if (!isPositiveCents(raw)) return raw;
 
-  const effectiveTotal = Math.min(paidBefore + raw, config.priceCap);
-  return Math.max(0, effectiveTotal - paidBefore);
+  const effectiveTotal = minCents(addCents(paidBefore, raw), centsOf(config.priceCap));
+  return maxCents(ZERO_CENTS, subCents(effectiveTotal, paidBefore));
 }
 
 function calculateRawUnitPrice(
   durationMinutes: number,
   config: UnitPricingConfig,
   invalidateFirstGrace?: boolean,
-): number {
-  return Math.min(calculateUnits(durationMinutes, config, invalidateFirstGrace) * config.unitPrice, config.priceCap);
+  ignoreCap = false,
+): Cents {
+  const units = calculateUnits(durationMinutes, config, invalidateFirstGrace);
+  const unitPrice = centsOf(config.unitPrice);
+  const raw = mulDivRound(unitPrice, units, 1, "trunc");
+  return ignoreCap ? raw : minCents(raw, centsOf(config.priceCap));
 }
 
 function calculateUnits(durationMinutes: number, config: UnitPricingConfig, invalidateFirstGrace?: boolean): number {

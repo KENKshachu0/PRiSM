@@ -1,3 +1,5 @@
+import { serializePricingProviderConfig, serializePresentGrants } from "@prism/storage-sql";
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
@@ -188,7 +190,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
         "time.priority",
         "标准日夜计费",
         1,
-        JSON.stringify({
+        JSON.stringify(serializePricingProviderConfig({
           id: "time.day-night",
           timeZone: "Asia/Tokyo",
           rules: [
@@ -223,7 +225,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
               },
             },
           ],
-        }),
+        })),
         "2026-06-07T00:00:00.000Z",
         "2026-06-07T00:00:00.000Z",
       ],
@@ -261,7 +263,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
       fixture.sqlite
         .query<{ total: number }, []>("SELECT COALESCE(SUM(amount), 0) AS total FROM pricing_history_entries")
         .get(),
-    ).toEqual({ total: 40 });
+    ).toEqual({ total: centsOf(40) });
   });
 
   it("composes the Hono app dependencies for a Cloudflare D1 deployment", async () => {
@@ -288,7 +290,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
                 id: `${context.session.id}:flat-test`,
                 source: "flat-test",
                 label: "Flat test",
-                amount: 999,
+                amount: moneyFixture(999),
               },
             ];
           },
@@ -556,7 +558,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
         {
           id: "player-1",
           displayName: "Neri",
-          walletTotal: centsOf(1980),
+          walletTotal: 1980,
           activeSessionId: null,
         },
       ],
@@ -594,7 +596,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
       players: [
         {
           id: "player-1",
-          walletTotal: centsOf(2030),
+          walletTotal: 2030,
         },
       ],
     });
@@ -1036,7 +1038,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
     const staffAfterRedeem = (await staffAfterRedeemResponse.json()) as { players: Array<{ id: string; walletTotal: number }> };
     expect(staffAfterRedeem.players.find((player) => player.id === "player-1")).toMatchObject({
       id: "player-1",
-      walletTotal: centsOf(1056),
+      walletTotal: 1056,
     });
 
     const revokeResponse = await app.request(`/rpc/staff/redeem-codes/${redeemCode.redeemCode.id}/revoke`, {
@@ -1211,7 +1213,7 @@ describe("createPrismRuntimeDependencies with D1", () => {
     const staffAfterAdjust = (await staffAfterAdjustResponse.json()) as { players: Array<{ id: string; walletTotal: number }> };
     expect(staffAfterAdjust.players.find((player) => player.id === "player-1")).toMatchObject({
       id: "player-1",
-      walletTotal: centsOf(45),
+      walletTotal: 45,
     });
 
     const reportsResponse = await app.request(

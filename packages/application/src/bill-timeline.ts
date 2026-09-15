@@ -1,5 +1,5 @@
 import type { BillTimeline, BillTimelineEntry, ChargeItem, SettlementAdjustment, TimeCapPricingWindow } from "@prism/core";
-import { isZeroQuantity, quantizeMoney } from "@prism/core";
+import { type Cents, addCents, isZeroCents, yuanOf, ZERO_CENTS } from "@prism/core";
 
 /** Presentation only: amounts come from the engine, never recalculated by clients. */
 export function buildBillTimeline(input: {
@@ -69,7 +69,7 @@ export function buildBillTimeline(input: {
     }
   }
   for (const adjustment of input.adjustments) {
-    if (isZeroQuantity(adjustment.amount)) continue;
+    if (isZeroCents(adjustment.amount)) continue;
     const history = adjustment.pricingCapHistory;
     const window = history && input.globalCapWindows.find(w => w.capConfigId === history.capConfigId && w.capRuleId === history.capRuleId && w.windowStartedAt.getTime() === history.capAnchorAt.getTime());
     // Global caps are independent entries: never attribute them to one plan.
@@ -87,9 +87,20 @@ export function buildBillTimeline(input: {
     track.lane = lane;
     lanes[lane] = track.endedAt;
   }
-  const totals = new Map<string, number>();
+  const totals = new Map<string, Cents>();
   for (const entries of events.values()) for (const entry of entries) {
-    if (entry.amount != null) totals.set(entry.name, (totals.get(entry.name) ?? 0) + entry.amount);
+    if (entry.amount != null) totals.set(entry.name, addCents(totals.get(entry.name) ?? ZERO_CENTS, entry.amount as Cents));
   }
-  return { totals: [...totals].map(([name, amount]) => ({ name, amount: quantizeMoney(amount) })), tracks, events: [...events].sort(([a], [b]) => b.localeCompare(a)).map(([at, entries]) => ({ at, ...local(at), entries })) };
+  return {
+    totals: [...totals].map(([name, amount]) => ({ name, amount: yuanOf(amount) })),
+    tracks,
+    events: [...events].sort(([a], [b]) => b.localeCompare(a)).map(([at, entries]) => ({
+      at, ...local(at), entries: entries.map(entry => ({
+        ...entry,
+        amount: entry.amount == null ? null : yuanOf(entry.amount as Cents),
+        cap: entry.kind === "adjustment" && entry.cap != null ? yuanOf(entry.cap as Cents) : entry.cap,
+        paidBefore: entry.kind === "adjustment" && entry.paidBefore != null ? yuanOf(entry.paidBefore as Cents) : entry.paidBefore,
+      })),
+    })),
+  };
 }

@@ -389,7 +389,7 @@ test("imported Bot entry labels are reused by Web and staff money retries debit 
     await env.DB.prepare(
       "SELECT SUM(quantity) AS n FROM asset_holdings WHERE shop_id='a' AND player_id='p'",
     ).first("n"),
-  ).toBe(25);
+  ).toBe(2500);
   expect(
     (
       await request(path, {
@@ -1221,10 +1221,10 @@ test("entry requires a scanned device ticket and explicit consent; players canno
 
 test("player rate schedule resolves production-style priorities, dated overnight promotions and global caps", async () => {
   const rates = {
-    unitPrice: 4,
+    unitPrice: 400,
     unitMinutes: 30,
     roundGraceMinutes: 5,
-    priceCap: 40,
+    priceCap: 4000,
   };
   const provider = {
     id: "schedule",
@@ -1268,7 +1268,7 @@ test("player rate schedule resolves production-style priorities, dated overnight
           start: "2026-02-17T00:00:21.735Z",
           end: "2026-03-03T20:00:21.735Z",
         },
-        pricing: { ...rates, unitPrice: 3, priceCap: 30 },
+        pricing: { ...rates, unitPrice: 300, priceCap: 3000 },
       },
     ],
   };
@@ -1329,7 +1329,7 @@ test("player rate schedule resolves production-style priorities, dated overnight
         label: "日场合计",
         priority: 1,
         timeRange: { start: "10:00", end: "22:00" },
-        priceCap: 30,
+        priceCap: 3000,
       },
     ],
   };
@@ -1474,7 +1474,7 @@ test("a Bot stops the referenced player's sessions regardless of which channel o
   await env.DB.prepare(
     `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
      VALUES (?,'entry-rule','charge.fixed','Entry',1,'active',?,'2026-01-01','2026-01-01')`,
-  ).bind(shop, JSON.stringify({ id: "entry-rule", label: "Entry", amount: 12 })).run();
+  ).bind(shop, JSON.stringify({ id: "entry-rule", label: "Entry", amount: 1200 })).run();
   await env.DB.prepare(
     "INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,entry_pricing_ids_json) VALUES (?,1,0,?)",
   ).bind(shop, JSON.stringify(["entry-rule"])).run();
@@ -1532,7 +1532,7 @@ test("a Bot checkout override without funds keeps the session running instead of
   await env.DB.prepare(
     `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
      VALUES (?,'entry-rule','charge.fixed','Entry',1,'active',?,'2026-01-01','2026-01-01')`,
-  ).bind(shop, JSON.stringify({ id: "entry-rule", label: "Entry", amount: 12 })).run();
+  ).bind(shop, JSON.stringify({ id: "entry-rule", label: "Entry", amount: 1200 })).run();
   await env.DB.prepare(
     "INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,entry_pricing_ids_json) VALUES (?,1,0,?)",
   ).bind(shop, JSON.stringify(["entry-rule"])).run();

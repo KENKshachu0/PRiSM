@@ -1,7 +1,7 @@
 import { wrapApiResponse, unwrapLegacyResponse } from "./api-contract";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { PrismDomainError } from "@prism/core";
+import { PrismDomainError, yuanOf, assetQuantityToNatural } from "@prism/core";
 import { authenticate, forbidden } from "./auth";
 import type {
   AdminLoginBody,
@@ -735,7 +735,7 @@ export function createPrismApp(dependencies: PrismAppDependencies): Hono {
     });
     return context.json({
       businessItemOrder: toBusinessItemOrderView(result.order),
-      assetLedgerEntries: result.assetLedgerEntries,
+      assetLedgerEntries: result.assetLedgerEntries.map(entry => ({ ...entry, delta: assetQuantityToNatural(entry.assetType, entry.delta) })),
     });
   });
 
@@ -900,7 +900,7 @@ export function createPrismApp(dependencies: PrismAppDependencies): Hono {
     const body = await context.req.json<IntegrationIdentityBody>();
     return withIntegrationDomainErrors(context, async () => {
       const wallet = await integrationCommands.getWalletByIdentity(body);
-      return context.json({ wallet });
+      return context.json({ wallet: wallet.map((entry) => ({ ...entry, quantity: yuanOf(entry.quantity) })) });
     });
   });
 
@@ -1166,7 +1166,7 @@ export function createPrismApp(dependencies: PrismAppDependencies): Hono {
 
     const players = await dependencies.staffQueries.listPlayers();
     return context.json({
-      players,
+      players: players.map((player) => ({ ...player, walletTotal: yuanOf(player.walletTotal) })),
     });
   });
 

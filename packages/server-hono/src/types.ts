@@ -123,7 +123,8 @@ export type PlayerAuthCommands = {
   loginByIdentity(input: PlayerAuthIdentityBody): Promise<{ token: string; player: Player }>;
 };
 
-export type PlayerSummaryView = Omit<PlayerSummary, "activeSession"> & {
+export type PlayerSummaryView = Omit<PlayerSummary, "activeSession" | "wallet"> & {
+  wallet: Array<{ assetCode: string; quantity: number }>;
   activeSession: {
     id: string;
     startedAt: string;
@@ -288,7 +289,7 @@ export type PurchaseBusinessItemResult = {
   assetLedgerEntries: Array<{
     assetType: string;
     assetCode: string;
-    delta: number;
+    delta: import("@prism/core").Cents;
     reason: string;
     refId: string;
     transactionId?: string;

@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetDefinition,
@@ -183,7 +184,7 @@ describe("createStaffAssetService", () => {
         id: "pass-1",
         assetType: "pass",
         assetCode: "monthly",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
         activeAt: new Date("2026-06-01T00:00:00.000Z"),
         expiresAt: new Date("2026-07-01T00:00:00.000Z"),
       },
@@ -231,7 +232,7 @@ describe("createStaffAssetService", () => {
         id: "pass-1",
         assetType: "pass",
         assetCode: "monthly",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
         activeAt: new Date("2026-06-01T00:00:00.000Z"),
         expiresAt: new Date("2026-06-07T10:00:00.000Z"),
       },
@@ -262,7 +263,7 @@ describe("createStaffAssetService", () => {
       {
         assetType: "pass",
         assetCode: "monthly",
-        delta: centsOf(0),
+        delta: integerFixture(0),
         reason: "staff.asset.expire",
         refId: "staff-1",
         transactionId: "asset-tx:staff.asset.adjust:staff-1:player-1:2026-06-07T10:00:00.000Z:unused",
@@ -276,7 +277,7 @@ describe("createStaffAssetService", () => {
         id: "title-1",
         assetType: "title",
         assetCode: "vip",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
         activeAt: null,
         expiresAt: null,
       },
@@ -284,7 +285,7 @@ describe("createStaffAssetService", () => {
         id: "title-2",
         assetType: "title",
         assetCode: "vip",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
         activeAt: null,
         expiresAt: null,
       },
@@ -315,7 +316,7 @@ describe("createStaffAssetService", () => {
         id: "title-2",
         assetType: "title",
         assetCode: "vip",
-        quantity: centsOf(1),
+        quantity: integerFixture(1),
         activeAt: null,
         expiresAt: null,
       },
@@ -338,7 +339,7 @@ describe("createStaffAssetService", () => {
       {
         assetType: "title",
         assetCode: "vip",
-        delta: centsOf(-1),
+        delta: integerFixture(-1),
         reason: "staff.asset.revoke",
         refId: "staff-1",
         transactionId: "asset-tx:staff.asset.adjust:staff-1:player-1:2026-06-07T10:00:00.000Z:unused",

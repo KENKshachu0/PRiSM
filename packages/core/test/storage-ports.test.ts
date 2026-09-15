@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import type {
@@ -240,7 +241,7 @@ describe("storage ports", () => {
           id: "charge-1",
           source: "time",
           label: "Time",
-          amount: 20,
+          amount: moneyFixture(20),
         },
       ],
       adjustments: [],
@@ -297,7 +298,7 @@ describe("storage ports", () => {
           id: "charge-1",
           source: "time",
           label: "Time",
-          amount: 20,
+          amount: moneyFixture(20),
         },
       ],
       adjustments: [],

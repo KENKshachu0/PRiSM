@@ -1,7 +1,7 @@
 import type { PriorityTimePricingProviderConfig, TimeCapPricingProviderConfig } from "./pricing-time";
 import { createPriorityTimePricingProvider } from "./pricing-time";
 import { PrismDomainError } from "./errors";
-import { quantizeMoney } from "./money";
+import { centsOf, quantizeMoney } from "./money";
 import type { PricingProvider } from "./settlement";
 
 export type PricingConfigKind = "time.priority" | "time.cap" | "charge.fixed";
@@ -82,7 +82,7 @@ export function quantizePricingProvider(
     return {
       ...provider,
       rules: provider.rules.map((rule) => ({ ...rule, priceCap: quantizeMoney(rule.priceCap) })),
-      paidHistory: quantizePaidHistory(provider.paidHistory),
+      paidHistory: provider.paidHistory,
     };
   }
 
@@ -96,17 +96,8 @@ export function quantizePricingProvider(
         priceCap: quantizeMoney(rule.pricing.priceCap),
       },
     })),
-    paidHistory: quantizePaidHistory(provider.paidHistory),
+    paidHistory: provider.paidHistory,
   };
-}
-
-function quantizePaidHistory(
-  paidHistory: Record<string, number> | undefined,
-): Record<string, number> | undefined {
-  if (!paidHistory) return paidHistory;
-  return Object.fromEntries(
-    Object.entries(paidHistory).map(([key, value]) => [key, quantizeMoney(value)]),
-  );
 }
 
 export function createPricingProviderFromConfig(config: PricingConfig): PricingProvider {
@@ -182,7 +173,7 @@ function createFixedChargePricingProvider(config: FixedChargePricingProviderConf
           id: `${context.session.id}:${config.id}`,
           source: config.id,
           label: config.label,
-          amount: config.amount,
+          amount: centsOf(config.amount),
         },
       ];
     },

@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
@@ -500,7 +501,7 @@ describe("createSqliteRepositories", () => {
         ruleId: "day",
         ruleAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         sessionId: "session-1",
-        amount: 24,
+        amount: moneyFixture(24),
         createdAt: new Date("2026-06-07T04:00:00.000Z"),
         metadata: {
           source: "test",
@@ -514,7 +515,7 @@ describe("createSqliteRepositories", () => {
         ruleId: "day",
         ruleAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         sessionId: "session-2",
-        amount: 16,
+        amount: moneyFixture(16),
         createdAt: new Date("2026-06-07T08:00:00.000Z"),
         metadata: null,
       },
@@ -526,7 +527,7 @@ describe("createSqliteRepositories", () => {
         ruleId: "day",
         ruleAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         sessionId: "session-3",
-        amount: 99,
+        amount: moneyFixture(99),
         createdAt: new Date("2026-06-07T08:00:00.000Z"),
         metadata: null,
       },
@@ -548,8 +549,8 @@ describe("createSqliteRepositories", () => {
         },
       ]),
     ).resolves.toEqual({
-      "pricing-day-night@time.day-night@day@2026-06-07T01:00:00.000Z": 40,
-      "pricing-day-night@time.day-night@night@2026-06-07T13:00:00.000Z": 0,
+      "pricing-day-night@time.day-night@day@2026-06-07T01:00:00.000Z": moneyFixture(40),
+      "pricing-day-night@time.day-night@night@2026-06-07T13:00:00.000Z": moneyFixture(0),
     });
   });
 
@@ -569,7 +570,7 @@ describe("createSqliteRepositories", () => {
         capAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         includedPricingConfigIds: ["pricing-base", "pricing-discount"],
         sessionIds: ["session-1"],
-        amount: 40,
+        amount: moneyFixture(40),
         createdAt: new Date("2026-06-07T04:00:00.000Z"),
         metadata: null,
       },
@@ -581,7 +582,7 @@ describe("createSqliteRepositories", () => {
         capAnchorAt: new Date("2026-06-07T01:00:00.000Z"),
         includedPricingConfigIds: ["pricing-base"],
         sessionIds: ["session-2"],
-        amount: 20,
+        amount: moneyFixture(20),
         createdAt: new Date("2026-06-07T08:00:00.000Z"),
         metadata: null,
       },
@@ -597,7 +598,7 @@ describe("createSqliteRepositories", () => {
         },
       ]),
     ).resolves.toEqual({
-      "cap-config@day@2026-06-07T01:00:00.000Z": 60,
+      "cap-config@day@2026-06-07T01:00:00.000Z": moneyFixture(60),
     });
   });
 
@@ -613,7 +614,7 @@ describe("createSqliteRepositories", () => {
       kind: "event.entry",
       name: "周末挑战赛报名",
       status: "active",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -630,7 +631,7 @@ describe("createSqliteRepositories", () => {
       kind: "room.package",
       name: "夜间包场",
       status: "archived",
-      price: 6000,
+      price: moneyFixture(6000),
       assetType: null,
       assetCode: null,
       activeAt: null,
@@ -647,7 +648,7 @@ describe("createSqliteRepositories", () => {
       kind: "event.entry",
       name: "周末挑战赛报名",
       status: "active",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -665,7 +666,7 @@ describe("createSqliteRepositories", () => {
         kind: "event.entry",
         name: "周末挑战赛报名",
         status: "active",
-        price: 1200,
+        price: moneyFixture(1200),
         assetType: "ticket",
         assetCode: "event.weekend",
         activeAt: new Date("2026-06-08T01:00:00.000Z"),
@@ -682,7 +683,7 @@ describe("createSqliteRepositories", () => {
         kind: "room.package",
         name: "夜间包场",
         status: "archived",
-        price: 6000,
+        price: moneyFixture(6000),
         assetType: null,
         assetCode: null,
         activeAt: null,
@@ -711,7 +712,7 @@ describe("createSqliteRepositories", () => {
       kind: "event.entry",
       name: "周末挑战赛报名",
       status: "active",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       activeAt: null,
@@ -729,7 +730,7 @@ describe("createSqliteRepositories", () => {
       playerId: "player-1",
       sessionId: "session-1",
       status: "paid",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       metadata: { note: "onsite" },
@@ -1351,7 +1352,7 @@ describe("createSqliteRepositories", () => {
           id: "charge-time",
           source: "time.default",
           label: "Base time",
-          amount: 30,
+          amount: moneyFixture(30),
         },
       ],
       adjustments: [
@@ -1359,7 +1360,7 @@ describe("createSqliteRepositories", () => {
           id: "adjustment-pass",
           source: "pass.monthly",
           label: "Monthly pass",
-          amount: -10,
+          amount: moneyFixture(-10),
         },
       ],
     });
@@ -1379,7 +1380,7 @@ describe("createSqliteRepositories", () => {
           id: "charge-time",
           source: "time.default",
           label: "Base time",
-          amount: 30,
+          amount: moneyFixture(30),
         },
       ],
       adjustments: [
@@ -1387,7 +1388,7 @@ describe("createSqliteRepositories", () => {
           id: "adjustment-pass",
           source: "pass.monthly",
           label: "Monthly pass",
-          amount: -10,
+          amount: moneyFixture(-10),
         },
       ],
     });

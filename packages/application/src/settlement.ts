@@ -28,26 +28,30 @@ import type {
   TimeCapPricingProviderConfig,
 } from "@prism/core";
 import {
+  addCents,
   applyTimeCapPricing,
+  allocate,
   closeSession,
   collectTimeCapPricingHistoryLookupKeys,
   type Cents,
   centsOf,
-  compareMoney,
+  compareCents,
+  assetQuantityOf,
   isPositiveCents,
+  maxCents,
+  minCents,
   negCents,
   subCents,
   deductCurrency,
   diffAssetHoldings,
   explainTimeCapPricing,
   isActiveInWindow,
-  isPositiveQuantity,
-  normalizeQuantity,
   previewSessionSettlement,
   PrismDomainError,
-  quantizeMoney,
   settleSession,
   sumCurrencyHoldings,
+  sumCents,
+  ZERO_CENTS,
 } from "@prism/core";
 import { withOperationLease } from "./operation-lock";
 import { sumAvailableWalletBalance, type AvailableAssetReader } from "./available-assets";
@@ -126,8 +130,8 @@ export type PreviewPlayerCheckoutResult = {
     startedAt: Date;
     endedAt: Date | null;
     status: Session["status"];
-    subtotal: number;
-    total: number;
+    subtotal: Cents;
+    total: Cents;
     chargeItems: ChargeItem[];
     adjustments: SettlementAdjustment[];
   }>;
@@ -143,8 +147,8 @@ export type SettlePlayerCheckoutResult = {
   playerSettlement: {
     playerId: string;
     sessionIds: string[];
-    subtotal: number;
-    total: number;
+    subtotal: Cents;
+    total: Cents;
     status: "settled";
     settledAt: Date;
   };
@@ -280,9 +284,9 @@ export function createSettlementService(dependencies: SettlementServiceDependenc
   };
 }
 
-function assertCheckoutBalance(holdings: readonly AssetHolding[], amount: number, now: Date): void {
+function assertCheckoutBalance(holdings: readonly AssetHolding[], amount: Cents, now: Date): void {
   deductCurrency(holdings.map((holding) => ({ ...holding })), {
-    amount: centsOf(amount),
+    amount,
     reason: "checkout.balance-check",
     refId: "preflight",
     now,
@@ -341,8 +345,8 @@ async function calculateUnifiedCheckoutDetails(
   const walletBalanceBefore = resolvedAvailableAssets
     ? sumAvailableWalletBalance(resolvedAvailableAssets)
     : sumCurrencyHoldings(availableHoldings);
-  let totalAmount = 0;
-  let overallSubtotal = 0;
+  let totalAmount = ZERO_CENTS;
+  let overallSubtotal = ZERO_CENTS;
   const accumulatedAdjustments = [...pastAppliedAdjustments];
   const sessionResults: Array<{
     session: Session;
@@ -382,10 +386,13 @@ async function calculateUnifiedCheckoutDetails(
       pastAppliedAdjustments: accumulatedAdjustments,
     });
 
-    const sessionRawSubtotal = quantizeMoney(preview.chargeItems.reduce((sum, item) => sum + item.amount, 0));
-    const sessionRawTotal = quantizeMoney(sessionRawSubtotal + preview.adjustments.reduce((sum, adj) => sum + adj.amount, 0));
-    overallSubtotal += sessionRawSubtotal;
-    totalAmount += sessionRawTotal;
+    const sessionRawSubtotal = sumCents(preview.chargeItems.map((item) => item.amount));
+    const sessionRawTotal = addCents(
+      sessionRawSubtotal,
+      sumCents(preview.adjustments.map((adj) => adj.amount)),
+    );
+    overallSubtotal = addCents(overallSubtotal, sessionRawSubtotal);
+    totalAmount = addCents(totalAmount, sessionRawTotal);
 
     const extraLedgerEntries: AssetLedgerEntry[] = [];
     for (const adj of preview.adjustments) {
@@ -410,11 +417,12 @@ async function calculateUnifiedCheckoutDetails(
               (h) => h.assetType === assetType && h.assetCode === assetCode && isPositiveCents(h.quantity),
             );
             if (holding) {
-              holding.quantity = subCents(holding.quantity, centsOf(1));
+              const consumed = assetQuantityOf(holding.assetType, 1);
+              holding.quantity = subCents(holding.quantity, consumed);
               extraLedgerEntries.push({
                 assetType,
                 assetCode,
-                delta: negCents(centsOf(1)),
+                delta: negCents(consumed),
                 reason: "session.settlement.coupon",
                 refId: session.id,
               });
@@ -485,7 +493,7 @@ async function calculateUnifiedCheckoutDetails(
     for (const adjustment of adjustments) {
       globalCapAdjustments.push(adjustment);
       unifiedAdjustments.push(adjustment);
-      totalAmount = normalizeQuantity(totalAmount + adjustment.amount);
+        totalAmount = addCents(totalAmount, adjustment.amount);
     }
   }
 
@@ -493,7 +501,7 @@ async function calculateUnifiedCheckoutDetails(
     const unifiedHoldings = availableHoldings.filter((h) => isPositiveCents(h.quantity));
     for (let holdingIndex = 0; holdingIndex < unifiedHoldings.length; holdingIndex++) {
       const holding = unifiedHoldings[holdingIndex];
-      if (!isPositiveQuantity(holding.quantity) || !isPositiveQuantity(totalAmount)) break;
+      if (!isPositiveCents(holding.quantity) || !isPositiveCents(totalAmount)) break;
 
       const definition = availableDefinitions.get(`${holding.assetType}\u0000${holding.assetCode}`);
       const effectiveAt = definition && isActiveInWindow(definition, anchorSession.startedAt)
@@ -506,7 +514,7 @@ async function calculateUnifiedCheckoutDetails(
       const effectConfig = resolveAssetDefinitionEffectConfig(definition, effectiveAt);
       if (!effectConfig || effectConfig.scope !== "unified") continue;
       if (!isAssetEffectConfigAvailable(effectConfig, effectiveAt, timeZone)) continue;
-      if (effectConfig.minSubtotal && compareMoney(totalAmount, effectConfig.minSubtotal) < 0) continue;
+      if (effectConfig.minSubtotal && compareCents(totalAmount, centsOf(effectConfig.minSubtotal)) < 0) continue;
 
       if (effectConfig.limitPerDay) {
         const todayStr = calendarDayAt(effectiveAt, timeZone);
@@ -520,7 +528,7 @@ async function calculateUnifiedCheckoutDetails(
 
       const discountAmount = calculateAssetEffectDiscount(totalAmount, effectConfig);
 
-      if (!isPositiveQuantity(discountAmount)) continue;
+      if (!isPositiveCents(discountAmount)) continue;
 
       const adjSource = assetDefinitionEffectSource(holding.assetType, holding.assetCode);
       const holdingKey = holding.id ?? (holdingIndex > 0 ? String(holdingIndex) : "");
@@ -532,21 +540,22 @@ async function calculateUnifiedCheckoutDetails(
         id: adjId,
         source: adjSource,
         label: definition.name,
-        amount: -discountAmount,
+        amount: negCents(discountAmount),
       });
 
-      totalAmount = normalizeQuantity(totalAmount - discountAmount);
+      totalAmount = subCents(totalAmount, discountAmount);
       accumulatedAdjustments.push({
         source: adjSource,
         sessionStartedAt: anchorSession.startedAt,
       });
 
       if (effectConfig.consumable === true) {
-        holding.quantity = subCents(holding.quantity, centsOf(1));
+        const consumed = assetQuantityOf(holding.assetType, 1);
+        holding.quantity = subCents(holding.quantity, consumed);
         unifiedLedgerEntries.push({
           assetType: holding.assetType,
           assetCode: holding.assetCode,
-          delta: negCents(centsOf(1)),
+          delta: negCents(consumed),
           reason: "session.settlement.coupon",
           refId: anchorSession.id,
         });
@@ -555,8 +564,8 @@ async function calculateUnifiedCheckoutDetails(
   }
 
   return {
-    subtotal: normalizeQuantity(Math.max(0, overallSubtotal)),
-    total: normalizeQuantity(Math.max(0, totalAmount)),
+    subtotal: maxCents(ZERO_CENTS, overallSubtotal),
+    total: maxCents(ZERO_CENTS, totalAmount),
     sessionResults,
     unifiedAdjustments,
     unifiedLedgerEntries,
@@ -601,14 +610,14 @@ function toPlayerCheckoutPreview(
     settlementPreview: {
       playerId,
       sessionIds,
-      subtotal: centsOf(details.subtotal),
-      total: centsOf(details.total),
+      subtotal: details.subtotal,
+      total: details.total,
       status: "preview",
       previewedAt: now,
     },
     sessionPreviews: details.sessionResults.map((result) => {
-      const subtotal = quantizeMoney(result.chargeItems.reduce((sum, item) => sum + item.amount, 0));
-      const total = quantizeMoney(subtotal + result.adjustments.reduce((sum, adj) => sum + adj.amount, 0));
+      const subtotal = sumCents(result.chargeItems.map((item) => item.amount));
+      const total = addCents(subtotal, sumCents(result.adjustments.map((adj) => adj.amount)));
       return {
         sessionId: result.session.id,
         label: result.session.label ?? null,
@@ -632,7 +641,7 @@ function toPlayerCheckoutPreview(
     pricingCapAdjustments: details.globalCapAdjustments,
     wallet: {
       balanceBefore: details.walletBalanceBefore,
-      balanceAfter: subCents(details.walletBalanceBefore, centsOf(details.total)),
+      balanceAfter: subCents(details.walletBalanceBefore, details.total),
     },
     globalCapWindows: details.globalCapWindows,
   };
@@ -645,28 +654,13 @@ function allocateGlobalCapWindowContributions(
     const contributions = [...window.contributions].sort((a, b) =>
       a.sessionId.localeCompare(b.sessionId) || a.pricingConfigId.localeCompare(b.pricingConfigId),
     );
-    const currentAmount = contributions.reduce((sum, contribution) => sum + contribution.amount, 0);
-    const allocatedContributions = contributions.map((contribution, index) => {
-      if (index === contributions.length - 1) {
-        return { ...contribution, amount: 0 };
-      }
-      return {
-        ...contribution,
-        amount: currentAmount === 0
-          ? 0
-          : (window.amountApplied * contribution.amount) / currentAmount,
-      };
-    });
-    const amountBeforeLast = allocatedContributions
-      .slice(0, -1)
-      .reduce((sum, contribution) => sum + contribution.amount, 0);
+    const discounts = allocate(subCents(window.currentAmount, window.amountApplied),
+      contributions.map((contribution) => Math.max(0, contribution.amount)));
 
     return {
       ...window,
-      contributions: allocatedContributions.map((contribution, index) =>
-        index === allocatedContributions.length - 1
-          ? { ...contribution, amount: window.amountApplied - amountBeforeLast }
-          : contribution,
+      contributions: contributions.map((contribution, index) =>
+        ({ ...contribution, amount: subCents(contribution.amount, discounts[index] ?? ZERO_CENTS) }),
       ),
     };
   });
@@ -694,8 +688,8 @@ async function persistUnifiedPlayerCheckout(
   let finalTotal = details.total;
   let overrideAdjustment: SettlementAdjustment | undefined;
   if (overrideTotal) {
-    const overrideTotalAmount = quantizeMoney(overrideTotal.total);
-    const diff = quantizeMoney(overrideTotalAmount - details.total);
+    const overrideTotalAmount = centsOf(overrideTotal.total);
+    const diff = subCents(overrideTotalAmount, details.total);
     finalTotal = overrideTotalAmount;
     overrideAdjustment = {
       id: `${anchorSession.id}:${overrideTotal.id}`,
@@ -706,7 +700,7 @@ async function persistUnifiedPlayerCheckout(
   }
 
   const currencyLedgerEntries = deductCurrency(details.availableHoldings, {
-    amount: centsOf(finalTotal),
+    amount: finalTotal,
     reason: "session.settlement",
     refId: anchorSession.id,
     now,
@@ -716,7 +710,7 @@ async function persistUnifiedPlayerCheckout(
     ...extraLedgerEntries,
   ];
 
-  const nextHoldings = details.currentHoldings.filter((holding) => holding.quantity > 0);
+  const nextHoldings = details.currentHoldings.filter((holding) => isPositiveCents(holding.quantity));
   const assetCommit: CheckoutCommit["assets"] = {
     transaction: {
       id: `asset-tx:session.settlement:${anchorSession.id}`,
@@ -752,13 +746,13 @@ async function persistUnifiedPlayerCheckout(
       ...(result.session.id === anchorSession.id ? details.unifiedAdjustments : []),
       ...(overrideAdjustment && result.session.id === anchorSession.id ? [overrideAdjustment] : []),
     ];
-    const subtotal = quantizeMoney(result.chargeItems.reduce((sum, item) => sum + item.amount, 0));
-    const total = quantizeMoney(subtotal + adjustments.reduce((sum, adjustment) => sum + adjustment.amount, 0));
+    const subtotal = sumCents(result.chargeItems.map((item) => item.amount));
+    const total = addCents(subtotal, sumCents(adjustments.map((adjustment) => adjustment.amount)));
     const record: SettlementRecord = {
       settlement: {
         sessionId: result.session.id,
-        subtotal: centsOf(subtotal),
-        total: centsOf(total),
+        subtotal,
+        total,
         status: "settled",
         settledAt: now,
       },
@@ -840,7 +834,7 @@ function toPricingCapHistoryEntries(
 ): PricingCapHistoryEntry[] {
   return adjustments.flatMap((adjustment, index) => {
     const history = adjustment.pricingCapHistory;
-    if (!history || history.amount <= 0) return [];
+    if (!history || !isPositiveCents(history.amount)) return [];
     return [
       {
         id: `pricing-cap-history:${input.anchorSessionId}:${index}`,

@@ -1,6 +1,4 @@
-import { type Cents, centsOf, quantizeMoney, ZERO_CENTS,
-  centsOfInteger,
-} from "@prism/core";
+import { type Cents, centsOfInteger, sumCents, ZERO_CENTS } from "@prism/core";
 import { sqlShop } from "./shop-scope";
 import type {
   ApplicationQueries,
@@ -83,17 +81,15 @@ function createPlayerQueries(input: CreateSqlReadModelsInput): PlayerQueries {
         throw new Error(`Player not found: ${playerId}`);
       }
       const at = input.now();
-      const walletByCode = new Map<string, number>();
+      const walletByCode = new Map<string, Cents>();
       for (const row of rows) {
         if (!row.holding_id || row.asset_type !== "currency") continue;
         const assessment = assessAssetHoldingRow(row, at, false);
         if (assessment.availability !== "available") continue;
-        walletByCode.set(
-          row.asset_code!,
-          // Quantise here: a player can hold several rows for the same code, and
-          // naive float accumulation of cent amounts drifts on ~23% of pairs.
-          quantizeMoney((walletByCode.get(row.asset_code!) ?? 0) + row.quantity!),
-        );
+        walletByCode.set(row.asset_code!, sumCents([
+          walletByCode.get(row.asset_code!) ?? ZERO_CENTS,
+          centsOfInteger(row.quantity!),
+        ]));
       }
 
       return {
@@ -373,7 +369,7 @@ async function getReportsSummary(
   return {
     from: query.from,
     to: query.to,
-    revenueTotal: row?.revenue_total ?? 0,
+    revenueTotal: centsOfInteger(row?.revenue_total ?? 0),
     sessionCount: row?.session_count ?? 0,
     assetGrantTotal: row?.asset_grant_total ?? 0,
     coinCommandCount: row?.coin_command_count ?? 0,
@@ -479,7 +475,7 @@ async function listReportPlayers(
       playerDisplayName: row.player_display_name,
       settlementCount: row.settlement_count,
       totalDurationMinutes: row.total_duration_minutes,
-      revenueTotal: row.revenue_total,
+      revenueTotal: centsOfInteger(row.revenue_total),
       lastSettledAt: new Date(row.last_settled_at),
     }),
   );
@@ -570,12 +566,12 @@ async function getPlayerSessionHistoryDetail(
     ...toSessionHistoryListItem(sessionRow),
     chargeItems: rows.flatMap((row) =>
       row.row_kind === "charge" && row.item_id && row.item_amount !== null
-        ? [{ id: row.item_id, source: row.item_source!, label: row.item_label!, amount: row.item_amount }]
+        ? [{ id: row.item_id, source: row.item_source!, label: row.item_label!, amount: centsOfInteger(row.item_amount) }]
         : [],
     ),
     adjustments: rows.flatMap((row) =>
       row.row_kind === "adjustment" && row.item_id && row.item_amount !== null
-        ? [{ id: row.item_id, source: row.item_source!, label: row.item_label!, amount: row.item_amount }]
+        ? [{ id: row.item_id, source: row.item_source!, label: row.item_label!, amount: centsOfInteger(row.item_amount) }]
         : [],
     ),
   };

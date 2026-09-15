@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetDefinition,
@@ -132,7 +133,7 @@ describe("createBusinessItemOrderService", () => {
       kind: "event.entry",
       name: "周末挑战赛报名",
       status: "active",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       activeAt: new Date("2026-06-08T00:00:00.000Z"),
@@ -174,7 +175,7 @@ describe("createBusinessItemOrderService", () => {
       playerId: "player-1",
       sessionId: "session-1",
       status: "paid",
-      price: 1200,
+      price: moneyFixture(1200),
       assetType: "ticket",
       assetCode: "event.weekend",
       metadata: { note: "bot purchase" },
@@ -202,7 +203,7 @@ describe("createBusinessItemOrderService", () => {
           metadata: {
             businessItemId: "business-item-1",
             businessItemName: "周末挑战赛报名",
-            price: 1200,
+            price: centsOf(1200),
             sessionId: "session-1",
           },
         },
@@ -222,7 +223,7 @@ describe("createBusinessItemOrderService", () => {
       kind: "reservation.slot",
       name: "晚间预约",
       status: "active",
-      price: 100,
+      price: moneyFixture(100),
       assetType: null,
       assetCode: null,
       activeAt: null,
@@ -267,7 +268,7 @@ describe("createBusinessItemOrderService", () => {
       playerId: "player-2",
       sessionId: "session-2",
       status: "paid",
-      price: 100,
+      price: moneyFixture(100),
       assetType: null,
       assetCode: null,
       metadata: null,
@@ -309,7 +310,7 @@ describe("createBusinessItemOrderService", () => {
       kind: "event.entry",
       name: "测试报名",
       status: "active",
-      price: 100,
+      price: moneyFixture(100),
       assetType: null,
       assetCode: null,
       activeAt: null,

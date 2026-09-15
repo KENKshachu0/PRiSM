@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import { createPricingProviderFromConfig, PrismDomainError, quantizePricingProvider, validatePricingConfig } from "../src/index";
 
@@ -182,7 +183,7 @@ describe("validatePricingConfig", () => {
         id: "session-fixed:cover-charge",
         source: "cover-charge",
         label: "入场费",
-        amount: 500,
+        amount: moneyFixture(500),
       },
     ]);
   });
@@ -224,7 +225,7 @@ describe("quantizePricingProvider", () => {
           },
         },
       ],
-      paidHistory: { "rule:base": 12.3456789 },
+      paidHistory: { "rule:base": moneyFixture(12.3456789) },
     });
 
     expect(provider.rules[0]!.pricing).toEqual({
@@ -233,7 +234,7 @@ describe("quantizePricingProvider", () => {
       roundGraceMinutes: 5,
       priceCap: 80,
     });
-    expect(provider.paidHistory).toEqual({ "rule:base": 12.35 });
+    expect(provider.paidHistory).toEqual({ "rule:base": moneyFixture(12.35) });
   });
 
   it("keeps minute fields untouched because they are counts, not money", () => {

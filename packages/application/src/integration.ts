@@ -1,5 +1,6 @@
 import type {
   DeviceCommand,
+  Cents,
   DeviceCommandType,
   DeviceReferenceTarget,
   ExternalIdentity,
@@ -77,7 +78,7 @@ export type IntegrationPlayerSummary = {
   player: Pick<Player, "id" | "displayName" | "status">;
   wallet: Array<{
     assetCode: string;
-    quantity: number;
+    quantity: Cents;
   }>;
   activeSession: {
     id: string;

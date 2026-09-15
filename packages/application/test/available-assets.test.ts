@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetDefinition,
@@ -69,7 +70,7 @@ describe("createAvailableAssetReader", () => {
         id: "holding-available",
         assetType: "test",
         assetCode: "available",
-        quantity: centsOf(2),
+        quantity: integerFixture(2),
         activeAt: null,
         expiresAt: null,
         assetName: "可用资产",
@@ -102,8 +103,8 @@ describe("createAvailableAssetReader", () => {
     const at = new Date("2026-07-14T12:00:00.000Z");
     const reader = createAvailableAssetReader({
       assets: new MemoryAssetRepository([
-        { ...holding("paid", 10), assetType: "currency" },
-        { ...holding("expired", 5, { expiresAt: at }), assetType: "currency" },
+        { ...holding("paid", 10), assetType: "currency", quantity: centsOf(10) },
+        { ...holding("expired", 5, { expiresAt: at }), assetType: "currency", quantity: centsOf(5) },
         { ...holding("ticket", 1), assetType: "ticket" },
       ]),
       assetDefinitions: new MemoryAssetDefinitionRepository([
@@ -128,7 +129,7 @@ function holding(
     id: `holding-${assetCode}`,
     assetType: "test",
     assetCode,
-    quantity: centsOf(quantity),
+    quantity: integerFixture(quantity),
     activeAt: dates.activeAt ?? null,
     expiresAt: dates.expiresAt ?? null,
   };

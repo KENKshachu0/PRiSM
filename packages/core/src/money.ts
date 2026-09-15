@@ -1,37 +1,11 @@
 /**
  * Money and quantity arithmetic for PRiSM.
  *
- * Every monetary amount in PRiSM is expressed in yuan (元) and persisted in a
- * SQLite/D1 `REAL` column, i.e. an IEEE-754 binary double. Binary floating point
- * cannot represent most decimal fractions exactly: `0.06` is stored as
- * `0.059999999999999998` and `0.07` as `0.070000000000000007`, so
- * `0.01 + 0.06 < 0.07` evaluates to `true`.
- *
- * A 1e-17 error is harmless on its own. It only becomes a business defect where
- * the code turns it into a yes/no decision, and the codebase had three such
- * places:
- *
- *   - `available < amount`  → refuses a payment the player can afford
- *   - `quantity > 0`        → keeps an unspendable float residue alive forever
- *   - `amount === 0`        → misses an early return that should have fired
- *
- * This module centralises the two rules that make such decisions safe:
- *
- *   1. Compare with a tolerance. `isPositiveQuantity`, `isZeroQuantity`,
- *      `isNegativeQuantity` and `compareMoney` never let accumulated noise flip
- *      a branch. Tolerance is the only correct approach because the direction of
- *      the error is not stable — `0.1 + 0.2` overshoots `0.3` while
- *      `0.01 + 0.06` undershoots `0.07`, so no single rounding direction fixes it.
- *   2. Quantise at the arithmetic boundary. `quantizeMoney` snaps a computed
- *      amount to a whole cent, so the value that reaches storage is canonical
- *      and repeated arithmetic on it stays stable.
- *
- * Neither rule discards money. `MONEY_EPSILON` is ten orders of magnitude below
- * one cent (0.01) and seven above the largest noise measured in production data
- * (1.39e-16), so it only ever swallows genuine floating-point residue.
- *
- * See `docs/money.md` for the full rationale, the measured production scan, and
- * the staged plan that this module is stage one of.
+ * Billing arithmetic and storage use safe integers: money in cents, tickets
+ * and coupons in whole counts. API/configuration boundaries still speak yuan.
+ * Ratios use BigInt intermediates with explicit rounding or conserving allocation.
+ * The legacy tolerance helpers remain exported for compatibility, but are not
+ * used by billing. See `docs/money.md` for units and migration requirements.
  */
 
 import { PrismDomainError } from "./errors";
@@ -52,18 +26,13 @@ export const MONEY_EPSILON = 1e-9;
 /**
  * Snaps a computed amount to whole cents of yuan.
  *
- * Use it on the *output* of arithmetic (sums, prorated discounts, deltas) and on
- * values crossing an external boundary (API input, ledger load), never as a
- * replacement for a tolerance comparison on a value that has not been through
- * arithmetic. Non-finite input passes through unchanged so callers keep their
- * existing `Number.isFinite` validation.
+ * Only for yuan-valued API/configuration boundaries. Billing and ledger reads
+ * use integer helpers instead. Non-finite input passes through unchanged so
+ * callers keep their existing `Number.isFinite` validation.
  */
 export function quantizeMoney(value: number): number {
   if (!Number.isFinite(value)) return value;
-  const cents = Math.round(value * CENTS_PER_YUAN);
-  // `cents === 0` also normalises negative zero, so callers never have to reason
-  // about `-0` versus `0` (they differ under `Object.is`).
-  return cents === 0 ? 0 : cents / CENTS_PER_YUAN;
+  return yuanOf(centsOf(value));
 }
 
 /**
@@ -182,10 +151,14 @@ export function centsOf(yuan: number): Cents {
   if (!Number.isFinite(yuan)) {
     throw new PrismDomainError("Money must be a finite number.", "INVALID_MONEY");
   }
-  const scaled = yuan * CENTS_PER_YUAN;
-  const rounded = scaled < 0 ? -Math.round(-scaled) : Math.round(scaled);
-  // `=== 0` also folds `-0` into `0` so downstream equality stays predictable.
-  return (rounded === 0 ? 0 : rounded) as Cents;
+  const [mantissa, exponent = "0"] = Math.abs(yuan).toString().split("e");
+  const [whole, fraction = ""] = mantissa!.split(".");
+  const digits = BigInt(whole! + fraction);
+  const shift = Number(exponent) + 2 - fraction.length;
+  const divisor = shift < 0 ? 10n ** BigInt(-shift) : 1n;
+  const scaled = shift >= 0 ? digits * 10n ** BigInt(shift) : digits;
+  const rounded = (scaled + divisor / 2n) / divisor;
+  return centsOfInteger(Number(yuan < 0 ? -rounded : rounded));
 }
 
 /**
@@ -195,7 +168,7 @@ export function centsOf(yuan: number): Cents {
  * which must go through `centsOf` (that mistake is off by a factor of 100).
  */
 export function centsOfInteger(value: number): Cents {
-  if (!Number.isInteger(value)) {
+  if (!Number.isSafeInteger(value)) {
     throw new PrismDomainError("Cents must be a whole number.", "INVALID_MONEY");
   }
   return (value === 0 ? 0 : value) as Cents;
@@ -208,52 +181,32 @@ export function yuanOf(cents: Cents): number {
 
 /** Wraps an exact count of a non-currency holding. */
 export function unitsOf(value: number): Units {
-  if (!Number.isInteger(value)) {
+  if (!Number.isSafeInteger(value)) {
     throw new PrismDomainError("Units must be a whole number.", "INVALID_UNITS");
   }
   return (value === 0 ? 0 : value) as Units;
 }
 
-/**
- * Reads a scaled value as a whole-unit count: divides by 100 and keeps zero
- * decimals.
- *
- * This is the reading half of the pair for count-like assets (tickets,
- * coupons, seats) — the writing half is `fromInt`. Money uses the other pair,
- * `centsOf` / `yuanOf`, because a yuan amount carries two decimals.
- *
- *   stored 100  ->  intOf  ->  1
- *   stored  54  ->  intOf  ->  0.54 is not a whole count, so it rounds to 1
- *
- * Rounding rather than throwing is deliberate: a count that has picked up
- * residue should still read as the count it represents, and `Number.isInteger`
- * belongs to the caller that wants to reject that case.
- */
-export function intOf(value: Cents): number {
-  const units = value / CENTS_PER_YUAN;
-  const rounded = units < 0 ? -Math.round(-units) : Math.round(units);
-  return rounded === 0 ? 0 : rounded;
+/** Converts an external asset quantity to its stored integer representation.
+ * Currency is expressed in yuan at the boundary and stored in cents; every
+ * other asset is expressed and stored as a whole count. */
+export function assetQuantityOf(assetType: string, value: number): Cents {
+  return assetType === "currency" ? centsOf(value) : centsOfInteger(value);
 }
 
-/** Wraps a whole-unit count as a scaled value: multiplies by 100. */
-export function fromInt(count: number): Cents {
-  if (!Number.isInteger(count)) {
-    throw new PrismDomainError(
-      "fromInt expects a whole count; use centsOf for a yuan amount.",
-      "INVALID_UNITS",
-    );
-  }
-  return (count === 0 ? 0 : count * CENTS_PER_YUAN) as Cents;
+/** Converts a stored asset quantity back to the API's natural unit. */
+export function assetQuantityToNatural(assetType: string, value: Cents): number {
+  return assetType === "currency" ? yuanOf(value) : value;
 }
 
 // ── Money arithmetic ─────────────────────────────────────────────────────────
 
 export function addCents(left: Cents, right: Cents): Cents {
-  return (left + right) as Cents;
+  return centsOfInteger(left + right);
 }
 
 export function subCents(left: Cents, right: Cents): Cents {
-  return (left - right) as Cents;
+  return centsOfInteger(left - right);
 }
 
 export function negCents(value: Cents): Cents {
@@ -266,8 +219,8 @@ export function absCents(value: Cents): Cents {
 
 export function sumCents(values: Iterable<Cents>): Cents {
   let total = 0;
-  for (const value of values) total += value;
-  return (total === 0 ? 0 : total) as Cents;
+  for (const value of values) total = centsOfInteger(total + value);
+  return centsOfInteger(total);
 }
 
 export function isZeroCents(value: Cents): boolean {
@@ -314,7 +267,8 @@ export function mulDivRound(
   denominator: number,
   mode: RoundingMode,
 ): Cents {
-  if (!Number.isInteger(numerator) || !Number.isInteger(denominator)) {
+  centsOfInteger(value);
+  if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator)) {
     throw new PrismDomainError(
       "mulDivRound expects integer numerator and denominator; scale them first.",
       "INVALID_MONEY_RATIO",
@@ -333,21 +287,21 @@ export function mulDivRound(
 
   const quotient = dividend / divisor; // BigInt division truncates toward zero
   const remainder = dividend % divisor;
-  if (remainder === 0n) return Number(quotient) as Cents;
+  if (remainder === 0n) return centsOfInteger(Number(quotient));
 
   switch (mode) {
     case "trunc":
-      return Number(quotient) as Cents;
+      return centsOfInteger(Number(quotient));
     case "floor":
-      return Number(remainder < 0n ? quotient - 1n : quotient) as Cents;
+      return centsOfInteger(Number(remainder < 0n ? quotient - 1n : quotient));
     case "ceil":
-      return Number(remainder > 0n ? quotient + 1n : quotient) as Cents;
+      return centsOfInteger(Number(remainder > 0n ? quotient + 1n : quotient));
     case "half": {
       const magnitude = (remainder < 0n ? -remainder : remainder) * 2n;
       if (magnitude >= divisor) {
-        return Number(remainder < 0n ? quotient - 1n : quotient + 1n) as Cents;
+        return centsOfInteger(Number(remainder < 0n ? quotient - 1n : quotient + 1n));
       }
-      return Number(quotient) as Cents;
+      return centsOfInteger(Number(quotient));
     }
   }
 }
@@ -365,9 +319,10 @@ export function mulDivRound(
  * to split on — the total is still preserved.
  */
 export function allocate(total: Cents, weights: readonly number[]): Cents[] {
+  centsOfInteger(total);
   if (weights.length === 0) return [];
   for (const weight of weights) {
-    if (!Number.isInteger(weight) || weight < 0) {
+    if (!Number.isSafeInteger(weight) || weight < 0) {
       throw new PrismDomainError(
         "allocate expects non-negative integer weights; scale them first.",
         "INVALID_MONEY_RATIO",
@@ -406,11 +361,11 @@ export function allocate(total: Cents, weights: readonly number[]): Cents[] {
 
   // `floors` holds BigInt values for exact intermediate arithmetic; convert back
   // to plain numbers before handing them out as `Cents`.
-  const result = floors.map((value) => Number(value) as Cents);
+  const result = floors.map((value) => centsOfInteger(Number(value)));
   let cursor = 0;
   while (residual > 0) {
     const target = order[cursor % order.length]!.index;
-    result[target] = ((result[target] as number) + 1) as Cents;
+    result[target] = centsOfInteger(result[target]! + 1);
     residual--;
     cursor++;
   }
@@ -420,17 +375,17 @@ export function allocate(total: Cents, weights: readonly number[]): Cents[] {
 // ── Count arithmetic ─────────────────────────────────────────────────────────
 
 export function addUnits(left: Units, right: Units): Units {
-  return (left + right) as Units;
+  return unitsOf(left + right);
 }
 
 export function subUnits(left: Units, right: Units): Units {
-  return (left - right) as Units;
+  return unitsOf(left - right);
 }
 
 export function sumUnits(values: Iterable<Units>): Units {
   let total = 0;
-  for (const value of values) total += value;
-  return (total === 0 ? 0 : total) as Units;
+  for (const value of values) total = unitsOf(total + value);
+  return unitsOf(total);
 }
 
 export function isZeroUnits(value: Units): boolean {

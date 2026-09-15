@@ -1,4 +1,5 @@
 import { buildBillTimeline } from "./bill-timeline";
+import { type Cents, addCents, yuanOf, ZERO_CENTS } from "@prism/core";
 import type { BillTimeline, SettlementAdjustment, ChargeItem, PricingConfig, TimeCapPricingWindow } from "@prism/core";
 import type { StaffActiveSessionListItem, StaffPlayerListItem, StaffQueries } from "./query-contracts";
 
@@ -69,14 +70,14 @@ export type LivePlayerView = {
 
 export type LiveCheckoutPreview = {
   adjustments?: SettlementAdjustment[];
-  settlementPreview: { total: number };
+  settlementPreview: { total: Cents };
   sessionPreviews: Array<{
     sessionId: string;
     label?: string | null;
     startedAt?: Date;
     endedAt?: Date | null;
     status?: "active" | "closed";
-    total: number;
+    total: Cents;
     chargeItems: ChargeItem[];
   }>;
   globalCapWindows?: TimeCapPricingWindow[];
@@ -154,9 +155,9 @@ export function createStaffOperationsService<TCheckoutResult>(
             identities: player?.identities ?? [],
             displayName: player?.displayName ?? playerSessions[0]?.playerDisplayName ?? playerId,
             status: player?.status ?? "active",
-            walletTotal: player?.walletTotal ?? 0,
+            walletTotal: yuanOf(player?.walletTotal ?? ZERO_CENTS),
             stayDurationMinutes: Math.max(...orderedSessions.map((session) => session.elapsedMinutes)),
-            estimatedTotal: preview?.settlementPreview.total ?? null,
+            estimatedTotal: preview ? yuanOf(preview.settlementPreview.total) : null,
             timeline: preview ? buildBillTimeline({
               at: dependencies.now(),
               sessions: orderedSessions.map(session => ({ sessionId: session.id, label: session.label ?? null,
@@ -172,7 +173,7 @@ export function createStaffOperationsService<TCheckoutResult>(
                 startedAt: session.startedAt.toISOString(),
                 endedAt: session.endedAt?.toISOString() ?? null,
                 elapsedMinutes: session.elapsedMinutes,
-                currentImpact: sessionPreview?.total ?? null,
+                currentImpact: sessionPreview ? yuanOf(sessionPreview.total) : null,
                 pricingCharges: pricingChargesForSession(
                   sessionPreview?.chargeItems ?? [],
                   pricingConfigNameById,
@@ -231,14 +232,14 @@ function pricingChargesForSession(
   chargeItems: readonly ChargeItem[],
   pricingConfigNameById: ReadonlyMap<PricingConfig["id"], PricingConfig["name"]>,
 ): LivePricingChargeView[] {
-  const chargesByKey = new Map<string, LivePricingChargeView>();
+  const chargesByKey = new Map<string, Omit<LivePricingChargeView, "amount"> & { amount: Cents }>();
   for (const item of chargeItems) {
     const pricingConfigId = item.pricingHistory?.pricingConfigId ?? item.source;
     const ruleLabel = item.label || pricingConfigId;
     const key = `${pricingConfigId}:${ruleLabel}`;
     const existing = chargesByKey.get(key);
     if (existing) {
-      existing.amount += item.amount;
+      existing.amount = addCents(existing.amount, item.amount);
       continue;
     }
     chargesByKey.set(key, {
@@ -248,7 +249,7 @@ function pricingChargesForSession(
       amount: item.amount,
     });
   }
-  return [...chargesByKey.values()];
+  return [...chargesByKey.values()].map((entry) => ({ ...entry, amount: yuanOf(entry.amount) }));
 }
 
 function pricingSegmentsForSession(
@@ -268,7 +269,7 @@ function pricingSegmentsForSession(
         actualStartedAt: explanation.period.startedAt.toISOString(),
         actualEndedAt: explanation.period.endedAt.toISOString(),
         ruleTimeRange: explanation.ruleTimeRange,
-        amount: item.amount,
+        amount: yuanOf(item.amount),
         intervalCap: explanation.intervalCap,
         intervalCapReached: explanation.intervalCapReached,
       }];
@@ -286,11 +287,11 @@ function globalCapWindowsForPlayer(
     ruleLabel: window.ruleLabel,
     windowStartedAt: window.windowStartedAt.toISOString(),
     windowEndedAt: window.windowEndedAt.toISOString(),
-    priceCap: window.priceCap,
-    paidBefore: window.paidBefore,
-    currentAmount: window.currentAmount,
-    amountApplied: window.amountApplied,
+    priceCap: yuanOf(window.priceCap),
+    paidBefore: yuanOf(window.paidBefore),
+    currentAmount: yuanOf(window.currentAmount),
+    amountApplied: yuanOf(window.amountApplied),
     priceCapReached: window.paidBefore + window.amountApplied >= window.priceCap,
-    contributions: window.contributions.map((contribution) => ({ ...contribution })),
+    contributions: window.contributions.map((contribution) => ({ ...contribution, amount: yuanOf(contribution.amount) })),
   }));
 }

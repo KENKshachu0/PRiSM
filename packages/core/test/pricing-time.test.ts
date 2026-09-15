@@ -1,3 +1,4 @@
+import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   createPriorityTimePricingProvider,
@@ -60,14 +61,14 @@ describe("time pricing explanations", () => {
         sessionId: "s1",
         source: "time.base",
         label: "基础计费",
-        amount: 50,
+        amount: moneyFixture(50),
         period: { startedAt: new Date("2026-07-09T14:00:00Z"), endedAt: new Date("2026-07-09T19:00:00Z") },
         pricingHistory: {
           pricingConfigId: "pricing-base",
           providerId: "time.base",
           ruleId: "night",
           ruleAnchorAt: new Date("2026-07-09T14:00:00Z"),
-          amount: 50,
+          amount: moneyFixture(50),
         },
       },
       {
@@ -75,14 +76,14 @@ describe("time pricing explanations", () => {
         sessionId: "s2",
         source: "time.base",
         label: "基础计费",
-        amount: 50,
+        amount: moneyFixture(50),
         period: { startedAt: new Date("2026-07-09T19:00:00Z"), endedAt: new Date("2026-07-10T02:00:00Z") },
         pricingHistory: {
           pricingConfigId: "pricing-base",
           providerId: "time.base",
           ruleId: "night",
           ruleAnchorAt: new Date("2026-07-09T14:00:00Z"),
-          amount: 50,
+          amount: moneyFixture(50),
         },
       },
     ];
@@ -103,12 +104,12 @@ describe("time pricing explanations", () => {
       expect.objectContaining({
         key: "cap-pricing@night@2026-07-09T14:00:00.000Z",
         ruleLabel: "夜间",
-        currentAmount: 100,
-        priceCap: 79,
-        amountApplied: 79,
+        currentAmount: moneyFixture(100),
+        priceCap: moneyFixture(79),
+        amountApplied: moneyFixture(79),
         contributions: [
-          { sessionId: "s1", pricingConfigId: "pricing-base", amount: 50 },
-          { sessionId: "s2", pricingConfigId: "pricing-base", amount: 50 },
+          { sessionId: "s1", pricingConfigId: "pricing-base", amount: moneyFixture(50) },
+          { sessionId: "s2", pricingConfigId: "pricing-base", amount: moneyFixture(50) },
         ],
       }),
     ]);
@@ -156,7 +157,7 @@ describe("time pricing explanations", () => {
     });
 
     expect(windows[0]?.contributions).toEqual([
-      { sessionId: "session:with:colons", pricingConfigId: "pricing-base", amount: 50 },
+      { sessionId: "session:with:colons", pricingConfigId: "pricing-base", amount: moneyFixture(50) },
     ]);
   });
 });
