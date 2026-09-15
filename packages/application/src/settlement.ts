@@ -266,7 +266,7 @@ export function createSettlementService(dependencies: SettlementServiceDependenc
           ...closedActiveSessions,
         ]);
         const details = await calculateUnifiedCheckoutDetails(dependencies, input.playerId, closedSessions, assetHoldings, now);
-        if (input.closeSessionsBeforeBalanceCheck === false) assertCheckoutBalance(details.availableHoldings, input.total, now);
+        if (input.closeSessionsBeforeBalanceCheck === false) assertCheckoutBalance(details.availableHoldings, centsOf(input.total), now);
         for (const session of closedActiveSessions) session.paymentStatus = "unpaid";
         if (input.closeSessionsBeforeBalanceCheck !== false) await saveSessions(dependencies.sessions, closedActiveSessions);
         return persistUnifiedPlayerCheckout(dependencies, input.playerId, details, now, {

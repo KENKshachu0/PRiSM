@@ -396,8 +396,8 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-1"],
-      subtotal: centsOf(20),
-      total: centsOf(20),
+      subtotal: 20,
+      total: 20,
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
@@ -615,8 +615,8 @@ describe("createSettlementService", () => {
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-closed", "session-music", "session-mahjong"],
-      subtotal: centsOf(105),
-      total: centsOf(105),
+      subtotal: 105,
+      total: 105,
       status: "settled",
       settledAt: new Date("2026-06-07T11:30:00.000Z"),
     });
@@ -653,8 +653,8 @@ describe("createSettlementService", () => {
     expect(settlements.checkouts).toEqual([{
       id: "player-checkout:session-mahjong",
       playerId: "player-1",
-      subtotal: centsOf(105),
-      total: centsOf(105),
+      subtotal: 105,
+      total: 105,
       status: "settled",
       settledAt: new Date("2026-06-07T11:30:00.000Z"),
     }]);
@@ -667,7 +667,7 @@ describe("createSettlementService", () => {
         createdAt: new Date("2026-06-07T11:30:00.000Z"),
         metadata: {
           sessions: ["session-closed", "session-music", "session-mahjong"],
-          total: centsOf(105),
+          total: 105,
         },
       },
     ]);
@@ -852,7 +852,7 @@ describe("createSettlementService", () => {
         createdAt: new Date("2026-06-07T11:00:00.000Z"),
         metadata: {
           sessions: ["session-1"],
-          total: centsOf(25),
+          total: 25,
         },
       },
     ]);
@@ -906,15 +906,15 @@ describe("createSettlementService", () => {
     const result = await service.checkoutWithOverride({
       playerId: "player-1",
       staffId: "staff-1",
-      total: centsOf(5),
+      total: 5,
       reason: "machine fault",
     });
 
     expect(result.playerSettlement).toEqual({
       playerId: "player-1",
       sessionIds: ["session-1"],
-      subtotal: centsOf(20),
-      total: centsOf(5),
+      subtotal: 20,
+      total: 5,
       status: "settled",
       settledAt: new Date("2026-06-07T11:00:00.000Z"),
     });
@@ -1163,8 +1163,8 @@ describe("createSettlementService", () => {
     });
 
     expect(result.playerSettlement).toMatchObject({
-      subtotal: centsOf(92),
-      total: centsOf(89),
+      subtotal: 92,
+      total: 89,
     });
     expect(result.adjustments).toEqual([
       expect.objectContaining({
