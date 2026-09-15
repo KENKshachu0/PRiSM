@@ -1,10 +1,10 @@
 import { PrismDomainError } from "./errors";
 import {
   type Cents,
-  addCents,
+  type AssetQuantity,
+  type AssetQuantityFor,
+  assetQuantityFromStored,
   assetQuantityOf,
-  isNegativeCents,
-  isPositiveCents,
   sumCents,
 } from "./money";
 
@@ -52,14 +52,20 @@ export function isActiveInWindow(
   return true;
 }
 
-export type AssetHolding = {
+export type AssetHolding<T extends string = string> = T extends string ? {
   id?: string;
-  assetType: string;
+  assetType: T;
   assetCode: string;
-  quantity: Cents;
+  quantity: AssetQuantityFor<T>;
   activeAt?: Date | null;
   expiresAt?: Date | null;
-};
+} : never;
+
+export function isCurrencyHolding<T extends Pick<AssetHolding, "assetType" | "quantity">>(
+  holding: T,
+): holding is T & { assetType: "currency"; quantity: Cents } {
+  return holding.assetType === "currency";
+}
 
 /**
  * The minimal current-state projection change caused by one asset transaction.
@@ -112,7 +118,7 @@ export function sumCurrencyHoldings(
 ): Cents {
   return sumCents(
     holdings
-      .filter((holding) => holding.assetType === "currency")
+      .filter(isCurrencyHolding)
       .map((holding) => holding.quantity),
   );
 }
@@ -137,7 +143,7 @@ export function evaluateAssetHoldingAvailability(input: {
   unavailableReasons: AssetHoldingUnavailableReason[];
 } {
   const unavailableReasons: AssetHoldingUnavailableReason[] = [];
-  if (!isPositiveCents(input.holding.quantity)) unavailableReasons.push("quantity_not_positive");
+  if (input.holding.quantity <= 0) unavailableReasons.push("quantity_not_positive");
   if (input.holding.activeAt && input.holding.activeAt > input.at) {
     unavailableReasons.push("holding_not_active");
   }
@@ -173,14 +179,14 @@ export function isAssetHoldingAvailableAt(input: {
   return evaluateAssetHoldingAvailability(input).available;
 }
 
-export type AssetLedgerEntry = {
-  assetType: string;
+export type AssetLedgerEntry<T extends string = string> = T extends string ? {
+  assetType: T;
   assetCode: string;
-  delta: Cents;
+  delta: AssetQuantityFor<T>;
   reason: string;
   refId: string;
   transactionId?: string;
-};
+} : never;
 
 export type AssetTransaction = {
   id: string;
@@ -241,14 +247,14 @@ export function grantAssets(input: GrantAssetsInput): GrantAssetsResult {
 
   for (const grant of input.grants) {
     const amount = assetQuantityOf(grant.assetType, grant.amount);
-    if (!isPositiveCents(amount)) {
+    if (amount <= 0) {
       throw new PrismDomainError("Asset grant amount must be positive.", "INVALID_ASSET_GRANT_AMOUNT");
     }
 
     if (grant.mergeStrategy === "stack") {
       const target = holdings.find((asset) => canStackAsset(asset, grant));
       if (target) {
-        target.quantity = addCents(target.quantity, amount);
+        target.quantity = assetQuantityFromStored(target.assetType, target.quantity + amount);
       } else {
         holdings.push(createGrantedAsset(input.idFactory(), grant, amount));
       }
@@ -282,9 +288,12 @@ export function adjustAssets(input: AdjustAssetsInput): GrantAssetsResult {
       throw new PrismDomainError("Asset holding not found.", "ASSET_HOLDING_NOT_FOUND");
     }
 
-    const quantityDelta = assetQuantityOf(adjustment.assetType, adjustment.quantityDelta);
-    const nextQuantity = addCents(target.quantity, quantityDelta);
-    if (isNegativeCents(nextQuantity)) {
+    if (target.assetType !== adjustment.assetType || target.assetCode !== adjustment.assetCode) {
+      throw new PrismDomainError("Asset type and code must match the holding.", "ASSET_HOLDING_TYPE_MISMATCH");
+    }
+    const quantityDelta = assetQuantityOf(target.assetType, adjustment.quantityDelta);
+    const nextQuantity = assetQuantityFromStored(target.assetType, target.quantity + quantityDelta);
+    if (nextQuantity < 0) {
       throw new PrismDomainError("Insufficient asset quantity.", "INSUFFICIENT_ASSET_QUANTITY");
     }
 
@@ -293,8 +302,8 @@ export function adjustAssets(input: AdjustAssetsInput): GrantAssetsResult {
     if ("expiresAt" in adjustment) target.expiresAt = adjustment.expiresAt ?? null;
 
     assetLedgerEntries.push({
-      assetType: adjustment.assetType,
-      assetCode: adjustment.assetCode,
+      assetType: target.assetType,
+      assetCode: target.assetCode,
       delta: quantityDelta,
       reason: adjustment.reason,
       refId: adjustment.refId,
@@ -302,7 +311,7 @@ export function adjustAssets(input: AdjustAssetsInput): GrantAssetsResult {
   }
 
   return {
-    holdings: holdings.filter((holding) => isPositiveCents(holding.quantity)),
+    holdings: holdings.filter((holding) => holding.quantity > 0),
     assetLedgerEntries,
   };
 }
@@ -311,7 +320,7 @@ function applyReplaceGrant(
   holdings: AssetHolding[],
   grant: AssetGrant,
   idFactory: () => string,
-  amount: Cents,
+  amount: AssetQuantity,
 ): void {
   const target = holdings.find((asset) => asset.assetType === grant.assetType && asset.assetCode === grant.assetCode);
 
@@ -330,7 +339,7 @@ function applyExtendTimeGrant(
   grant: AssetGrant,
   idFactory: () => string,
   now: Date,
-  amount: Cents,
+  amount: AssetQuantity,
 ): void {
   if (!grant.durationMs || grant.durationMs <= 0) {
     throw new PrismDomainError("Extend-time asset grant requires a positive duration.", "INVALID_ASSET_GRANT_DURATION");
@@ -376,7 +385,7 @@ function canAdjustAsset(asset: AssetHolding, adjustment: AssetAdjustment): boole
   );
 }
 
-function createGrantedAsset(id: string, grant: AssetGrant, amount: Cents): AssetHolding {
+function createGrantedAsset(id: string, grant: AssetGrant, amount: AssetQuantity): AssetHolding {
   return {
     id,
     assetType: grant.assetType,

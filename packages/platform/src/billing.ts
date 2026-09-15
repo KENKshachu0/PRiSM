@@ -438,19 +438,6 @@ export function registerBillingRoutes(app: Hono<AppBindings>) {
         provider: {
           ...row.provider,
           timeZone: ("timeZone" in row.provider ? row.provider.timeZone : undefined) ?? shop.time_zone,
-          rules: ("rules" in row.provider ? row.provider.rules : undefined)?.map(
-            (rule) => ({
-              ...rule,
-              ...(rule.dateTimeRange
-                ? {
-                    dateTimeRange: {
-                      start: new Date(rule.dateTimeRange.start),
-                      end: new Date(rule.dateTimeRange.end),
-                    },
-                  }
-                : {}),
-            }),
-          ),
         },
       } as PricingConfig;
       if (config.kind === "charge.fixed")

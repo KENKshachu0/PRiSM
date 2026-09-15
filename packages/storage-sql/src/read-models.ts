@@ -1,4 +1,4 @@
-import { type Cents, centsOfInteger, sumCents, ZERO_CENTS } from "@prism/core";
+import { type Cents, assetQuantityFromStored, centsOfInteger, sumCents, ZERO_CENTS } from "@prism/core";
 import { sqlShop } from "./shop-scope";
 import type {
   ApplicationQueries,
@@ -726,7 +726,7 @@ async function listPlayerAssets(
       assetType: row.asset_type,
       assetCode: row.asset_code,
       assetName: row.asset_name,
-      delta: centsOfInteger(row.delta),
+      delta: assetQuantityFromStored(row.asset_type, row.delta),
       reason: row.reason,
       refId: row.ref_id,
       transactionId: row.transaction_id,
@@ -778,7 +778,7 @@ function assessAssetHoldingRow(
     id: row.holding_id ?? row.id,
     assetType: row.asset_type!,
     assetCode: row.asset_code!,
-    quantity: centsOfInteger(row.quantity!),
+    quantity: assetQuantityFromStored(row.asset_type!, row.quantity!),
     activeAt: row.holding_active_at ? new Date(row.holding_active_at) : null,
     expiresAt: row.holding_expires_at ? new Date(row.holding_expires_at) : null,
   };

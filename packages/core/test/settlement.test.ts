@@ -1,3 +1,4 @@
+import { assetQuantityToNatural } from "@prism/core";
 import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
@@ -9,7 +10,6 @@ import {
   deductCurrency,
   diffAssetHoldings,
   isPositiveCents,
-  isPositiveQuantity,
   minCents,
   negCents,
   PrismDomainError,
@@ -802,7 +802,7 @@ describe("settlement money precision", () => {
         refId: "session-float",
       },
     ]);
-    expect(result.assetHoldings.map((holding) => yuanOf(holding.quantity))).toEqual([0, 0]);
+    expect(result.assetHoldings.map((holding) => assetQuantityToNatural(holding.assetType, holding.quantity))).toEqual([0, 0]);
   });
 
   it("still rejects a settlement the player genuinely cannot afford", async () => {
@@ -831,7 +831,7 @@ describe("settlement money precision", () => {
       now: session.endedAt,
     });
 
-    expect(result.assetHoldings.map((holding) => yuanOf(holding.quantity))).toEqual([0, 0]);
+    expect(result.assetHoldings.map((holding) => assetQuantityToNatural(holding.assetType, holding.quantity))).toEqual([0, 0]);
   });
 
   it("clears deduction residue so a fully spent balance reaches exactly zero", async () => {
@@ -848,8 +848,8 @@ describe("settlement money precision", () => {
       });
     }
 
-    expect(yuanOf(holdings[0]!.quantity)).toBe(0);
-    expect(isPositiveQuantity(holdings[0]!.quantity)).toBe(false);
+    expect(assetQuantityToNatural(holdings[0]!.assetType, holdings[0]!.quantity)).toBe(0);
+    expect(holdings[0]!.quantity > 0).toBe(false);
   });
 
   it("reports a spent holding for deletion instead of leaving a zero-quantity row behind", async () => {
@@ -867,7 +867,7 @@ describe("settlement money precision", () => {
       });
     }
 
-    const nextHoldings = holdings.filter((holding) => isPositiveQuantity(holding.quantity));
+    const nextHoldings = holdings.filter((holding) => holding.quantity > 0);
     expect(diffAssetHoldings(before, nextHoldings).deleteIds).toEqual(["free-1"]);
   });
 
@@ -895,7 +895,7 @@ describe("settlement money precision", () => {
         refId: "session-residue",
       },
     ]);
-    expect(yuanOf(holdings.find((holding) => holding.id === "free-1")!.quantity)).toBe(0);
+    expect(Number(holdings.find((holding) => holding.id === "free-1")!.quantity)).toBe(0);
   });
 
   it("quantises an override total before it is persisted", async () => {
@@ -916,7 +916,7 @@ describe("settlement money precision", () => {
 
     expect(yuanOf(result.settlement.total)).toBe(33.33);
     expect(result.adjustments[0]!.amount).toBe(moneyFixture(13.33));
-    expect(yuanOf(result.assetLedgerEntries[0]!.delta)).toBe(-33.33);
+    expect(assetQuantityToNatural(result.assetLedgerEntries[0]!.assetType, result.assetLedgerEntries[0]!.delta)).toBe(-33.33);
   });
 
   it("settles a fixed charge of a tenth ten times without losing a cent", async () => {
@@ -943,7 +943,7 @@ describe("settlement money precision", () => {
 
     expect(yuanOf(result.settlement.subtotal)).toBe(1);
     expect(yuanOf(result.settlement.total)).toBe(1);
-    expect(yuanOf(result.assetLedgerEntries[0]!.delta)).toBe(-1);
+    expect(assetQuantityToNatural(result.assetLedgerEntries[0]!.assetType, result.assetLedgerEntries[0]!.delta)).toBe(-1);
   });
 
   it("never refuses a payment the balance covers, across every cent pair up to 3 yuan", () => {

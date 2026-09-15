@@ -1,5 +1,6 @@
 import type {
   AssetMergeStrategy,
+  AssetQuantity,
   AssetHolding,
   AssetLedgerEntry,
   AssetDefinition,
@@ -289,7 +290,7 @@ export type PurchaseBusinessItemResult = {
   assetLedgerEntries: Array<{
     assetType: string;
     assetCode: string;
-    delta: import("@prism/core").Cents;
+    delta: AssetQuantity;
     reason: string;
     refId: string;
     transactionId?: string;

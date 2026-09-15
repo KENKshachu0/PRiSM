@@ -29,6 +29,7 @@ import type {
 } from "@prism/core";
 import {
   addCents,
+  assetQuantityFromStored,
   applyTimeCapPricing,
   allocate,
   closeSession,
@@ -341,7 +342,7 @@ async function calculateUnifiedCheckoutDetails(
   );
   const availableHoldings = resolvedAvailableAssets
     ? resolvedAvailableAssets.map((asset) => asset.holding)
-    : currentHoldings.filter((holding) => isPositiveCents(holding.quantity) && isActiveInWindow(holding, now));
+    : currentHoldings.filter((holding) => holding.quantity > 0 && isActiveInWindow(holding, now));
   const walletBalanceBefore = resolvedAvailableAssets
     ? sumAvailableWalletBalance(resolvedAvailableAssets)
     : sumCurrencyHoldings(availableHoldings);
@@ -412,17 +413,17 @@ async function calculateUnifiedCheckoutDetails(
           const consumable = effectConfig?.consumable === true;
           if (consumable) {
             const holding = availableHoldings.find(
-              (h) => (holdingKey ? h.id === holdingKey : h.assetType === assetType && h.assetCode === assetCode) && isPositiveCents(h.quantity),
+              (h) => (holdingKey ? h.id === holdingKey : h.assetType === assetType && h.assetCode === assetCode) && h.quantity > 0,
             ) ?? availableHoldings.find(
-              (h) => h.assetType === assetType && h.assetCode === assetCode && isPositiveCents(h.quantity),
+              (h) => h.assetType === assetType && h.assetCode === assetCode && h.quantity > 0,
             );
             if (holding) {
               const consumed = assetQuantityOf(holding.assetType, 1);
-              holding.quantity = subCents(holding.quantity, consumed);
+              holding.quantity = assetQuantityFromStored(holding.assetType, holding.quantity - consumed);
               extraLedgerEntries.push({
                 assetType,
                 assetCode,
-                delta: negCents(consumed),
+                delta: assetQuantityFromStored(holding.assetType, -consumed),
                 reason: "session.settlement.coupon",
                 refId: session.id,
               });
@@ -498,10 +499,10 @@ async function calculateUnifiedCheckoutDetails(
   }
 
   if (dependencies.assetDefinitions) {
-    const unifiedHoldings = availableHoldings.filter((h) => isPositiveCents(h.quantity));
+    const unifiedHoldings = availableHoldings.filter((h) => h.quantity > 0);
     for (let holdingIndex = 0; holdingIndex < unifiedHoldings.length; holdingIndex++) {
       const holding = unifiedHoldings[holdingIndex];
-      if (!isPositiveCents(holding.quantity) || !isPositiveCents(totalAmount)) break;
+      if (holding.quantity <= 0 || !isPositiveCents(totalAmount)) break;
 
       const definition = availableDefinitions.get(`${holding.assetType}\u0000${holding.assetCode}`);
       const effectiveAt = definition && isActiveInWindow(definition, anchorSession.startedAt)
@@ -551,11 +552,11 @@ async function calculateUnifiedCheckoutDetails(
 
       if (effectConfig.consumable === true) {
         const consumed = assetQuantityOf(holding.assetType, 1);
-        holding.quantity = subCents(holding.quantity, consumed);
+        holding.quantity = assetQuantityFromStored(holding.assetType, holding.quantity - consumed);
         unifiedLedgerEntries.push({
           assetType: holding.assetType,
           assetCode: holding.assetCode,
-          delta: negCents(consumed),
+          delta: assetQuantityFromStored(holding.assetType, -consumed),
           reason: "session.settlement.coupon",
           refId: anchorSession.id,
         });
@@ -710,7 +711,7 @@ async function persistUnifiedPlayerCheckout(
     ...extraLedgerEntries,
   ];
 
-  const nextHoldings = details.currentHoldings.filter((holding) => isPositiveCents(holding.quantity));
+  const nextHoldings = details.currentHoldings.filter((holding) => holding.quantity > 0);
   const assetCommit: CheckoutCommit["assets"] = {
     transaction: {
       id: `asset-tx:session.settlement:${anchorSession.id}`,

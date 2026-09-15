@@ -1,4 +1,5 @@
 import type { AssetHolding, AssetLedgerEntry } from "./assets";
+import { isCurrencyHolding } from "./assets";
 import { PrismDomainError } from "./errors";
 import {
   type Cents,
@@ -322,13 +323,13 @@ export function deductCurrency(
     refId: string;
     now: Date;
   },
-): AssetLedgerEntry[] {
+): AssetLedgerEntry<"currency">[] {
   const requested = input.amount;
   if (isZeroCents(requested)) return [];
 
-  const currencyAccounts: AssetHolding[] = [];
+  const currencyAccounts: AssetHolding<"currency">[] = [];
   for (const account of assetHoldings) {
-    if (account.assetType !== "currency") continue;
+    if (!isCurrencyHolding(account)) continue;
     // Quantities are exact integers now, so there is no residue to canonicalise:
     // a balance of zero is zero, and every positive balance is spendable.
     if (!isPositiveCents(account.quantity)) continue;
@@ -350,7 +351,7 @@ export function deductCurrency(
   }
 
   let remaining = requested;
-  const entries: AssetLedgerEntry[] = [];
+  const entries: AssetLedgerEntry<"currency">[] = [];
 
   for (const account of currencyAccounts) {
     if (!isPositiveCents(remaining)) break;
@@ -375,7 +376,7 @@ function availableHoldingsAt(assetHoldings: readonly AssetHolding[], now: Date):
 }
 
 function isHoldingAvailableAt(holding: AssetHolding, now: Date): boolean {
-  if (!isPositiveCents(holding.quantity)) return false;
+  if (holding.quantity <= 0) return false;
   if (holding.activeAt && holding.activeAt > now) return false;
   if (holding.expiresAt && holding.expiresAt <= now) return false;
   return true;

@@ -4,24 +4,13 @@
  * Billing arithmetic and storage use safe integers: money in cents, tickets
  * and coupons in whole counts. API/configuration boundaries still speak yuan.
  * Ratios use BigInt intermediates with explicit rounding or conserving allocation.
- * The legacy tolerance helpers remain exported for compatibility, but are not
- * used by billing. See `docs/money.md` for units and migration requirements.
+ * See `docs/money.md` for units and migration requirements.
  */
 
 import { PrismDomainError } from "./errors";
 
 /** Smallest representable money step. Amounts are modelled in whole cents of yuan. */
 export const CENTS_PER_YUAN = 100;
-
-/**
- * Comparison tolerance for money and quantity values.
- *
- * Chosen an order of magnitude above observed float noise (1.39e-16) and far
- * below the smallest meaningful amount (1 cent = 0.01). Do not tighten this to
- * something like 1e-15: residue from repeated subtraction reaches 1e-16..1e-15
- * and would start flipping comparisons again.
- */
-export const MONEY_EPSILON = 1e-9;
 
 /**
  * Snaps a computed amount to whole cents of yuan.
@@ -34,84 +23,6 @@ export function quantizeMoney(value: number): number {
   if (!Number.isFinite(value)) return value;
   return yuanOf(centsOf(value));
 }
-
-/**
- * Collapses floating-point residue to exactly zero and canonicalises the rest to
- * cents. Balances coming back from `a - b` chains go through here so a storage
- * row can actually reach 0 instead of lingering at `1.3877787807814457e-16`.
- */
-export function normalizeQuantity(value: number): number {
-  if (!Number.isFinite(value)) return value;
-  return isZeroQuantity(value) ? 0 : quantizeMoney(value);
-}
-
-/** True when `value` is indistinguishable from zero at money precision. */
-export function isZeroQuantity(value: number): boolean {
-  if (!Number.isFinite(value)) return false;
-  return Math.abs(value) <= MONEY_EPSILON;
-}
-
-/** True when `value` is meaningfully greater than zero. */
-export function isPositiveQuantity(value: number): boolean {
-  if (!Number.isFinite(value)) return false;
-  return value > MONEY_EPSILON;
-}
-
-/** True when `value` is meaningfully less than zero. */
-export function isNegativeQuantity(value: number): boolean {
-  if (!Number.isFinite(value)) return false;
-  return value < -MONEY_EPSILON;
-}
-
-/**
- * Orders two amounts after snapping both to cents. Returns `0` when they are the
- * same amount, so callers can write `compareMoney(available, amount) >= 0`
- * instead of `available >= amount`.
- *
- * Non-finite operands are not meaningful money, and callers are expected to
- * validate finiteness before comparing. They are still ordered consistently
- * (`NaN` last, then `+Infinity`) rather than returning an arbitrary result.
- */
-export function compareMoney(left: number, right: number): -1 | 0 | 1 {
-  if (!Number.isFinite(left) || !Number.isFinite(right)) {
-    if (Number.isNaN(left) && Number.isNaN(right)) return 0;
-    if (left === right) return 0;
-    if (Number.isNaN(left)) return 1;
-    if (Number.isNaN(right)) return -1;
-    return left < right ? -1 : 1;
-  }
-
-  const difference = quantizeMoney(left) - quantizeMoney(right);
-  if (isZeroQuantity(difference)) return 0;
-  return difference < 0 ? -1 : 1;
-}
-
-/** Sums amounts and quantises the result to whole cents. */
-export function sumMoney(values: Iterable<number>): number {
-  let total = 0;
-  for (const value of values) total += value;
-  return quantizeMoney(total);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Stage two: integer units.
-//
-// Everything above works in yuan and relies on tolerance to survive binary
-// floating point. This section removes the tolerance requirement entirely by
-// making the unit explicit in the type system:
-//
-//   Cents — money, an exact integer number of 分 (1/100 yuan)
-//   Units — counts of non-currency holdings (tickets, coupons), exact integers
-//
-// The two brands are deliberately unconvertible. There is no function from
-// `Cents` to `Units` or back, because 1 yuan and 1 ticket are not the same kind
-// of thing, and the compiler refusing to mix them is the entire point of the
-// exercise. Arithmetic on both is exact integer arithmetic, so `a === b` and
-// `a < b` mean what they look like and `MONEY_EPSILON` is no longer involved.
-//
-// Amounts still cross external boundaries in yuan; `centsOf` and `yuanOf` are
-// the only sanctioned way through.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * An exact amount of money, held as a whole number of 分 (1/100 元).
@@ -130,8 +41,10 @@ export type Cents = number & { readonly __brand: "Cents" };
  */
 export type Units = number & { readonly __brand: "Units" };
 
+export type AssetQuantity = Cents | Units;
+export type AssetQuantityFor<T extends string> = string extends T ? AssetQuantity : T extends "currency" ? Cents : Units;
+
 export const ZERO_CENTS = 0 as Cents;
-export const ZERO_UNITS = 0 as Units;
 
 /** How `mulDivRound` resolves an inexact division. There is no default. */
 export type RoundingMode =
@@ -190,13 +103,20 @@ export function unitsOf(value: number): Units {
 /** Converts an external asset quantity to its stored integer representation.
  * Currency is expressed in yuan at the boundary and stored in cents; every
  * other asset is expressed and stored as a whole count. */
-export function assetQuantityOf(assetType: string, value: number): Cents {
-  return assetType === "currency" ? centsOf(value) : centsOfInteger(value);
+export function assetQuantityOf<T extends string>(assetType: T, value: number): AssetQuantityFor<T>;
+export function assetQuantityOf(assetType: string, value: number): AssetQuantity {
+  return assetType === "currency" ? centsOf(value) : unitsOf(value);
+}
+
+/** Decode an already-stored integer without scaling it again. */
+export function assetQuantityFromStored<T extends string>(assetType: T, value: number): AssetQuantityFor<T>;
+export function assetQuantityFromStored(assetType: string, value: number): AssetQuantity {
+  return assetType === "currency" ? centsOfInteger(value) : unitsOf(value);
 }
 
 /** Converts a stored asset quantity back to the API's natural unit. */
-export function assetQuantityToNatural(assetType: string, value: Cents): number {
-  return assetType === "currency" ? yuanOf(value) : value;
+export function assetQuantityToNatural(assetType: string, value: AssetQuantity): number {
+  return assetType === "currency" ? yuanOf(centsOfInteger(value)) : unitsOf(value);
 }
 
 // ── Money arithmetic ─────────────────────────────────────────────────────────
@@ -370,37 +290,4 @@ export function allocate(total: Cents, weights: readonly number[]): Cents[] {
     cursor++;
   }
   return result;
-}
-
-// ── Count arithmetic ─────────────────────────────────────────────────────────
-
-export function addUnits(left: Units, right: Units): Units {
-  return unitsOf(left + right);
-}
-
-export function subUnits(left: Units, right: Units): Units {
-  return unitsOf(left - right);
-}
-
-export function sumUnits(values: Iterable<Units>): Units {
-  let total = 0;
-  for (const value of values) total = unitsOf(total + value);
-  return unitsOf(total);
-}
-
-export function isZeroUnits(value: Units): boolean {
-  return value === 0;
-}
-
-export function isPositiveUnits(value: Units): boolean {
-  return value > 0;
-}
-
-export function isNegativeUnits(value: Units): boolean {
-  return value < 0;
-}
-
-export function compareUnits(left: Units, right: Units): -1 | 0 | 1 {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
 }

@@ -75,10 +75,12 @@ export function quantizePricingProvider(
   provider: PricingConfig["provider"],
 ): PricingConfig["provider"] {
   if ("amount" in provider) {
+    assertNonNegativePrice(provider.amount);
     return { ...provider, amount: quantizeMoney(provider.amount) };
   }
 
   if ("includedPricingConfigIds" in provider) {
+    for (const rule of provider.rules) assertNonNegativePrice(rule.priceCap);
     return {
       ...provider,
       rules: provider.rules.map((rule) => ({ ...rule, priceCap: quantizeMoney(rule.priceCap) })),
@@ -86,6 +88,10 @@ export function quantizePricingProvider(
     };
   }
 
+  for (const rule of provider.rules) {
+    assertNonNegativePrice(rule.pricing.unitPrice);
+    assertNonNegativePrice(rule.pricing.priceCap);
+  }
   return {
     ...provider,
     rules: provider.rules.map((rule) => ({
@@ -98,6 +104,12 @@ export function quantizePricingProvider(
     })),
     paidHistory: provider.paidHistory,
   };
+}
+
+function assertNonNegativePrice(value: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new PrismDomainError("Price must be a non-negative finite number.", "INVALID_PRICING_AMOUNT");
+  }
 }
 
 export function createPricingProviderFromConfig(config: PricingConfig): PricingProvider {

@@ -57,7 +57,7 @@ export function createAssetDefinitionEffectProvider(
       for (let holdingIndex = 0; holdingIndex < context.assetHoldings.length; holdingIndex++) {
         if (!isPositiveCents(remainingSubtotal)) break;
         const holding = context.assetHoldings[holdingIndex];
-        if (!isPositiveCents(holding.quantity)) continue;
+        if (holding.quantity <= 0) continue;
 
         const definition = definitions.get(assetDefinitionKey(holding.assetType, holding.assetCode));
         const effectiveAt = definition && isActiveInWindow(definition, context.session.startedAt)

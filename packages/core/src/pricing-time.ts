@@ -194,9 +194,7 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
     quote(context) {
       const endedAt = context.session.endedAt ?? context.now;
       const charges: ChargeItem[] = [];
-      const currentPaidHistory: Record<string, Cents> = Object.fromEntries(
-        Object.entries(config.paidHistory ?? {}),
-      );
+      const currentPaidHistory = { ...config.paidHistory };
       let cursor = new Date(context.session.startedAt);
       const hasDeviceActivity = Boolean(
         context.session.metadata?.deviceOperated || context.session.metadata?.hasDeviceActivity,
@@ -331,7 +329,7 @@ export function applyTimeCapPricing(input: {
       window,
       adjustmentAmount: subCents(window.amountApplied, window.currentAmount),
     }))
-    .filter(({ window, adjustmentAmount }) => isPositiveCents(adjustmentAmount) || adjustmentAmount !== 0 || isPositiveCents(window.amountApplied))
+    .filter(({ window, adjustmentAmount }) => adjustmentAmount !== 0 || isPositiveCents(window.amountApplied))
     .map(({ window, adjustmentAmount }) => ({
       id: `time-cap:${window.capConfigId}:${window.capRuleId}:${window.windowStartedAt.toISOString()}`,
       source: `time.cap:${window.capConfigId}:${window.capRuleId}`,
@@ -421,9 +419,7 @@ export function explainTimeCapPricing(input: {
   }
 
   const windows: TimeCapPricingWindow[] = [];
-  const currentPaidHistory: Record<string, Cents> = Object.fromEntries(
-    Object.entries(input.paidHistory ?? input.config.paidHistory ?? {}),
-  );
+  const currentPaidHistory = { ...(input.paidHistory ?? input.config.paidHistory) };
   for (const [key, bucket] of buckets) {
     const paidBefore = currentPaidHistory[key] ?? ZERO_CENTS;
     const target = calculateCapWindowTarget(bucket.amount, centsOf(bucket.rule.priceCap), paidBefore);

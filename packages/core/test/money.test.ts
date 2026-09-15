@@ -1,34 +1,24 @@
 import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { describe, expect, it } from "bun:test";
+const n = (value: number): number => value;
 import {
-  MONEY_EPSILON,
   type Cents,
   type Units,
   addCents,
-  addUnits,
   absCents,
   allocate,
   centsOf,
   centsOfInteger,
   compareCents,
-  compareMoney,
-  compareUnits,
-  isNegativeQuantity,
-  isPositiveQuantity,
-  isZeroQuantity,
   maxCents,
   minCents,
   mulDivRound,
   negCents,
-  normalizeQuantity,
   quantizeMoney,
   subCents,
-  subUnits,
   assetQuantityOf,
   assetQuantityToNatural,
   sumCents,
-  sumMoney,
-  sumUnits,
   unitsOf,
   yuanOf,
 } from "../src/index";
@@ -64,101 +54,6 @@ describe("quantizeMoney", () => {
     expect(quantizeMoney(Number.POSITIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
   });
 });
-
-describe("normalizeQuantity", () => {
-  it("collapses subtraction residue to exactly zero", () => {
-    // 1.00 minus ten times 0.10, which is what the ledger leaves behind today.
-    let balance = 1;
-    for (let index = 0; index < 10; index++) balance -= 0.1;
-
-    expect(balance).not.toBe(0);
-    expect(normalizeQuantity(balance)).toBe(0);
-  });
-
-  it("keeps a genuine balance and canonicalises it to cents", () => {
-    expect(normalizeQuantity(13)).toBe(13);
-    expect(normalizeQuantity(7.750000000000001)).toBe(7.75);
-    expect(normalizeQuantity(-1e-16)).toBe(0);
-  });
-});
-
-describe("quantity comparisons", () => {
-  it("treats float noise as zero instead of a spendable balance", () => {
-    const residue = 1.3877787807814457e-16;
-
-    expect(isZeroQuantity(residue)).toBe(true);
-    expect(isPositiveQuantity(residue)).toBe(false);
-    expect(isNegativeQuantity(residue)).toBe(false);
-  });
-
-  it("keeps real amounts on the correct side of zero", () => {
-    expect(isPositiveQuantity(MONEY_EPSILON * 10)).toBe(true);
-    expect(isPositiveQuantity(0.01)).toBe(true);
-    expect(isZeroQuantity(0.01)).toBe(false);
-    expect(isNegativeQuantity(-0.01)).toBe(true);
-    expect(isNegativeQuantity(MONEY_EPSILON)).toBe(false);
-  });
-
-  it("keeps reserves the same sign in both directions", () => {
-    expect(isZeroQuantity(-1e-17)).toBe(true);
-    expect(isZeroQuantity(1e-17)).toBe(true);
-  });
-
-  it("does not classify non-finite values as positive or zero", () => {
-    expect(isPositiveQuantity(Number.NaN)).toBe(false);
-    expect(isZeroQuantity(Number.NaN)).toBe(false);
-    expect(isNegativeQuantity(Number.NaN)).toBe(false);
-  });
-});
-
-describe("compareMoney", () => {
-  it("reports equality for sums that binary floating point cannot add exactly", () => {
-    // Every one of these evaluates to `true` with a raw `<` comparison.
-    expect(0.01 + 0.06 < 0.07).toBe(true);
-    expect(0.3 + 0.6 < 0.9).toBe(true);
-    expect(0.7 + 0.1 < 0.8).toBe(true);
-
-    expect(compareMoney(0.01 + 0.06, 0.07)).toBe(0);
-    expect(compareMoney(0.3 + 0.6, 0.9)).toBe(0);
-    expect(compareMoney(0.7 + 0.1, 0.8)).toBe(0);
-  });
-
-  it("still orders genuinely different amounts", () => {
-    expect(compareMoney(25, 30)).toBe(-1);
-    expect(compareMoney(30, 25)).toBe(1);
-    expect(0.01 + 0.06 >= 0.08).toBe(false);
-    expect(compareMoney(0.01 + 0.06, 0.08)).toBe(-1);
-  });
-
-  it("respects the cent grid rather than the raw float delta", () => {
-    // Both land on 5.00 once snapped, so they are the same amount to the store.
-    expect(compareMoney(5.004, 5.001)).toBe(0);
-    expect(compareMoney(5, 5.01)).toBe(-1);
-    expect(compareMoney(5.006, 5)).toBe(1);
-  });
-
-  it("falls back to a plain comparison for non-finite operands", () => {
-    expect(compareMoney(Number.NaN, Number.NaN)).toBe(0);
-    expect(compareMoney(Number.NaN, 1)).toBe(1);
-    expect(compareMoney(1, Number.NaN)).toBe(-1);
-  });
-});
-
-describe("sumMoney", () => {
-  it("returns a canonical total for a long chain of decimals", () => {
-    expect(sumMoney(Array.from({ length: 10 }, () => 0.1))).toBe(1);
-    expect(sumMoney([0.01, 0.06])).toBe(0.07);
-    expect(sumMoney([0.1, 0.2])).toBe(0.3);
-  });
-
-  it("returns zero for an empty iterable", () => {
-    expect(sumMoney([])).toBe(0);
-  });
-});
-
-/** Widen a branded amount for assertion: bun's matchers require the expected
- *  value to share the received type, and `Cents`/`Units` are not `number`. */
-const n = (value: Cents | Units): number => value;
 
 describe("centsOf / yuanOf", () => {
   it("converts yuan to exact cents and back", () => {
@@ -320,29 +215,12 @@ describe("cents arithmetic", () => {
     expect(compareCents(available, owed)).toBe(0);
     // The yuan path the old code took gets it wrong.
     expect(0.01 + 0.06 < 0.07).toBe(true);
-    expect(compareMoney(0.01 + 0.06, 0.07)).toBe(0);
   });
 
   it("sums many amounts without drifting", () => {
     const parts = Array.from({ length: 10 }, () => centsOf(0.1));
     expect(n(sumCents(parts))).toBe(100);
     expect(yuanOf(sumCents(parts))).toBe(1);
-  });
-});
-
-describe("units arithmetic", () => {
-  it("consumes exactly one ticket per use", () => {
-    const held = unitsOf(2);
-    const after = subUnits(held, unitsOf(1));
-    expect(n(after)).toBe(1);
-    expect(n(subUnits(after, unitsOf(1)))).toBe(0);
-    expect(compareUnits(unitsOf(1), unitsOf(2))).toBe(-1);
-    expect(n(sumUnits([unitsOf(1), unitsOf(2)]))).toBe(3);
-    expect(n(addUnits(unitsOf(1), unitsOf(1)))).toBe(2);
-  });
-
-  it("refuses fractional counts", () => {
-    expect(() => unitsOf(0.5)).toThrow();
   });
 });
 
@@ -374,7 +252,7 @@ describe("asset quantities use their own units", () => {
     expect(assetQuantityToNatural("currency", centsOfInteger(123))).toBe(1.23);
     for (const type of ["coupon", "ticket"]) {
       expect(n(assetQuantityOf(type, 1))).toBe(1);
-      expect(assetQuantityToNatural(type, centsOfInteger(1))).toBe(1);
+      expect(assetQuantityToNatural(type, unitsOf(1))).toBe(1);
       expect(() => assetQuantityOf(type, 0.5)).toThrow();
     }
   });

@@ -1,6 +1,7 @@
 import {
   centsOf,
   assetQuantityOf,
+  assetQuantityFromStored,
   assetQuantityToNatural,
   centsOfInteger,
   type Cents,
@@ -2002,7 +2003,7 @@ function toAssetHolding(row: AssetHoldingRow): AssetHolding {
     id: row.id,
     assetType: row.asset_type,
     assetCode: row.asset_code,
-    quantity: centsOfInteger(row.quantity),
+    quantity: assetQuantityFromStored(row.asset_type, row.quantity),
     activeAt: row.active_at ? new Date(row.active_at) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
   };
@@ -2087,7 +2088,7 @@ function toAssetLedgerEntry(row: AssetLedgerEntryRow): AssetLedgerEntry {
   return {
     assetType: row.asset_type,
     assetCode: row.asset_code,
-    delta: centsOfInteger(row.delta),
+    delta: assetQuantityFromStored(row.asset_type, row.delta),
     reason: row.reason,
     refId: row.ref_id,
     ...(row.transaction_id ? { transactionId: row.transaction_id } : {}),
@@ -2183,7 +2184,7 @@ function toPresent(row: PresentRow): Present {
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
     status: row.status ?? "active",
     grants: normalizePresentGrants(JSON.parse(row.grants_json)).map(grant => ({
-      ...grant, amount: assetQuantityToNatural(grant.assetType, centsOfInteger(grant.amount)),
+      ...grant, amount: assetQuantityToNatural(grant.assetType, assetQuantityFromStored(grant.assetType, grant.amount)),
     })),
   };
 }

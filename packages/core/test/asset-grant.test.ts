@@ -1,3 +1,4 @@
+import { assetQuantityToNatural } from "@prism/core";
 import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { ZERO_CENTS, centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
@@ -38,8 +39,8 @@ describe("grantAssets", () => {
       idFactory: () => "asset-new",
     });
 
-    expect(yuanOf(result.holdings[0]?.quantity)).toBe(13);
-    expect(yuanOf(result.assetLedgerEntries[0]?.delta)).toBe(2.75);
+    expect(assetQuantityToNatural(result.holdings[0]?.assetType, result.holdings[0]?.quantity)).toBe(13);
+    expect(assetQuantityToNatural(result.assetLedgerEntries[0]?.assetType, result.assetLedgerEntries[0]?.delta)).toBe(2.75);
   });
 
   it("stacks matching assets and emits ledger entries", () => {
@@ -259,8 +260,8 @@ describe("adjustAssets", () => {
       ],
     });
 
-    expect(yuanOf(result.holdings[0]?.quantity)).toBe(7.75);
-    expect(yuanOf(result.assetLedgerEntries[0]?.delta)).toBe(-2.5);
+    expect(assetQuantityToNatural(result.holdings[0]?.assetType, result.holdings[0]?.quantity)).toBe(7.75);
+    expect(assetQuantityToNatural(result.assetLedgerEntries[0]?.assetType, result.assetLedgerEntries[0]?.delta)).toBe(-2.5);
   });
 
   it("deducts matching assets and emits negative ledger entries", () => {

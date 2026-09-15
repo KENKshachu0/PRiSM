@@ -108,7 +108,7 @@ export function createBusinessItemOrderService(
             sessionId: session.id,
           },
         },
-        holdingChanges: diffAssetHoldings(assetHoldings, nextHoldings.filter((holding) => isPositiveCents(holding.quantity))),
+        holdingChanges: diffAssetHoldings(assetHoldings, nextHoldings.filter((holding) => holding.quantity > 0)),
         assetLedgerEntries,
       });
       await dependencies.businessItemOrders.save(order);

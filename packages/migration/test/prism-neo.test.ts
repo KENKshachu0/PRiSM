@@ -1,3 +1,4 @@
+import { assetQuantityToNatural } from "@prism/core";
 import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@prism/core";
 import { centsOf, yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
@@ -11,7 +12,7 @@ describe("createPrismNeoMigrationPlan", () => {
       assetDefinitions: [{ id: 1, type: "CURRENCY", assetId: 10001, name: "Balance", valid: true }],
       userAssets: [{ id: 1, userId: 1, assetDefId: 10001, assetType: "CURRENCY", count: 12.5 }],
     });
-    expect(yuanOf(plan.assetHoldings[0]?.quantity)).toBe(12.5);
+    expect(assetQuantityToNatural(plan.assetHoldings[0]?.assetType, plan.assetHoldings[0]?.quantity)).toBe(12.5);
   });
 
   it("maps legacy prism-neo exports into PRiSM Next domain records", () => {

@@ -1,5 +1,6 @@
 import type {
   AssetHoldingUnavailableReason,
+  AssetQuantity,
   Cents,
   DeviceCommand,
   DeviceCommandType,
@@ -28,7 +29,7 @@ export type PlayerAssetHoldingListItem = {
   assetType: string;
   assetCode: string;
   assetName: string | null;
-  quantity: Cents;
+  quantity: AssetQuantity;
   activeAt: Date | null;
   expiresAt: Date | null;
   metadata: Record<string, unknown> | null;
@@ -41,7 +42,7 @@ export type PlayerAssetLedgerListItem = {
   assetType: string;
   assetCode: string;
   assetName: string;
-  delta: Cents;
+  delta: AssetQuantity;
   reason: string;
   refId: string;
   transactionId: string | null;

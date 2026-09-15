@@ -215,7 +215,7 @@ export function createStaffAssetService(dependencies: StaffAssetServiceDependenc
           refId: input.staffId,
           now,
         });
-        result = { holdings: currentHoldings.filter((holding) => isPositiveCents(holding.quantity)), assetLedgerEntries };
+        result = { holdings: currentHoldings.filter((holding) => holding.quantity > 0), assetLedgerEntries };
       }
       const transactionId = assetTransactionId(
         "staff.wallet.adjust",
