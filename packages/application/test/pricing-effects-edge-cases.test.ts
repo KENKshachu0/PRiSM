@@ -1,3 +1,4 @@
+import { yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetDefinitionRepository,
@@ -314,8 +315,8 @@ describe("pricing effects edge cases", () => {
     // s1 subtotal: 30, discount: -10 -> total: 20
     // s2 subtotal: 30, discount: 0 -> total: 30 (because the coupon was consumed by s1!)
     // Overall total should be 50, NOT 40!
-    expect(preview.settlementPreview.subtotal).toBe(60);
-    expect(preview.settlementPreview.total).toBe(50);
+    expect(yuanOf(preview.settlementPreview.subtotal)).toBe(60);
+    expect(yuanOf(preview.settlementPreview.total)).toBe(50);
     expect(preview.adjustments).toHaveLength(1);
     expect(preview.adjustments[0].amount).toBe(-10);
   });

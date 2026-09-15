@@ -27,7 +27,7 @@ function createDb() {
   );
   db.run(
     "INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity) VALUES (?, ?, ?, ?, ?)",
-    ["holding-1", "player-1", "currency", "currency.paid", 100],
+    ["holding-1", "player-1", "currency", "currency.paid", 10000],
   );
   db.run(
     "INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity, active_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -35,8 +35,7 @@ function createDb() {
       "future-free",
       "player-1",
       "currency",
-      "currency.free",
-      999,
+      "currency.free", 99900,
       "2026-06-08T00:00:00.000Z",
       null,
     ],
@@ -47,8 +46,7 @@ function createDb() {
       "expired-free",
       "player-1",
       "currency",
-      "currency.free",
-      999,
+      "currency.free", 99900,
       "2026-06-01T00:00:00.000Z",
       "2026-06-07T09:59:59.000Z",
     ],
@@ -233,7 +231,7 @@ describe("createPrismRuntimeDependencies", () => {
     bindTestIdentity(db, "player-2");
     db.run(
       "INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity) VALUES (?, ?, ?, ?, ?)",
-      ["holding-player-2", "player-2", "currency", "currency.paid", 100],
+      ["holding-player-2", "player-2", "currency", "currency.paid", 10000],
     );
     db.run(
       `INSERT INTO pricing_configs (id, kind, name, enabled, provider_json, created_at, updated_at)
@@ -512,8 +510,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: 80,
-        total: 80,
+        subtotal: centsOf(80),
+        total: centsOf(80),
       },
       chargeItems: [
         {
@@ -540,8 +538,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-pass",
         "player-1",
         "pass",
-        "pass.monthly",
-        1,
+        "pass.monthly", 100,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -595,8 +592,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: 80,
-        total: 0,
+        subtotal: centsOf(80),
+        total: centsOf(0),
       },
       adjustments: [
         {
@@ -631,8 +628,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-coupon",
         "player-1",
         "coupon",
-        "coupon.weekday-gold",
-        2,
+        "coupon.weekday-gold", 200,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -701,7 +697,7 @@ describe("createPrismRuntimeDependencies", () => {
 
     expect(previewResponse.status).toBe(200);
     const json = await previewResponse.json();
-    expect(json.settlementPreview.total).toBe(50);
+    expect(yuanOf(json.settlementPreview.total)).toBe(50);
     expect(json.adjustments).toContainEqual(
       expect.objectContaining({
         source: "coupon.weekday-gold",
@@ -745,8 +741,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-coupon",
         "player-1",
         "coupon",
-        "coupon.date-limited",
-        2,
+        "coupon.date-limited", 200,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -807,7 +802,7 @@ describe("createPrismRuntimeDependencies", () => {
     });
     expect(preview1.status).toBe(200);
     const json1 = await preview1.json();
-    expect(json1.settlementPreview.total).toBe(50);
+    expect(yuanOf(json1.settlementPreview.total)).toBe(50);
 
     await app.request("/rpc/player/checkout/confirm", {
       method: "POST",
@@ -839,7 +834,7 @@ describe("createPrismRuntimeDependencies", () => {
     });
     expect(preview2.status).toBe(200);
     const json2 = await preview2.json();
-    expect(json2.settlementPreview.total).toBe(80);
+    expect(yuanOf(json2.settlementPreview.total)).toBe(80);
   });
 
   it("applies configurable unified-scope monthly card with daily limits across checkouts", async () => {
@@ -868,8 +863,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-vip",
         "player-1",
         "pass",
-        "pass.vip-monthly",
-        1,
+        "pass.vip-monthly", 100,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -881,8 +875,7 @@ describe("createPrismRuntimeDependencies", () => {
         "holding-coin",
         "player-1",
         "currency",
-        "currency.paid",
-        1000,
+        "currency.paid", 100000,
         "2026-06-01T00:00:00.000Z",
         "2026-07-01T00:00:00.000Z",
       ],
@@ -1096,8 +1089,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: 120,
-        total: 100,
+        subtotal: centsOf(120),
+        total: centsOf(100),
       },
       chargeItems: [
         {
@@ -1611,8 +1604,8 @@ describe("createPrismRuntimeDependencies", () => {
     expect(previewResponse.status).toBe(200);
     await expect(previewResponse.json()).resolves.toMatchObject({
       settlementPreview: {
-        subtotal: 20,
-        total: 0,
+        subtotal: centsOf(20),
+        total: centsOf(0),
         status: "preview",
       },
       adjustments: [
@@ -2463,7 +2456,7 @@ describe("createPrismRuntimeDependencies", () => {
     );
     db.run(
       "INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity) VALUES (?, ?, ?, ?, ?)",
-      ["holding-free-active", "player-1", "currency", "currency.free", 50],
+      ["holding-free-active", "player-1", "currency", "currency.free", 5000],
     );
     db.run(
       `INSERT INTO business_items (id, kind, name, status, price, asset_type, asset_code, active_at, expires_at, metadata_json, created_at, updated_at)

@@ -284,6 +284,8 @@ export function toPlayerCheckoutPreviewView(
     timeline: buildBillTimeline({ at: result.settlementPreview.previewedAt, sessions: result.sessionPreviews, adjustments: result.adjustments, globalCapWindows: result.globalCapWindows }),
     settlementPreview: {
       ...result.settlementPreview,
+      subtotal: yuanOf(result.settlementPreview.subtotal),
+      total: yuanOf(result.settlementPreview.total),
       previewedAt: result.settlementPreview.previewedAt.toISOString(),
     },
     sessionPreviews: result.sessionPreviews.map((preview) => ({

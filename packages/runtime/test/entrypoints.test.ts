@@ -1,3 +1,4 @@
+import { centsOf } from "@prism/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import type { D1BoundStatementLike, D1DatabaseLike, SqlValue } from "@prism/adapter-d1";
@@ -652,8 +653,7 @@ describe("runtime entrypoints", () => {
       "holding-1",
       "player-1",
       "currency",
-      "currency.paid",
-      1000,
+      "currency.paid", 100000,
     ]);
     const repositories = RuntimeRepositories.fromBunSqlite({
       db,
@@ -801,8 +801,7 @@ describe("runtime entrypoints", () => {
       "holding-1",
       "player-1",
       "currency",
-      "currency.paid",
-      1000,
+      "currency.paid", 100000,
     ]);
     db.run("INSERT INTO sessions (id, player_id, started_at, ended_at, status) VALUES (?, ?, ?, ?, ?)", [
       "session-1",

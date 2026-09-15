@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { centsOfInteger, yuanOf } from "@prism/core";
+import { type Cents, centsOfInteger, yuanOf } from "@prism/core";
 import { createSqlReadModels, sqliteSchema, type SqlExecutor, type SqlValue } from "../src";
 
 const NOW = new Date("2026-09-15T00:00:00.000Z");
@@ -19,7 +19,7 @@ function setup(playerId: string) {
   );
 
   let id = 0;
-  const addHolding = (assetCode: string, quantity: number) => {
+  const addHolding = (assetCode: string, quantity: Cents) => {
     db.run(
       "INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity, active_at, expires_at) VALUES (?, ?, 'currency', ?, ?, NULL, NULL)",
       ["holding-" + (++id), playerId, assetCode, quantity],
@@ -30,7 +30,7 @@ function setup(playerId: string) {
   return { addHolding, queries };
 }
 
-function walletQuantity(wallet: Array<{ assetCode: string; quantity: number }>, code: string): number {
+function walletQuantity(wallet: Array<{ assetCode: string; quantity: number }>, code: string): Cents {
   const found = wallet.find((entry) => entry.assetCode === code);
   if (!found) throw new Error("wallet has no entry for " + code + ": " + JSON.stringify(wallet));
   return found.quantity;

@@ -1,3 +1,5 @@
+PRAGMA foreign_keys = OFF;
+
 CREATE TABLE asset_holdings_int (
   shop_id TEXT NOT NULL DEFAULT 'legacy',
   id TEXT NOT NULL,
@@ -361,3 +363,6 @@ ALTER TABLE business_item_orders_int RENAME TO business_item_orders;
 -- and composite primary keys. Coordinates (shops.*, machine_login_events.*)
 -- are deliberately left as REAL. pricing_effects.value is scaled only for the
 -- money-typed effects; percentage-discount rows carry a percent, not yuan.
+
+
+PRAGMA foreign_keys = ON;

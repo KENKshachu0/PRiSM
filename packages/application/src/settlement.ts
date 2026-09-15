@@ -115,8 +115,8 @@ export type PreviewPlayerCheckoutResult = {
   settlementPreview: {
     playerId: string;
     sessionIds: string[];
-    subtotal: number;
-    total: number;
+    subtotal: Cents;
+    total: Cents;
     status: "preview";
     previewedAt: Date;
   };
@@ -601,8 +601,8 @@ function toPlayerCheckoutPreview(
     settlementPreview: {
       playerId,
       sessionIds,
-      subtotal: details.subtotal,
-      total: details.total,
+      subtotal: centsOf(details.subtotal),
+      total: centsOf(details.total),
       status: "preview",
       previewedAt: now,
     },

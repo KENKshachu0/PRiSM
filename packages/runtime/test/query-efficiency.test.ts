@@ -22,13 +22,13 @@ test("runtime read models execute one SQL statement each", async () => {
     "currency", "legacy", "旧余额", 1, "archived",
   ]);
   db.run("INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity) VALUES (?, ?, ?, ?, ?)", [
-    "holding-1", "player-1", "currency", "paid", 10,
+    "holding-1", "player-1", "currency", "paid", 1000,
   ]);
   db.run("INSERT INTO asset_holdings (id, player_id, asset_type, asset_code, quantity) VALUES (?, ?, ?, ?, ?)", [
-    "holding-2", "player-1", "currency", "legacy", 99,
+    "holding-2", "player-1", "currency", "legacy", 9900,
   ]);
   db.run("INSERT INTO asset_ledger_entries (id, player_id, asset_type, asset_code, delta, reason, ref_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
-    "ledger-1", "player-1", "currency", "paid", 10, "test", "ref-1", now.toISOString(),
+    "ledger-1", "player-1", "currency", "paid", 1000, "test", "ref-1", now.toISOString(),
   ]);
   db.run("INSERT INTO sessions (id, player_id, started_at, ended_at, status, payment_status) VALUES (?, ?, ?, ?, ?, ?)", [
     "session-1", "player-1", now.toISOString(), null, "active", "unpaid",

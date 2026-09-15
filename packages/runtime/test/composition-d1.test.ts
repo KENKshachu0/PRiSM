@@ -71,8 +71,7 @@ function createD1Db(): InMemoryD1Fixture {
     "holding-1",
     "player-1",
     "currency",
-    "currency.paid",
-    2000,
+    "currency.paid", 200000,
   ]);
   return {
     d1: new InMemoryD1Database(db),
@@ -101,8 +100,7 @@ function createD1Fixture(): InMemoryD1Fixture {
     "holding-1",
     "player-1",
     "currency",
-    "currency.paid",
-    200,
+    "currency.paid", 20000,
   ]);
   return {
     d1: new InMemoryD1Database(db),

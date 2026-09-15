@@ -196,8 +196,8 @@ describe("sqliteSchema", () => {
 
     expect(db.query("SELECT player_id, subtotal, total FROM player_checkouts").get()).toEqual({
       player_id: "player-1",
-      subtotal: centsOf(7),
-      total: centsOf(7),
+      subtotal: 7,
+      total: 7,
     });
     expect(db.query("SELECT COUNT(DISTINCT checkout_id) AS count FROM settlements").get()).toEqual({ count: 1 });
   });

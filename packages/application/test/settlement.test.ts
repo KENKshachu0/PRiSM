@@ -1,3 +1,4 @@
+import { yuanOf } from "@prism/core";
 import { describe, expect, it } from "bun:test";
 import {
   AssetDefinition,
@@ -292,7 +293,7 @@ describe("createSettlementService", () => {
       playerId: "player-1",
     });
 
-    expect(result.settlementPreview.total).toBe(20);
+    expect(yuanOf(result.settlementPreview.total)).toBe(20);
     expect(result.wallet).toEqual({ balanceBefore: centsOf(100), balanceAfter: centsOf(80) });
     expect(sessions.saved).toEqual([
       {
@@ -722,7 +723,7 @@ describe("createSettlementService", () => {
       { sessionId: "session-charge", total: 10 },
       { sessionId: "session-discount", total: -3 },
     ]);
-    expect(preview.settlementPreview.total).toBe(7);
+    expect(yuanOf(preview.settlementPreview.total)).toBe(7);
 
     const result = await service.checkout({ playerId: "player-1" });
     expect(result.settlements.map(({ settlement }) => ({
@@ -782,7 +783,7 @@ describe("createSettlementService", () => {
       { sessionId: "session-charge", total: 2 },
       { sessionId: "session-discount", total: -5 },
     ]);
-    expect(preview.settlementPreview.total).toBe(0);
+    expect(yuanOf(preview.settlementPreview.total)).toBe(0);
 
     const result = await service.checkout({ playerId: "player-1" });
     expect(result.settlements.map(({ settlement }) => yuanOf(settlement.total))).toEqual([2, -5]);
@@ -1438,7 +1439,7 @@ describe("createSettlementService", () => {
     });
 
     const result = await service.previewCheckout({ playerId: "player-1" });
-    expect(result.settlementPreview.total).toBe(0);
+    expect(yuanOf(result.settlementPreview.total)).toBe(0);
   });
 
   it("invalidates first grace period when session has deviceOperated metadata", async () => {
@@ -1472,7 +1473,7 @@ describe("createSettlementService", () => {
     });
 
     const result = await service.previewCheckout({ playerId: "player-1" });
-    expect(result.settlementPreview.total).toBe(10);
+    expect(yuanOf(result.settlementPreview.total)).toBe(10);
   });
 
   it("detects machine/power command in deviceCommands repository and invalidates first grace", async () => {
@@ -1518,7 +1519,7 @@ describe("createSettlementService", () => {
     });
 
     const result = await service.previewCheckout({ playerId: "player-1" });
-    expect(result.settlementPreview.total).toBe(10);
+    expect(yuanOf(result.settlementPreview.total)).toBe(10);
   });
 
   it("keeps free exit when only door.open command occurred during grace window", async () => {
@@ -1564,6 +1565,6 @@ describe("createSettlementService", () => {
     });
 
     const result = await service.previewCheckout({ playerId: "player-1" });
-    expect(result.settlementPreview.total).toBe(0);
+    expect(yuanOf(result.settlementPreview.total)).toBe(0);
   });
 });
