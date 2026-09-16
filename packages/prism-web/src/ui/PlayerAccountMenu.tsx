@@ -25,7 +25,7 @@ export function PlayerDialog({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const { t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   useEffect(() => {
     ref.current?.showModal();
   }, []);
@@ -58,7 +58,7 @@ export function PlayerDialog({
 type Section = "账单" | "兑换" | "记录" | "钱包";
 export function PlayerAccountMenu() {
   const { user, logout, activeShop, billingActive, setBillingActive } = useAuth();
-  const { t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const [info, setInfo] = useState<ShopInfo | null>(null);
   const [section, setSection] = useState<Section | null>(null);
   const menu = useRef<HTMLDetailsElement>(null);
@@ -121,6 +121,14 @@ export function PlayerAccountMenu() {
                 {t(item)}
               </button>
             ))}
+          <button
+            onClick={() => {
+              setLocale(locale === "zh" ? "en" : "zh");
+              menu.current!.open = false;
+            }}
+          >
+            {t("语言")}: {locale === "zh" ? "English" : "中文"}
+          </button>
           <button
             onClick={async () => {
               menu.current!.open = false;
