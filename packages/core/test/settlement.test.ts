@@ -983,7 +983,7 @@ describe("settlement money precision", () => {
 
         // Integer arithmetic: the parts always sum to exactly what was charged,
         // with no tolerance and no residue.
-        const deducted = sumCents(entries.map((entry) => entry.delta));
+        const deducted = sumCents(entries.map((entry) => centsOfInteger(entry.delta)));
         expect(Number(deducted)).toBe(-owedCents);
         expect(holdings.every((holding) => holding.quantity === 0)).toBe(true);
       }

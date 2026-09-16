@@ -1,6 +1,5 @@
 import type {
   AssetMergeStrategy,
-  AssetQuantity,
   AssetHolding,
   AssetLedgerEntry,
   AssetDefinition,
@@ -290,7 +289,7 @@ export type PurchaseBusinessItemResult = {
   assetLedgerEntries: Array<{
     assetType: string;
     assetCode: string;
-    delta: AssetQuantity;
+    delta: number;
     reason: string;
     refId: string;
     transactionId?: string;

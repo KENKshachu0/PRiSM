@@ -3,7 +3,6 @@ import { describe, expect, it } from "bun:test";
 const n = (value: number): number => value;
 import {
   type Cents,
-  type Units,
   addCents,
   absCents,
   allocate,
@@ -224,25 +223,20 @@ describe("cents arithmetic", () => {
   });
 });
 
-describe("the two brands do not mix", () => {
-  it("refuses money where a count is expected, and the reverse", () => {
-    const money = centsOf(1);
+describe("money requires an explicit unit boundary", () => {
+  it("refuses raw numbers and ticket counts as cents", () => {
     const count = unitsOf(1);
 
-    // These four must all be type errors. If any became legal the directive
+    // These assignments must be type errors. If any became legal the directive
     // turns into an "unused @ts-expect-error" and `bun run typecheck` fails.
     // @ts-expect-error a bare number is not money
     const rawAsMoney: Cents = 1;
-    // @ts-expect-error a bare number is not a count
-    const rawAsCount: Units = 1;
-    // @ts-expect-error cents cannot stand in for tickets
-    const moneyAsCount: Units = money;
     // @ts-expect-error counts cannot stand in for money
     const countAsMoney: Cents = count;
 
     // Widen to number[] so the assertion types do not fight the brands.
-    const values: number[] = [rawAsMoney, rawAsCount, moneyAsCount, countAsMoney];
-    expect(values).toEqual([1, 1, 100, 1]);
+    const values: number[] = [rawAsMoney, countAsMoney];
+    expect(values).toEqual([1, 1]);
   });
 });
 

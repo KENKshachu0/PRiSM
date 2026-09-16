@@ -33,17 +33,6 @@ export function quantizeMoney(value: number): number {
  */
 export type Cents = number & { readonly __brand: "Cents" };
 
-/**
- * An exact count of a non-currency holding — tickets, coupons, seats.
- *
- * Kept separate from `Cents` even though both are integers, so that "consume one
- * ticket" can never be written as "subtract one cent".
- */
-export type Units = number & { readonly __brand: "Units" };
-
-export type AssetQuantity = Cents | Units;
-export type AssetQuantityFor<T extends string> = string extends T ? AssetQuantity : T extends "currency" ? Cents : Units;
-
 export const ZERO_CENTS = 0 as Cents;
 
 /** How `mulDivRound` resolves an inexact division. There is no default. */
@@ -92,30 +81,28 @@ export function yuanOf(cents: Cents): number {
   return cents === 0 ? 0 : cents / CENTS_PER_YUAN;
 }
 
-/** Wraps an exact count of a non-currency holding. */
-export function unitsOf(value: number): Units {
+/** Validates an exact count of a non-currency holding. */
+export function unitsOf(value: number): number {
   if (!Number.isSafeInteger(value)) {
     throw new PrismDomainError("Units must be a whole number.", "INVALID_UNITS");
   }
-  return (value === 0 ? 0 : value) as Units;
+  return value === 0 ? 0 : value;
 }
 
 /** Converts an external asset quantity to its stored integer representation.
  * Currency is expressed in yuan at the boundary and stored in cents; every
  * other asset is expressed and stored as a whole count. */
-export function assetQuantityOf<T extends string>(assetType: T, value: number): AssetQuantityFor<T>;
-export function assetQuantityOf(assetType: string, value: number): AssetQuantity {
+export function assetQuantityOf(assetType: string, value: number): number {
   return assetType === "currency" ? centsOf(value) : unitsOf(value);
 }
 
 /** Decode an already-stored integer without scaling it again. */
-export function assetQuantityFromStored<T extends string>(assetType: T, value: number): AssetQuantityFor<T>;
-export function assetQuantityFromStored(assetType: string, value: number): AssetQuantity {
+export function assetQuantityFromStored(assetType: string, value: number): number {
   return assetType === "currency" ? centsOfInteger(value) : unitsOf(value);
 }
 
 /** Converts a stored asset quantity back to the API's natural unit. */
-export function assetQuantityToNatural(assetType: string, value: AssetQuantity): number {
+export function assetQuantityToNatural(assetType: string, value: number): number {
   return assetType === "currency" ? yuanOf(centsOfInteger(value)) : unitsOf(value);
 }
 

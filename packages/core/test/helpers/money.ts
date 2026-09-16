@@ -1,4 +1,4 @@
-import { centsOf, type Cents, type Units, unitsOf } from "../../src/index";
+import { centsOf, type Cents, unitsOf } from "../../src/index";
 
 /**
  * Test-facing constructor for a money amount written in yuan.
@@ -10,6 +10,6 @@ export function yuan(amount: number): Cents {
 }
 
 /** Test-facing constructor for a count of a non-currency holding. */
-export function count(amount: number): Units {
+export function count(amount: number): number {
   return unitsOf(amount);
 }

@@ -16,7 +16,7 @@
 - `centsOfInteger(分)` 只接收已有整数，不做单位换算。SQL 读到的小数是错误，不再以容差掩盖。
 - `assetQuantityOf(assetType, quantity)` 对 currency 转分，对其他资产验证自然整数；小数张数直接拒绝。输出用 `assetQuantityToNatural`。
 - `yuanOf` 只在展示／HTTP 输出边界恢复元。API 的 JSON number 不是参与下一步计费的内部中间值。
-- 货币数量使用 `Cents`，券票及其他计数资产使用 `Units`。异构列表使用二者的联合类型；货币求和前先按 `assetType` 收窄。`assetQuantityFromStored` 按资产类型恢复品牌，不改变数据库数值。
+- 金额计算保留 `Cents` 品牌；券票及异构资产数量使用普通 `number`，通过安全整数校验，不再使用 `Units` 品牌、条件类型或泛型持有记录。货币求和与扣款前先检查 `assetType`，再用 `centsOfInteger` 校验已有分值。`assetQuantityFromStored` 校验存储整数，不改变数据库数值。
 - 按 holdingId 调整资产时，输入的资产类型和代码必须与持有记录一致，避免用错误单位调整余额或写入错类流水。
 
 ## 计算

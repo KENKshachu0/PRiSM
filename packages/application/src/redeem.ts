@@ -1,6 +1,5 @@
 import type {
   AssetDefinitionRepository,
-  AssetQuantity,
   AssetRepository,
   GrantAssetsResult,
   OperationLockRepository,
@@ -34,7 +33,7 @@ export type RedeemCodeResult = GrantAssetsResult & {
     assetType: string;
     assetCode: string;
     assetName: string;
-    quantity: AssetQuantity;
+    quantity: number;
   }>;
 };
 
