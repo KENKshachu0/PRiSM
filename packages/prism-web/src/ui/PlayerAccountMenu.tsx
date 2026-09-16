@@ -25,7 +25,7 @@ export function PlayerDialog({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const { locale, setLocale, t } = useI18n();
+  const { t } = useI18n();
   useEffect(() => {
     ref.current?.showModal();
   }, []);
