@@ -15,6 +15,7 @@ export function resolveLocale(languages: readonly string[]): Locale {
 }
 
 function storedLocale(): Locale | null {
+  if (typeof window === "undefined") return null;
   try {
     const value = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     return value === "zh" || value === "en" ? value : null;
