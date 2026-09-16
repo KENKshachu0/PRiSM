@@ -1,8 +1,7 @@
 import { PrismDomainError } from "./errors";
 import {
   type Cents,
-  type AssetQuantity,
-  type AssetQuantityFor,
+  centsOfInteger,
   assetQuantityFromStored,
   assetQuantityOf,
   sumCents,
@@ -52,20 +51,14 @@ export function isActiveInWindow(
   return true;
 }
 
-export type AssetHolding<T extends string = string> = T extends string ? {
+export type AssetHolding = {
   id?: string;
-  assetType: T;
+  assetType: string;
   assetCode: string;
-  quantity: AssetQuantityFor<T>;
+  quantity: number;
   activeAt?: Date | null;
   expiresAt?: Date | null;
-} : never;
-
-export function isCurrencyHolding<T extends Pick<AssetHolding, "assetType" | "quantity">>(
-  holding: T,
-): holding is T & { assetType: "currency"; quantity: Cents } {
-  return holding.assetType === "currency";
-}
+};
 
 /**
  * The minimal current-state projection change caused by one asset transaction.
@@ -118,8 +111,8 @@ export function sumCurrencyHoldings(
 ): Cents {
   return sumCents(
     holdings
-      .filter(isCurrencyHolding)
-      .map((holding) => holding.quantity),
+      .filter((holding) => holding.assetType === "currency")
+      .map((holding) => centsOfInteger(holding.quantity)),
   );
 }
 
@@ -179,14 +172,14 @@ export function isAssetHoldingAvailableAt(input: {
   return evaluateAssetHoldingAvailability(input).available;
 }
 
-export type AssetLedgerEntry<T extends string = string> = T extends string ? {
-  assetType: T;
+export type AssetLedgerEntry = {
+  assetType: string;
   assetCode: string;
-  delta: AssetQuantityFor<T>;
+  delta: number;
   reason: string;
   refId: string;
   transactionId?: string;
-} : never;
+};
 
 export type AssetTransaction = {
   id: string;
@@ -320,7 +313,7 @@ function applyReplaceGrant(
   holdings: AssetHolding[],
   grant: AssetGrant,
   idFactory: () => string,
-  amount: AssetQuantity,
+  amount: number,
 ): void {
   const target = holdings.find((asset) => asset.assetType === grant.assetType && asset.assetCode === grant.assetCode);
 
@@ -339,7 +332,7 @@ function applyExtendTimeGrant(
   grant: AssetGrant,
   idFactory: () => string,
   now: Date,
-  amount: AssetQuantity,
+  amount: number,
 ): void {
   if (!grant.durationMs || grant.durationMs <= 0) {
     throw new PrismDomainError("Extend-time asset grant requires a positive duration.", "INVALID_ASSET_GRANT_DURATION");
@@ -385,7 +378,7 @@ function canAdjustAsset(asset: AssetHolding, adjustment: AssetAdjustment): boole
   );
 }
 
-function createGrantedAsset(id: string, grant: AssetGrant, amount: AssetQuantity): AssetHolding {
+function createGrantedAsset(id: string, grant: AssetGrant, amount: number): AssetHolding {
   return {
     id,
     assetType: grant.assetType,

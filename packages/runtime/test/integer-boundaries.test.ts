@@ -1,21 +1,16 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { adjustAssets, assetQuantityOf, centsOf, unitsOf, type AssetHolding, type Cents, type Units } from "@prism/core";
+import { adjustAssets, assetQuantityOf, unitsOf, type AssetHolding } from "@prism/core";
 import { createSqliteRepositories } from "@prism/adapter-sqlite";
 import { sqliteSchema } from "@prism/storage-sql";
 import { createStaffPricingService, createStaffPricingEffectService } from "@prism/application";
 
-test("asset units are distinct and holding IDs cannot change the requested asset identity", () => {
-  const money: Cents = assetQuantityOf("currency", 10);
-  const tickets: Units = assetQuantityOf("ticket", 2);
-  const wallet: AssetHolding<"currency"> = { id: "wallet", assetType: "currency", assetCode: "paid", quantity: money };
-  const ticket: AssetHolding<"ticket"> = { id: "ticket", assetType: "ticket", assetCode: "entry", quantity: tickets };
-  // @ts-expect-error ticket counts cannot be assigned to a money holding
-  const wrongMoney: AssetHolding<"currency"> = { ...wallet, quantity: unitsOf(2) };
-  // @ts-expect-error cents cannot be assigned to a ticket holding
-  const wrongTicket: AssetHolding<"ticket"> = { ...ticket, quantity: centsOf(2) };
-  void wrongMoney;
-  void wrongTicket;
+test("asset counts remain integers and holding IDs cannot change the requested asset identity", () => {
+  const wallet: AssetHolding = { id: "wallet", assetType: "currency", assetCode: "paid", quantity: assetQuantityOf("currency", 10) };
+  const ticket: AssetHolding = { id: "ticket", assetType: "ticket", assetCode: "entry", quantity: assetQuantityOf("ticket", 2) };
+  for (const invalid of [0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() => unitsOf(invalid)).toThrow();
+  }
   for (const [holdingId, assetType, assetCode] of [["wallet", "ticket", "entry"], ["wallet", "currency", "other"], ["ticket", "currency", "paid"]]) {
     expect(() => adjustAssets({ playerId: "p", existingHoldings: [wallet, ticket], adjustments: [{
       holdingId, assetType: assetType!, assetCode: assetCode!, quantityDelta: 1, reason: "test", refId: "staff",

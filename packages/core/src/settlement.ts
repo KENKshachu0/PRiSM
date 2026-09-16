@@ -1,11 +1,11 @@
 import type { AssetHolding, AssetLedgerEntry } from "./assets";
-import { isCurrencyHolding } from "./assets";
 import { PrismDomainError } from "./errors";
 import {
   type Cents,
   addCents,
   maxCents,
   centsOf,
+  centsOfInteger,
   compareCents,
   isNegativeCents,
   isPositiveCents,
@@ -323,16 +323,16 @@ export function deductCurrency(
     refId: string;
     now: Date;
   },
-): AssetLedgerEntry<"currency">[] {
+): AssetLedgerEntry[] {
   const requested = input.amount;
   if (isZeroCents(requested)) return [];
 
-  const currencyAccounts: AssetHolding<"currency">[] = [];
+  const currencyAccounts: AssetHolding[] = [];
   for (const account of assetHoldings) {
-    if (!isCurrencyHolding(account)) continue;
+    if (account.assetType !== "currency") continue;
     // Quantities are exact integers now, so there is no residue to canonicalise:
     // a balance of zero is zero, and every positive balance is spendable.
-    if (!isPositiveCents(account.quantity)) continue;
+    if (account.quantity <= 0) continue;
     if (!isHoldingAvailableAt(account, input.now)) continue;
     currencyAccounts.push(account);
   }
@@ -345,19 +345,20 @@ export function deductCurrency(
 
   // Exact integer comparison: no tolerance, because two integers cannot be
   // "close but unequal".
-  const available = sumCents(currencyAccounts.map((account) => account.quantity));
+  const available = sumCents(currencyAccounts.map((account) => centsOfInteger(account.quantity)));
   if (compareCents(available, requested) < 0) {
     throw new PrismDomainError("Insufficient currency holdings for this operation.", "INSUFFICIENT_BALANCE");
   }
 
   let remaining = requested;
-  const entries: AssetLedgerEntry<"currency">[] = [];
+  const entries: AssetLedgerEntry[] = [];
 
   for (const account of currencyAccounts) {
     if (!isPositiveCents(remaining)) break;
 
-    const deducted = minCents(account.quantity, remaining);
-    account.quantity = subCents(account.quantity, deducted);
+    const balance = centsOfInteger(account.quantity);
+    const deducted = minCents(balance, remaining);
+    account.quantity = subCents(balance, deducted);
     remaining = subCents(remaining, deducted);
     entries.push({
       assetType: account.assetType,
