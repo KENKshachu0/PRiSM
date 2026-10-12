@@ -204,10 +204,12 @@ devicesRouter.post("/:id/actions", async (c) => {
 
   const body = deviceActionSchema.parse(await c.req.json());
   const actionType = body.action as DeviceCommandType;
+  // Power and doors are facility actions even when the bound machine is a
+  // game cabinet. Coin/Aime must go through its validated Hinata resolver.
   const target: DeviceReferenceTarget =
-    machine.kind === "door"
+    actionType === "power.on" || actionType === "power.off" || actionType === "door.open"
       ? { kind: "facility", ref: machine.id }
-      : { kind: "game_machine", id: machine.id };
+      : { kind: "game_machine", ref: machine.id };
 
   const command = await deps.deviceActions.requestDeviceAction({
     actor: { type: "staff", staffId: staff.staffId },

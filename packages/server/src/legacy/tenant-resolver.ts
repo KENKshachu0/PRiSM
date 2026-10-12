@@ -123,7 +123,7 @@ export const legacyTenantMiddleware: MiddlewareHandler<AppBindings> = async (
   c.set("shop", shop);
   c.set("responseTimeZone", shop.time_zone);
 
-  const deps = getOrCreateShopDependencies(c.env.DB, shop);
+  const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY);
   c.set("deps", deps);
 
   await next();

@@ -71,7 +71,7 @@ export async function executeDeviceAction(
   const ha = isPower ? await haBinding(c, machine) : null;
   if (isPower && !ha)
     jsonError(409, "设备未绑定电源", "DEVICE_ACTION_UNSUPPORTED");
-  const deps = getOrCreateShopDependencies(c.env.DB, shop);
+  const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY);
   const lockSettingRow = isDoor
     ? await c.env.DB.prepare(
         "SELECT value_json FROM app_settings WHERE shop_id=? AND key='devices.ttlock_connection'",
