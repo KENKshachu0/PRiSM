@@ -42,6 +42,7 @@ export type DeviceActionServiceDependencies = {
   resolveFacilityTarget?: (deviceRef: string, actionType?: DeviceCommandType) => Promise<{
     target: Extract<DeviceTarget, { kind: "facility" }>;
     deviceLabel: string;
+    executor?: DeviceActionExecutor;
   }>;
   resolveGameMachineTarget?: (deviceRef: string) => Promise<{
     target: Extract<DeviceTarget, { kind: "game_machine" }>;
@@ -205,6 +206,7 @@ async function resolveFacilityTarget(
 ): Promise<{
   target: Extract<DeviceTarget, { kind: "facility" }>;
   deviceLabel: string;
+  executor?: DeviceActionExecutor;
 }> {
   if (!resolver) {
     throw new PrismDomainError(
