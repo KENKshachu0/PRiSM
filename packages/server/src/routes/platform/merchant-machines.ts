@@ -159,7 +159,7 @@ merchantMachineRouter.get("/device-bindings", async (c) => {
   }
   const shop = await findLegacyShopByCode(c.env.DB, shopId);
   if (!shop) jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
-  const settings = await getOrCreateShopDependencies(c.env.DB, shop).staffSettingsCommands.getSettings();
+  const settings = await getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY).staffSettingsCommands.getSettings();
   const bindings = [
     ...settings.homeAssistantDevices.map(device => ({ id: device.id, name: device.name, kind: "home_assistant" })),
     ...settings.hinataIoDevices.map(device => ({ id: device.id, name: device.name, kind: "hinata_io" })),
