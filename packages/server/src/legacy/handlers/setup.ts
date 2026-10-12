@@ -74,7 +74,7 @@ legacySetupRouter.post("/install", async (c) => {
 
     shop = createdShop;
     c.set("shop", shop);
-    deps = getOrCreateShopDependencies(c.env.DB, shop);
+    deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY);
     c.set("deps", deps);
   }
 
