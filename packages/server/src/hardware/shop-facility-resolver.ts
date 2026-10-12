@@ -42,7 +42,7 @@ function validBinding(value: unknown): value is HaBinding {
     typeof binding.entityId === "string" && /^(switch|input_boolean)\.[a-z0-9_]+$/.test(binding.entityId);
 }
 
-function executorFor(targets: Target[]): DeviceActionExecutor {
+function executorFor(targets: Target[], fetcher: typeof fetch): DeviceActionExecutor {
   return {
     async execute({ command }) {
       const failures: string[] = [];
@@ -51,7 +51,7 @@ function executorFor(targets: Target[]): DeviceActionExecutor {
           const executor = createHomeAssistantExecutor({
             baseUrl: item.binding.url,
             accessToken: item.binding.token,
-            fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) }),
+            fetch: (url, init) => fetcher(url, { ...init, signal: AbortSignal.timeout(10_000) }),
           });
           const result = await executor.execute({
             command: { ...command, deviceId: item.binding.entityId },
@@ -78,6 +78,7 @@ export function createShopFacilityResolver(input: {
   db: D1DatabaseLike;
   shopId: string;
   encryptionKey?: string;
+  fetcher?: typeof fetch;
 }): NonNullable<DeviceActionServiceDependencies["resolveFacilityTarget"]> {
   return async (deviceRef, actionType) => {
     if (actionType !== "power.on" && actionType !== "power.off") {
@@ -160,7 +161,7 @@ export function createShopFacilityResolver(input: {
     return {
       target,
       deviceLabel: ref === "all" ? "全部设备" : targets[0]!.label,
-      executor: executorFor(targets),
+      executor: executorFor(targets, input.fetcher ?? fetch),
     };
   };
 }
