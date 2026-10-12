@@ -44,6 +44,7 @@ import type { AppBindings, PrismAppDependencies, TenantShop } from "../bindings.
 import { jsonError } from "../http.js";
 import { sha256Hex, toBase64Url } from "../crypto.js";
 import { createShopFacilityResolver } from "../hardware/shop-facility-resolver.js";
+import { createShopGameMachineResolver } from "../hardware/shop-game-machine-resolver.js";
 
 type CachedShopDependencies = { settings: string; encryptionKey?: string; deps: PrismAppDependencies };
 // A D1 client is request/deployment scoped. Never reuse tenant repositories across databases.
@@ -213,15 +214,17 @@ export function createShopDependencies(input: {
         };
   };
 
+  const deviceTargetResolvers = {
+    facility: createShopFacilityResolver({ db: input.db, shopId, encryptionKey: input.encryptionKey }),
+    gameMachine: createShopGameMachineResolver({ db: input.db, shopId, encryptionKey: input.encryptionKey }),
+  };
+
   const deviceActions = createDeviceActionService({
     sessions: repos.sessions,
     deviceCommands: repos.deviceCommands,
     playerIdentities: repos.playerIdentities,
-    resolveFacilityTarget: createShopFacilityResolver({
-      db: input.db,
-      shopId,
-      encryptionKey: input.encryptionKey,
-    }),
+    resolveFacilityTarget: deviceTargetResolvers.facility,
+    resolveGameMachineTarget: deviceTargetResolvers.gameMachine,
     id,
     now,
     coinCooldownMs: 60_000,
@@ -278,6 +281,8 @@ export function createShopDependencies(input: {
       (await playerPricing(playerId)).configs,
     deviceCommands: repos.deviceCommands,
     playerIdentities: repos.playerIdentities,
+    resolveFacilityTarget: deviceTargetResolvers.facility,
+    resolveGameMachineTarget: deviceTargetResolvers.gameMachine,
     coinCooldownMs: 60_000,
     canStartSessionAt: async ({ at, playerId }) => {
       const pinned = await playerPricing(playerId);
