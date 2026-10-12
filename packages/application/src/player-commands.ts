@@ -22,6 +22,7 @@ export type PlayerCommandServiceDependencies = {
   coinCooldownMs: number;
   getCoinCooldownMs?: () => Promise<number>;
   resolveFacilityTarget?: DeviceActionServiceDependencies["resolveFacilityTarget"];
+  resolveGameMachineTarget?: DeviceActionServiceDependencies["resolveGameMachineTarget"];
   canStartSessionAt?: (input: { playerId: string; at: Date }) => Promise<boolean>;
 };
 
