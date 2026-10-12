@@ -1082,6 +1082,32 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     expect(botData.player).toBeDefined();
     expect(botData.player.displayName).toBe("QQ Player");
 
+    // Contract-level regression: these must reach configured shop-scoped
+    // resolvers rather than fail with *_RESOLVER_NOT_CONFIGURED.
+    // The shared fixture predates encrypted merchant-machine fields.
+    sqlite.run("ALTER TABLE machines ADD COLUMN ha_binding_encrypted TEXT");
+    sqlite.run("ALTER TABLE machines ADD COLUMN hinata_url_encrypted TEXT");
+    sqlite.run("ALTER TABLE machines ADD COLUMN hinata_password_encrypted TEXT");
+    for (const [actionType, target, staffOverride] of [
+      ["power.off", { kind: "facility", ref: "missing-power-target" }, true],
+      ["coin", { kind: "game_machine", ref: "missing-coin-target" }, false],
+    ] as const) {
+      const actionResponse = await app.fetch(
+        new Request(`https://prism.test/api/v1/shops/${publicId}/integration/players/by-identity/device-actions`, {
+          method: "POST",
+          headers: botHeaders,
+          body: JSON.stringify({
+            identity: { provider: "qq", subject: "88889999" },
+            target, action: { type: actionType },
+            staffOverride,
+          }),
+        }),
+        env,
+      );
+      expect(actionResponse.status).toBe(400);
+      expect(((await actionResponse.json()) as any).error.code).toBe("DEVICE_NOT_FOUND");
+    }
+
     // Koishi sends nested identity envelopes to both register and resolve.
     // This used to throw on undefined provider in normalizeExternalIdentity,
     // turning every Mahjong join/leave into HTTP 500.
