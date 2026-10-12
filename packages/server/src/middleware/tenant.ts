@@ -43,8 +43,9 @@ import {
 import type { AppBindings, PrismAppDependencies, TenantShop } from "../bindings.js";
 import { jsonError } from "../http.js";
 import { sha256Hex, toBase64Url } from "../crypto.js";
+import { createShopFacilityResolver } from "../hardware/shop-facility-resolver.js";
 
-type CachedShopDependencies = { settings: string; deps: PrismAppDependencies };
+type CachedShopDependencies = { settings: string; encryptionKey?: string; deps: PrismAppDependencies };
 // A D1 client is request/deployment scoped. Never reuse tenant repositories across databases.
 let depsCache = new WeakMap<D1DatabaseLike, Map<string, CachedShopDependencies>>();
 
@@ -140,6 +141,7 @@ async function createSecret(
 export function createShopDependencies(input: {
   db: D1DatabaseLike;
   shop: TenantShop;
+  encryptionKey?: string;
   now?: () => Date;
   id?: () => string;
 }): PrismAppDependencies {
@@ -215,6 +217,11 @@ export function createShopDependencies(input: {
     sessions: repos.sessions,
     deviceCommands: repos.deviceCommands,
     playerIdentities: repos.playerIdentities,
+    resolveFacilityTarget: createShopFacilityResolver({
+      db: input.db,
+      shopId,
+      encryptionKey: input.encryptionKey,
+    }),
     id,
     now,
     coinCooldownMs: 60_000,
@@ -545,6 +552,7 @@ export function createShopDependencies(input: {
 export function getOrCreateShopDependencies(
   db: D1DatabaseLike,
   shop: TenantShop,
+  encryptionKey?: string,
 ): PrismAppDependencies {
   // Service closures capture shop configuration (pricing, auto-registration, timezone).
   // Rebuild them whenever tenant settings change rather than serving stale closures.
@@ -555,9 +563,9 @@ export function getOrCreateShopDependencies(
   }
   const settings = JSON.stringify(shop);
   const cached = byShop.get(shop.id);
-  if (cached?.settings === settings) return cached.deps;
-  const deps = createShopDependencies({ db, shop });
-  byShop.set(shop.id, { settings, deps });
+  if (cached?.settings === settings && cached.encryptionKey === encryptionKey) return cached.deps;
+  const deps = createShopDependencies({ db, shop, encryptionKey });
+  byShop.set(shop.id, { settings, encryptionKey, deps });
   return deps;
 }
 
@@ -609,7 +617,7 @@ export const tenantMiddleware: MiddlewareHandler<AppBindings> = async (
   c.set("shop", shop);
   c.set("responseTimeZone", shop.time_zone);
 
-  const deps = getOrCreateShopDependencies(c.env.DB, shop);
+  const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY);
   c.set("deps", deps);
 
   await next();
