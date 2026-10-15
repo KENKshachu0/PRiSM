@@ -63,37 +63,13 @@ describe("persistent LiveBilling alarm abuse budget", () => {
     expect(blocked.nextAllowedAt).toBe(start + 5 * 60_000);
   });
 
-  it("allows one terminal bypass but throttles repeated terminal events too", () => {
-    let state: AlarmBudget | null = null;
-    for (let i = 0; i < 4; i++) {
-      const now = start + i * 60_000;
-      state = spendAlarmBudget(checkAlarmBudget(state, now), now);
-    }
-    const earlyEnd = checkAlarmBudget(state, start + 3 * 60_000 + 1000, true);
-    expect(earlyEnd.allowed).toBe(true);
-    // The final state may bypass both the minute interval and exhausted quota.
-    const terminal = earlyEnd;
-    expect(terminal.allowed).toBe(true);
-    expect(terminal.terminalBypass).toBe(true);
-    state = spendAlarmBudget(terminal, start + 3 * 60_000 + 1000);
-    expect(checkAlarmBudget(state, start + 4 * 60_000 + 1000, true).allowed).toBe(false);
-    // Once another normal quota slot is available, ordinary work is still
-    // permitted; the terminal-bypass privilege itself remains on cooldown.
-    const regular = checkAlarmBudget(state, start + 5 * 60_000, true);
-    expect(regular.allowed).toBe(true);
-    expect(regular.terminalBypass).toBe(false);
-    state = spendAlarmBudget(regular, start + 5 * 60_000);
-    expect(checkAlarmBudget(state, start + 6 * 60_000, true).allowed).toBe(false);
-  });
-
-  it("sends checkout immediately after a normal update while keeping the bypass cooldown", () => {
-    let state = spendAlarmBudget(checkAlarmBudget(null, start), start);
-    const ended = checkAlarmBudget(state, start + 1000, true);
-    expect(ended.allowed).toBe(true);
-    expect(ended.terminalBypass).toBe(true);
-    state = spendAlarmBudget(ended, start + 1000);
-    expect(checkAlarmBudget(state, start + 2000, true).allowed).toBe(false);
-    expect(checkAlarmBudget(state, start + 2000).allowed).toBe(false);
+  it("reads budgets from older deployments without resetting ordinary quota", () => {
+    const previous = {
+      tokens: 0, updatedAt: start, lastRunAt: start, lastTerminalBypassAt: start,
+    };
+    const decision = checkAlarmBudget(previous, start + 1000);
+    expect(decision.allowed).toBe(false);
+    expect(decision.nextAllowedAt).toBe(start + BILLING_ALARM_REFILL_MS);
   });
 
   it("backs off maintenance alarms and stops after the eight-hour token lifetime", () => {

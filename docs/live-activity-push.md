@@ -110,7 +110,9 @@ REST 快照与 APNs `content-state.bill` 使用同一个 `activityBill()`，均�
 
 入场、子会话增减、麻将开局／离桌、取消宽限的设备操作、结账和账单预览均触发同步。普通 GET 概览不触发重新计费。短时间事件合并，内容不变不重复推送；批量结账逐玩家同步。新增子会话更新原活动，不另开一份入场活动。回调读取最新状态，修订号变化则放弃旧结果，推送失败通过 Alarm 重试；成功令牌分别记账去重。结账的最终金额读取该会话对应的已保存 checkout，避免混入后一次入场的账单。
 
-**费用风控（服务端强制）**：每个店铺／玩家的普通 DO Alarm 至少间隔 60 秒；采用持久化令牌桶，允许最初 4 次短间隔刷新，随后以每 5 分钟一次的速度补充额度。判断依据是 Alarm 的实际执行次数，**即使账单确实每分钟变化、价格规则每分钟计费或业务 revision 不断增加，也不能绕过额度**。结束通知只有每 15 分钟一次的紧急绕过机会，可同时绕过普通 60 秒间隔和令牌桶，防止刚更新的活动在结账后继续计时；重复结束事件仍受额度和冷却约束；同一 Alarm 最多检查 16 个 Token 并发送 4 次 APNs。活动注册在每个店铺／用户下限制最多 4 条，且注册与注销共享每分钟 5 次的速率限制。最后一个活动注销后仍保留极小的频率预算，防止反复注册清空风控。维护状态的 Alarm 使用指数退避，最长等待 8 小时后停止。`refresh()` 会保留已存在的较早 Alarm，避免高频业务刷新不断推迟任务，也不会覆盖维护期间的退避时间；异常或未来时间戳的活动令牌按无效 Token 清理，以防产生超长寿命的自动唤醒。限流会让极端一分钟计费配置的远端账单更新延迟，但不会改变真实计费和结算；客户端不得把 Live Activity 推送频率当作计费频率。
+**费用风控（服务端强制）**：每个店铺／玩家的普通账单刷新 DO Alarm 至少间隔 60 秒；采用持久化令牌桶，允许最初 4 次短间隔刷新，随后以每 5 分钟一次的速度补充额度。判断依据是普通账单刷新的实际执行次数，**即使账单确实每分钟变化、价格规则每分钟计费或业务 revision 不断增加，也不能绕过额度**。已保存的结账结果对应的结束通知独立于普通 60 秒间隔和令牌桶，不再共享每玩家 15 分钟冷却；同一玩家短时间内多次入场、结账，各活动均可及时结束。未付款活动的普通更新仍受原额度约束。每条活动最多尝试 6 次，失败退避为 5、10、20、40、60 秒，结束推送的退避不再被普通额度延长；重复结账通知、DO 休眠重启均不会重置重试次数或提前再次发送，成功后删除令牌。同一 Alarm 最多检查 16 个 Token 并发送 4 次 APNs。活动注册在每个店铺／用户下限制最多 4 条，且注册与注销共享每分钟 5 次的速率限制。最后一个活动注销后仍保留极小的频率预算，防止反复注册清空风控。维护状态的 Alarm 使用指数退避，最长等待 8 小时后停止。`refresh()` 会保留已存在的较早 Alarm，避免高频业务刷新不断推迟任务，也不会覆盖维护期间的退避时间；异常或未来时间戳的活动令牌按无效 Token 清理，以防产生超长寿命的自动唤醒。限流会让极端一分钟计费配置的远端账单更新延迟，但不会改变真实计费和结算；客户端不得把 Live Activity 推送频率当作计费频率。
+
+普通账单 `event=update` 使用 APNs 优先级 `5`，开始与付款结束使用 `10`，避免普通更新持续消耗系统的高优先级推送预算。服务端记录 `live_activity_push` 的事件种类、APNs 接收结果及失败状态／标准原因，不记录推送令牌、用户标识或任意响应内容；APNs 接收成功不等于设备已显示。
 
 本地请求只用于初次创建或恢复已过期内容，也会恢复后台调度。Swift 不复刻计费引擎，倒计时通过系统时间组件持续显示。到下一次检查时间设为 stale；更新尚未到达时隐藏旧倒计时，保留账单金额和时间。全部会话关闭但尚未付款时保留活动，设置 `endedAtUnix` 停止计时并显示“待结账”；成功付款后再结束活动。推送受系统与网络影响，不保证准点到达。无令牌或活动已超过八小时则清理调度状态。
 
@@ -151,7 +153,7 @@ wrangler secret put APNS_PRIVATE_KEY --config wrangler.generated.jsonc
 
 ## 测试
 
-`packages/server/test/live-activity-compat.test.ts`、`live-activity-push-flow.test.ts`、`shop-billing-routes.test.ts` 与 `live-billing-alarm-budget.test.ts` 覆盖：
+`packages/server/test/live-activity-compat.test.ts`、`live-activity-push-flow.test.ts`、`shop-billing-routes.test.ts` 、`live-billing-alarm-budget.test.ts` 与 `live-billing-terminal-delivery.test.ts` 覆盖：
 
 - `content-state` 键名与 Swift `ContentState` 一致（防止静默丢弃回归）；
 - ES256 Provider JWT 真实签名并用公钥验签、缓存与轮换；
@@ -160,12 +162,15 @@ wrangler secret put APNS_PRIVATE_KEY --config wrangler.generated.jsonc
 - 三种响应体形状下的 `playerId` 与场次提取；
 - 令牌注册 upsert、解绑、越权与非法输入拒绝（真实 D1，经 HTTP 路由）；
 - **端到端**：扫码入场 → App Clip 令牌注册 → 实际 DO 初次更新 → 六种真实 HTTP 结账路由 → 约一秒后可执行的 Alarm → 格式正确、最终金额准确的 `end` 推送，且重复结账不重复派发；
+- 普通额度耗尽且之前刚结账时，六种渠道仍能发送最终状态；
+- 同一玩家连续两次结账、DO 重启后的 5 秒重试，以及重复通知不突破最多 6 次的发送限制；
+- 普通更新优先级为 `5`，结束通知为 `10`；
 - **结账失败时绝不推送**。
 
 运行：
 
 ```sh
-bun test packages/server/test/live-activity-*.test.ts packages/server/test/live-billing-alarm-*.test.ts packages/server/test/shop-billing-routes.test.ts
+bun test packages/server/test/live-activity-*.test.ts packages/server/test/live-billing-*.test.ts packages/server/test/shop-billing-routes.test.ts
 bun run typecheck
 ```
 

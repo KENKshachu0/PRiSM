@@ -69,9 +69,9 @@ export class LiveBilling extends BaseDurableObject<Env> {
       await this.ctx.storage.delete("maintenance-wait");
     }
     const gate = checkAlarmBudget(
-      await this.ctx.storage.get<AlarmBudget>("alarm-budget"), now, !!visit.terminal,
+      await this.ctx.storage.get<AlarmBudget>("alarm-budget"), now,
     );
-    const target = Math.max(now + 1000, gate.nextAllowedAt);
+    const target = visit.terminal ? now + 1000 : Math.max(now + 1000, gate.nextAllowedAt);
     const pending = await this.ctx.storage.getAlarm();
     // Preserve any earlier alarm; every invocation checks the budget again.
     if (pending !== null && pending > now && pending <= target) return;
@@ -111,21 +111,15 @@ export class LiveBilling extends BaseDurableObject<Env> {
     if (!visit || !config) return;
     const start = Date.now();
     const gate = checkAlarmBudget(
-      await this.ctx.storage.get<AlarmBudget>("alarm-budget"), start, !!visit.terminal,
+      await this.ctx.storage.get<AlarmBudget>("alarm-budget"), start,
     );
-    if (!gate.allowed) {
+    if (!gate.allowed && !visit.terminal) {
       await this.ctx.storage.setAlarm(Math.max(start + 1000, gate.nextAllowedAt));
       return;
     }
-    // Consume before any D1 query, so even failed or unchanged calculations
-    // count toward abuse protection. The state is persisted across hibernation.
-    await this.ctx.storage.put("alarm-budget", spendAlarmBudget(gate, start));
-    if (visit.terminal) {
-      const current = await this.ctx.storage.get<Visit>("visit");
-      if (current?.revision === visit.revision) {
-        await this.ctx.storage.put("visit", { ...current, terminal: false });
-      }
-    }
+    // Ordinary calculations consume quota even when they fail or stay unchanged.
+    // Settled activities instead have a persistent, per-token delivery limit.
+    if (gate.allowed) await this.ctx.storage.put("alarm-budget", spendAlarmBudget(gate, start));
     const { shopId, playerId } = visit;
     const tokens = (
       await this.env.DB.prepare(
@@ -174,7 +168,7 @@ export class LiveBilling extends BaseDurableObject<Env> {
       return;
     }
     const cached = await this.ctx.storage.get<CachedBill>("bill");
-    const snapshot =
+    const snapshot = valid.every(token => token.payment_status === "paid") ? null :
       cached &&
       cached.revision === visit.revision &&
       now - cached.calculatedAt < 30_000 &&
@@ -193,6 +187,7 @@ export class LiveBilling extends BaseDurableObject<Env> {
     }
     const pusher = new LiveActivityPusher({ config });
     let nextRetryAt = Infinity;
+    let nextTerminalAt = Infinity;
     // Hard ceiling for APNs execution time: at most four network requests in
     // one alarm. Rotate across pre-existing oversized token sets fairly.
     const cursor = (await this.ctx.storage.get<number>("token-cursor")) ?? 0;
@@ -215,6 +210,8 @@ export class LiveBilling extends BaseDurableObject<Env> {
         return;
       }
       const ended = token.payment_status === "paid" || !snapshot;
+      // Only a persisted settled activity bypasses ordinary billing throttling.
+      if (!ended && !gate.allowed) continue;
       const bill: ActivityBill | undefined =
         ended && token.checkout_total !== null
           ? {
@@ -247,7 +244,7 @@ export class LiveBilling extends BaseDurableObject<Env> {
       const signature = JSON.stringify([
         token.token,
         ended,
-        snapshot?.endedAtUnix,
+        ended ? token.ended_at : snapshot?.endedAtUnix,
         bill && { ...bill, asOfUnix: 0 },
       ]);
       if ((await this.ctx.storage.get<string>(`sent:${token.id}`)) === signature) {
@@ -260,6 +257,7 @@ export class LiveBilling extends BaseDurableObject<Env> {
         (retry.nextAt > now || retry.failures >= 6)
       ) {
         nextRetryAt = Math.min(nextRetryAt, retry.nextAt);
+        if (ended && retry.failures < 6) nextTerminalAt = Math.min(nextTerminalAt, retry.nextAt);
         continue;
       }
       attempted += 1;
@@ -271,6 +269,14 @@ export class LiveBilling extends BaseDurableObject<Env> {
         },
         payload,
       );
+      console.log(JSON.stringify({
+        event: "live_activity_push", activityEvent: ended ? "end" : "update", outcome: result.kind,
+        ...(result.kind === "failed" ? {
+          status: result.status,
+          reason: result.reason && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(result.reason)
+            ? result.reason : result.status ? "apns_error" : "transport_error",
+        } : {}),
+      }));
       if (result.kind === "failed") {
         const failures = (retry?.signature === signature ? retry.failures : 0) + 1;
         const expiresAt = new Date(token.created_at).getTime() + 8 * 3600_000;
@@ -280,6 +286,7 @@ export class LiveBilling extends BaseDurableObject<Env> {
             : now + Math.min(60_000, 5000 * 2 ** (failures - 1));
         await this.ctx.storage.put(retryKey, { signature, failures, nextAt });
         nextRetryAt = Math.min(nextRetryAt, nextAt);
+        if (ended && failures < 6) nextTerminalAt = Math.min(nextTerminalAt, nextAt);
         continue;
       }
       await this.ctx.storage.delete(retryKey);
@@ -300,6 +307,8 @@ export class LiveBilling extends BaseDurableObject<Env> {
     if ((await this.ctx.storage.get<Visit>("visit"))?.revision !== visit.revision) {
       return;
     }
+    if (hasUnprocessed && visit.terminal) nextTerminalAt = Math.min(nextTerminalAt, Date.now() + MIN_BILLING_ALARM_INTERVAL_MS);
+    await this.ctx.storage.put("visit", { ...visit, terminal: Number.isFinite(nextTerminalAt) });
     const expiresAt = Math.min(
       ...valid.map((token) => new Date(token.created_at).getTime() + 8 * 3600_000),
     );
@@ -315,7 +324,8 @@ export class LiveBilling extends BaseDurableObject<Env> {
         await this.ctx.storage.get<AlarmBudget>("alarm-budget"), later,
       );
       await this.ctx.storage.setAlarm(
-        Math.max(later + 1000, Number.isFinite(next) ? next : later + MIN_BILLING_ALARM_INTERVAL_MS, budget.nextAllowedAt),
+        Math.max(later + 1000, Math.min(nextTerminalAt,
+          Math.max(Number.isFinite(next) ? next : later + MIN_BILLING_ALARM_INTERVAL_MS, budget.nextAllowedAt))),
       );
     } else {
       // Preserve the small persistent budget across token churn. Otherwise

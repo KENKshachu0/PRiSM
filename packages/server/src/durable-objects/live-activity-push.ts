@@ -200,7 +200,7 @@ export class LiveActivityPusher {
           authorization: `bearer ${authorization}`,
           "apns-topic": liveActivityTopic(record.bundleId),
           "apns-push-type": "liveactivity",
-          "apns-priority": "10",
+          "apns-priority": (payload.aps as { event?: unknown } | undefined)?.event === "update" ? "5" : "10",
           "content-type": "application/json",
         },
         body: JSON.stringify(payload),

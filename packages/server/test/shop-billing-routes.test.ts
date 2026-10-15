@@ -373,6 +373,13 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       try {
         await liveBilling.alarm();
         expect(pushes[0]?.aps.event).toBe("update");
+        // Simulate exhausted billing quota and a recent checkout of an earlier visit.
+        state.set("alarm-budget", {
+          tokens: 0, updatedAt: Date.now(), lastRunAt: Date.now(), lastTerminalBypassAt: Date.now(),
+        });
+        await liveBilling.refresh(shopId, "clip-player", true);
+        await liveBilling.alarm();
+        expect(pushes).toHaveLength(1); // An unpaid activity cannot use the final-delivery lane.
         const operationId = crypto.randomUUID();
         const path = checkout === "player" ? "player/checkout/confirm"
           : checkout === "bulk" ? "staff/sessions/active/checkout"
