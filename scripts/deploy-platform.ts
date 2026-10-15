@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomToken, sha256 } from "../packages/server/src/crypto";
-import { deploymentRequest } from "./deployment-control-client";
+import { deploymentHealth, deploymentRequest } from "./deployment-control-client";
 import { deploymentControlPath } from "../packages/server/src/deployment-gate";
 import { deployPlatform, type PlatformDeploymentSteps } from "./deploy-platform-flow";
 
@@ -80,10 +80,7 @@ const steps: PlatformDeploymentSteps = {
     }
   },
   async health() {
-    const response = await fetch(new URL("/api/v1/health", origin), { cache: "no-store", signal: AbortSignal.timeout(30_000), redirect: "error" });
-    const result = await response.json() as { data?: { ok?: boolean } };
-    if (!response.ok || result.data?.ok !== true || response.headers.get("x-prism-revision") !== revision)
-      throw new Error("Public health check did not confirm the expected release after resume");
+    await deploymentHealth(controlOptions);
     console.log("Deployment verified; business requests resumed.");
   },
 };
