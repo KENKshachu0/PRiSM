@@ -15,10 +15,12 @@ describe("Live Activity API compatibility across channels", () => {
     for (const path of [
       "session/start", "players/id/session/start", "players/by-identity/session/start",
       "remote-entry",
+      "profiles/id/entry",
     ]) expect(sessionEventForPath(path)).toBe("start");
     for (const path of [
       "checkout/confirm", "checkout/override", "sessions/active/checkout",
       "players/id/checkout/confirm", "players/by-identity/checkout/confirm",
+      "players/id/checkout/recharge", "profiles/id/checkout/confirm", "sessions/abc/stop",
       "players/id/sessions/abc/stop", "players/by-identity/sessions/abc/stop",
     ]) expect(sessionEventForPath(path)).toBe("end");
     expect(sessionEventForPath("players")).toBeNull();
@@ -43,6 +45,11 @@ describe("Live Activity API compatibility across channels", () => {
       { playerSettlement: { playerId: "b" }, sessions: [{ sessionId: "2" }] },
     ] };
     expect(playerIdsFromPayload(batch).sort()).toEqual(["a", "b"]);
+    expect(extractSessionIds(batch, "end")).toEqual(["1", "2"]);
+    expect(playerIdsFromPayload({ assetLedgerEntries: [{ playerId: "a" }] })).toEqual(["a"]);
+    expect(playerIdsFromPayload({ holdings: [{ playerId: "a" }] })).toEqual(["a"]);
+    expect(playerIdsFromPayload({ redeemRecord: { playerId: "a" } })).toEqual(["a"]);
+    expect(playerIdsFromPayload({ businessItemOrder: { playerId: "a" } })).toEqual(["a"]);
   });
 
   it("uses APNs ActivityKit start/end payloads, including sessionId and shopCode", () => {

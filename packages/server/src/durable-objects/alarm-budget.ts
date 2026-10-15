@@ -53,11 +53,10 @@ export function checkAlarmBudget(
   const regularAt = Math.max(now, nextInterval, nextRefill);
   // Only authenticated, successfully completed end-of-session events may request
   // the terminal bypass. It is itself capped at one per 15 minutes per player.
-  // A terminal event can bypass an exhausted burst quota, but never the
-  // absolute 60-second minimum between alarm executions.
+  // A checkout must not leave a paid visit counting just because a billing
+  // update ran seconds ago. The separate cooldown bounds this exception.
   const terminalAt = Math.max(
     now,
-    nextInterval,
     state.lastTerminalBypassAt
       ? state.lastTerminalBypassAt + TERMINAL_BYPASS_INTERVAL_MS : now,
   );

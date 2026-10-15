@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Hono } from "hono";
 import { sqliteSchema } from "@prism/storage-sql";
@@ -12,6 +12,7 @@ import { createApp } from "../src/app.js";
 import { billingSetupStatements } from "../src/routes/platform/shops.js";
 import { sha256, sha256Hex } from "../src/crypto.js";
 import { mintMachineTicket } from "../src/routes/platform/machine-session.js";
+import { LiveBilling } from "../src/durable-objects/live-billing.js";
 
 class InMemoryD1Database implements D1DatabaseLike {
   constructor(private readonly db: Database) {}
@@ -264,6 +265,151 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     app.use("*", attachUser);
     app.route("/api/v1/shops/:shopCode", shopRouter);
     return app;
+  }
+
+  it("refreshes registered bills after shared asset changes and ignores read-only previews", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { shopId, publicId, staffUserId, staffSessionToken } = await setupShopFixture(db, sqlite);
+    sqlite.exec(await Bun.file(new URL("../../../migrations/0025_live_activity_push_tokens.sql", import.meta.url)).text());
+    sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES (?,'player','Player','active',CURRENT_TIMESTAMP)", [shopId]);
+    sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status,payment_status,pricing_config_ids_json) VALUES (?,'visit','player',?,'active','unpaid','[]')", [shopId, new Date().toISOString()]);
+    sqlite.run("INSERT INTO shop_player_accounts(shop_id,user_id,player_id) VALUES (?,?,'player')", [shopId, staffUserId]);
+    sqlite.run(`INSERT INTO live_activity_tokens(id,shop_id,user_id,activity_id,token,environment,bundle_id,session_id,attributes_json,created_at,updated_at)
+      VALUES ('activity',?,?,'clip','token','production','moe.neri.hinatago.prism','visit','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, [shopId, staffUserId]);
+    const refreshed: string[] = [];
+    Object.assign(env, {
+      APNS_KEY_ID: "key", APNS_TEAM_ID: "team", APNS_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----test",
+      LIVE_BILLING: { getByName(name: string) { return { async refresh() { refreshed.push(name); } }; } },
+    });
+    const tasks: Promise<unknown>[] = [];
+    const ctx = { waitUntil(task: Promise<unknown>) { tasks.push(task); } } as ExecutionContext;
+    const app = createApp();
+    const url = `https://prism.test/api/v1/shops/${publicId}`;
+    const headers = { authorization: `Bearer ${staffSessionToken}`, "content-type": "application/json" };
+    try {
+      for (const path of ["assets/currency/paid", "staff/asset-definitions/currency/paid"]) {
+        const response = await app.fetch(new Request(`${url}/${path}`, {
+          method: "PUT", headers, body: JSON.stringify({ name: "Updated balance", stackable: true }),
+        }), env, ctx);
+        expect(response.status).toBe(200);
+        await Promise.all(tasks.splice(0));
+      }
+      expect(refreshed).toEqual([JSON.stringify([shopId, "player"]), JSON.stringify([shopId, "player"])]);
+      const preview = await app.fetch(new Request(`${url}/staff/players/player/checkout/preview`, {
+        method: "POST", headers, body: "{}",
+      }), env, ctx);
+      expect(preview.status).toBe(200);
+      await Promise.all(tasks.splice(0));
+      expect(refreshed).toHaveLength(2);
+      const denied = await app.fetch(new Request(`${url}/assets/currency/paid`, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Denied" }),
+      }), env, ctx);
+      expect(denied.status).toBe(401);
+      await Promise.all(tasks.splice(0));
+      expect(refreshed).toHaveLength(2);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  for (const checkout of ["player", "staff", "override", "recharge", "bulk", "cashier"] as const) {
+    it(`pushes the final App Clip bill promptly after ${checkout} checkout`, async () => {
+      const { db, sqlite, env } = createTestContext();
+      const { shopId, publicId, staffUserId, staffSessionToken } = await setupShopFixture(db, sqlite);
+      sqlite.exec(await Bun.file(new URL("../../../migrations/0025_live_activity_push_tokens.sql", import.meta.url)).text());
+      sqlite.exec(await Bun.file(new URL("../../../migrations/0026_live_activity_start_tokens.sql", import.meta.url)).text());
+      sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES (?,'clip-player','Clip Player','active',CURRENT_TIMESTAMP)", [shopId]);
+      sqlite.run("INSERT INTO shop_player_accounts(shop_id,user_id,player_id) VALUES (?,?,'clip-player')", [shopId, staffUserId]);
+      if (checkout !== "cashier") sqlite.run("INSERT INTO asset_holdings(shop_id,id,player_id,asset_type,asset_code,quantity) VALUES (?,'balance','clip-player','currency','paid',1000000000)", [shopId]);
+      const key = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+      const encoded = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey("pkcs8", key.privateKey))));
+      Object.assign(env, {
+        APNS_KEY_ID: "key", APNS_TEAM_ID: "team",
+        APNS_PRIVATE_KEY: `-----BEGIN PRIVATE KEY-----\n${encoded}\n-----END PRIVATE KEY-----`,
+      });
+      const state = new Map<string, unknown>();
+      let alarm: number | null = null;
+      const storage = {
+        async get<T>(key: string) { return state.get(key) as T | undefined; },
+        async put(key: string, value: unknown) { state.set(key, value); },
+        async delete(key: string) { return state.delete(key); },
+        async getAlarm() { return alarm; },
+        async setAlarm(at: number) { alarm = at; },
+        async deleteAlarm() { alarm = null; },
+        async deleteAll() { state.clear(); },
+      };
+      const liveBilling = new LiveBilling({ storage } as any, env);
+      env.LIVE_BILLING = { getByName: () => liveBilling } as any;
+      const tasks: Promise<unknown>[] = [];
+      const execution = { waitUntil(task: Promise<unknown>) { tasks.push(task); }, passThroughOnException() {} } as ExecutionContext;
+      const app = createApp();
+      const base = `https://prism.test/api/v1/shops/${publicId}`;
+      const headers = { authorization: `Bearer ${staffSessionToken}`, "content-type": "application/json" };
+      const post = async (path: string, body: Record<string, unknown>) => {
+        const response = await app.fetch(new Request(`${base}/${path}`, {
+          method: "POST", headers, body: JSON.stringify(body),
+        }), env, execution);
+        await Promise.all(tasks.splice(0));
+        expect({ status: response.status, error: response.ok ? null : await response.clone().json() }).toEqual({ status: 200, error: null });
+        return (await response.json() as { data: Record<string, any> }).data;
+      };
+      // Start through the QR-confirmed native API, then register its per-activity token.
+      sqlite.run("INSERT INTO machines(shop_id,id,public_id,name,kind,enabled) VALUES (?,'entry','entry','Entry','machine',1)", [shopId]);
+      const { ticket } = await mintMachineTicket(env.SESSION_SECRET, publicId, "entry");
+      const started = await post("player/session/start", { ticket, consent: true, operationId: crypto.randomUUID() });
+      const sessionId = started.session.id as string;
+      sqlite.run("UPDATE sessions SET started_at=? WHERE shop_id=? AND id=?", [new Date(Date.now() - 90 * 60_000).toISOString(), shopId, sessionId]);
+      await post("player/live-activity/register", {
+        activityId: "clip-activity", token: "a".repeat(64), sessionId,
+        environment: "production", bundleId: "moe.neri.hinatago.prism",
+      });
+      const pushes: Array<{ aps: Record<string, any> }> = [];
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (url, init) => {
+        expect(String(url)).toContain("api.push.apple.com/3/device/");
+        expect(new Headers(init?.headers).get("apns-topic")).toBe("moe.neri.hinatago.prism.push-type.liveactivity");
+        pushes.push(JSON.parse(String(init?.body)));
+        return new Response("", { status: 200 });
+      }) as typeof fetch);
+      try {
+        await liveBilling.alarm();
+        expect(pushes[0]?.aps.event).toBe("update");
+        const operationId = crypto.randomUUID();
+        const path = checkout === "player" ? "player/checkout/confirm"
+          : checkout === "bulk" ? "staff/sessions/active/checkout"
+          : checkout === "cashier" ? "cashier/profiles/clip-player/checkout/confirm"
+          : `staff/players/clip-player/checkout/${checkout === "staff" ? "confirm" : checkout}`;
+        let body: Record<string, unknown> = { operationId };
+        if (checkout === "override") body = { ...body, finalTotal: 12.34, reason: "Test override" };
+        if (checkout === "recharge") body = { ...body, amount: 10 };
+        if (checkout === "cashier") {
+          sqlite.run("INSERT INTO cashier_profiles(shop_id,player_id,card_kind,card_uid,created_at) VALUES (?,'clip-player','type-a','12345678',CURRENT_TIMESTAMP)", [shopId]);
+          const preview = await post("cashier/profiles/clip-player/checkout/preview", {});
+          body = { method: "cash", previewedAt: preview.settlementPreview.previewedAt, expectedTotal: preview.settlementPreview.total, sessionIds: [sessionId] };
+        }
+        const receipt = await post(path, body);
+        expect(alarm).not.toBeNull();
+        expect(alarm!).toBeLessThanOrEqual(Date.now() + 1500);
+        await liveBilling.alarm();
+        expect(pushes).toHaveLength(2);
+        expect(pushes[1]?.aps.event).toBe("end");
+        const settled = checkout === "bulk" ? receipt.settlements[0] : receipt;
+        const session = sqlite.query("SELECT ended_at FROM sessions WHERE shop_id=? AND id=?").get(shopId, sessionId) as { ended_at: string };
+        expect(pushes[1]?.aps["content-state"]).toMatchObject({
+          phase: "ended", endedAtUnix: Date.parse(session.ended_at) / 1000,
+          bill: { amountCents: Math.round(settled.playerSettlement.total * 100) },
+        });
+        expect(sqlite.query("SELECT id FROM live_activity_tokens").get()).toBeNull();
+        if (checkout !== "cashier") {
+          const revision = state.get("visit");
+          await post(path, body);
+          expect(state.get("visit")).toEqual(revision);
+          expect(pushes).toHaveLength(2);
+        }
+      } finally {
+        fetchSpy.mockRestore();
+        sqlite.close();
+      }
+    });
   }
 
   it("does not disclose standalone device secrets or issue API tokens to a viewer", async () => {

@@ -16,8 +16,8 @@ type C = Context<AppBindings>;
 /**
  * Bridges store session events to the phones that are showing them.
  *
- * A session is started or settled in one of three channels — the player's own app, the
- * admin console, or a shop bot — but all three funnel through `forward()`. Hooking here
+ * Sessions started or settled by players, staff, cashiers or shop bots all pass
+ * through the tenant event bridge. Hooking here
  * means the core billing domain stays unaware that Live Activities exist, and a new
  * channel cannot silently miss notifications.
  */
@@ -34,10 +34,12 @@ function isSessionEndPath(path: string): boolean {
   return (
     path === "checkout/confirm" ||
     path === "checkout/override" ||
+    path === "checkout/recharge" ||
     path === "sessions/active/checkout" ||
     path === "players/by-identity/checkout/confirm" ||
     path === "players/by-identity/checkout/override" ||
-    /^players\/[^/]+\/checkout\/(confirm|override)$/.test(path) ||
+    /^(players|profiles)\/[^/]+\/checkout\/(confirm|override|recharge)$/.test(path) ||
+    /^sessions\/[^/]+\/stop$/.test(path) ||
     /^players\/[^/]+\/sessions\/[^/]+\/stop$/.test(path) ||
     /^players\/by-identity\/sessions\/[^/]+\/stop$/.test(path)
   );
@@ -45,7 +47,7 @@ function isSessionEndPath(path: string): boolean {
 
 export function sessionEventForPath(path: string): "start" | "end" | null {
   // The admin console addresses a player explicitly, so its start path carries an id.
-  if (SESSION_START_PATHS.has(path) || /^players\/[^/]+\/session\/start$/.test(path)) {
+  if (SESSION_START_PATHS.has(path) || /^players\/[^/]+\/session\/start$/.test(path) || /^profiles\/[^/]+\/entry$/.test(path)) {
     return "start";
   }
   return isSessionEndPath(path) ? "end" : null;
@@ -85,6 +87,9 @@ export function extractSessionIds(
       const record = item as { settlement?: { sessionId?: unknown }; sessionId?: unknown };
       const id = record?.settlement?.sessionId ?? record?.sessionId;
       if (typeof id === "string") ids.push(id);
+      if (item && typeof item === "object") {
+        ids.push(...extractSessionIds(item as Record<string, unknown>, event));
+      }
     }
   }
   if (event === "end" && ids.length === 0) {
@@ -408,10 +413,14 @@ export function playerIdsFromPayload(payload: Record<string, unknown>): string[]
   const visit = (item: Record<string, unknown>) => {
     const id = playerIdFromPayload(item);
     if (id) ids.add(id);
-    for (const key of ["settlements", "sessions", "sessionDetails"] as const) {
+    for (const key of ["settlements", "sessions", "sessionDetails", "holdings", "grantedAssets", "assetLedgerEntries"] as const) {
       if (Array.isArray(item[key])) for (const child of item[key]) {
         if (child && typeof child === "object") visit(child as Record<string, unknown>);
       }
+    }
+    for (const key of ["order", "businessItemOrder", "redeemRecord"] as const) {
+      const child = item[key];
+      if (child && typeof child === "object") visit(child as Record<string, unknown>);
     }
     const preview = item.settlementPreview as { playerId?: unknown } | undefined;
     if (typeof preview?.playerId === "string") ids.add(preview.playerId);

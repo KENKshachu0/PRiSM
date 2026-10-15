@@ -26,26 +26,24 @@
      → activity.pushTokenUpdates → POST .../player/live-activity/register
      → live_activity_tokens (shop_id, user_id, activity_id, token, bundle_id, session_id)
                                                         ↑ 查令牌
-[任意渠道：玩家 / 管理员 / Bot]
+[任意渠道：玩家 / 管理员 / 收银台 / Bot]
    POST /api/v1/shops/{shopCode}/.../session/start | checkout/confirm | sessions/:id/stop
-     → billing.ts forward() → server-hono 核心 → sessions.save
+     → packages/server 店铺路由 → application 核心 → sessions.save
      → 响应 2xx → response.clone().json() → 解析 playerId → 反查 user_id
-     → executionCtx.waitUntil(pusher.send(...))
+     → executionCtx.waitUntil(refreshActivityBill(...)) → LiveBilling Alarm → pusher.send(...)
                                                         ↓
    APNs (apns-topic = <bundleId>.push-type.liveactivity)
                                                         ↓
                                         灵动岛 / 锁屏实时更新
 ```
 
-### 埋点为什么在 `packages/platform` 而不是核心域
+### 通知钩子的位置
 
-三个渠道（`/player/*`、`/staff/*`、`/integration/*`）全部经过 `packages/platform/src/billing.ts` 的 `forward()` 进入 `packages/server-hono` 的核心应用。因此：
+`packages/server/src/routes/shops/index.ts` 的租户中间件统一处理玩家、管理员、收银台与 Bot 的成功写操作。通知规划和派发全部进入 `waitUntil`；解析、数据库或 APNs 故障不会把已经成功的结账改成失败响应。失败请求、幂等重放、活动令牌接口与只读预览不触发业务通知。
 
-- 在 `forward()` 外层包一层即可覆盖**所有**渠道，将来新增渠道也不会漏掉；
-- APNs 令牌属于**传输层**关注点，`server-hono` / `application` / `core` 核心域不应知道 APNs 的存在，传输埋点不进入这些层；计费节点计算仍复用 core 的纯函数；
-- 反过来若埋点在 `application/src/player-commands.ts` 与 `settlement-service.ts` 的 `sessions.save` 处，虽然更集中，但需要给核心域新增端口，侵入性更大。
+普通结账、改价结账、充值结账、收银台结账及批量结账均标记为结束事件；批量响应递归提取会话 ID，逐玩家通知。玩家停止子会话同样触发摘要同步；调度器按真实付款状态决定保留“待结账”还是结束活动。资产调整、兑换、商品订单变更从返回的资产流水、兑换记录和订单解析玩家；共享资产、优惠和计价定义变更通知当前已注册活动的玩家。设备和麻将操作沿用各自的摘要同步入口。
 
-`live-activity/register` 与 `live-activity/unregister` 两个路由同样**不进入** `forward()`，由 platform 直接处理。
+APNs 令牌和通知属于服务端传输层，`application` / `core` 不依赖 APNs。`live-activity/register` 与 `live-activity/unregister` 仍由服务端直接处理。
 
 ### 玩家身份如何解析
 
@@ -102,7 +100,7 @@ REST 快照与 APNs `content-state.bill` 使用同一个 `activityBill()`，均�
 
 ## 配置
 
-平台入口为 `packages/platform/src/worker.ts`，导出 Hono 应用和 `LiveBilling` Durable Object。`wrangler.platform.jsonc` 声明 `LIVE_BILLING` SQLite namespace 和 `live-billing-v1` 类迁移；生成的部署配置继承它们。上线前计费数据库须已应用 `0028_pricing_versions.sql`。未配置绑定时保留原 start/end 推送行为。
+平台入口为 `packages/server/src/worker.ts`，导出 Hono 应用和 `LiveBilling` Durable Object。`wrangler.jsonc` 声明 `LIVE_BILLING` SQLite namespace 和 `live-billing-v1` 类迁移；生成的部署配置继承它们。上线前计费数据库须已应用 `0028_pricing_versions.sql`。未配置绑定时保留原 start/end 推送行为。
 
 ## 金额与倒计时更新
 
@@ -112,7 +110,7 @@ REST 快照与 APNs `content-state.bill` 使用同一个 `activityBill()`，均�
 
 入场、子会话增减、麻将开局／离桌、取消宽限的设备操作、结账和账单预览均触发同步。普通 GET 概览不触发重新计费。短时间事件合并，内容不变不重复推送；批量结账逐玩家同步。新增子会话更新原活动，不另开一份入场活动。回调读取最新状态，修订号变化则放弃旧结果，推送失败通过 Alarm 重试；成功令牌分别记账去重。结账的最终金额读取该会话对应的已保存 checkout，避免混入后一次入场的账单。
 
-**费用风控（服务端强制）**：每个店铺／玩家的 DO Alarm 至少间隔 60 秒；采用持久化令牌桶，允许最初 4 次短间隔刷新，随后以每 5 分钟一次的速度补充额度。判断依据是 Alarm 的实际执行次数，**即使账单确实每分钟变化、价格规则每分钟计费或业务 revision 不断增加，也不能绕过额度**。结束通知只有每 15 分钟一次的紧急绕过机会，防止滥用；同一 Alarm 最多检查 16 个 Token 并发送 4 次 APNs。活动注册在每个店铺／用户下限制最多 4 条，且注册与注销共享每分钟 5 次的速率限制。最后一个活动注销后仍保留极小的频率预算，防止反复注册清空风控。维护状态的 Alarm 使用指数退避，最长等待 8 小时后停止。`refresh()` 会保留已存在的较早 Alarm，避免高频业务刷新不断推迟任务，也不会覆盖维护期间的退避时间；异常或未来时间戳的活动令牌按无效 Token 清理，以防产生超长寿命的自动唤醒。限流会让极端一分钟计费配置的远端账单更新延迟，但不会改变真实计费和结算；客户端不得把 Live Activity 推送频率当作计费频率。
+**费用风控（服务端强制）**：每个店铺／玩家的普通 DO Alarm 至少间隔 60 秒；采用持久化令牌桶，允许最初 4 次短间隔刷新，随后以每 5 分钟一次的速度补充额度。判断依据是 Alarm 的实际执行次数，**即使账单确实每分钟变化、价格规则每分钟计费或业务 revision 不断增加，也不能绕过额度**。结束通知只有每 15 分钟一次的紧急绕过机会，可同时绕过普通 60 秒间隔和令牌桶，防止刚更新的活动在结账后继续计时；重复结束事件仍受额度和冷却约束；同一 Alarm 最多检查 16 个 Token 并发送 4 次 APNs。活动注册在每个店铺／用户下限制最多 4 条，且注册与注销共享每分钟 5 次的速率限制。最后一个活动注销后仍保留极小的频率预算，防止反复注册清空风控。维护状态的 Alarm 使用指数退避，最长等待 8 小时后停止。`refresh()` 会保留已存在的较早 Alarm，避免高频业务刷新不断推迟任务，也不会覆盖维护期间的退避时间；异常或未来时间戳的活动令牌按无效 Token 清理，以防产生超长寿命的自动唤醒。限流会让极端一分钟计费配置的远端账单更新延迟，但不会改变真实计费和结算；客户端不得把 Live Activity 推送频率当作计费频率。
 
 本地请求只用于初次创建或恢复已过期内容，也会恢复后台调度。Swift 不复刻计费引擎，倒计时通过系统时间组件持续显示。到下一次检查时间设为 stale；更新尚未到达时隐藏旧倒计时，保留账单金额和时间。全部会话关闭但尚未付款时保留活动，设置 `endedAtUnix` 停止计时并显示“待结账”；成功付款后再结束活动。推送受系统与网络影响，不保证准点到达。无令牌或活动已超过八小时则清理调度状态。
 
@@ -153,7 +151,7 @@ wrangler secret put APNS_PRIVATE_KEY --config wrangler.generated.jsonc
 
 ## 测试
 
-`packages/platform/test/live-activity-push.test.ts` 覆盖：
+`packages/server/test/live-activity-compat.test.ts`、`live-activity-push-flow.test.ts`、`shop-billing-routes.test.ts` 与 `live-billing-alarm-budget.test.ts` 覆盖：
 
 - `content-state` 键名与 Swift `ContentState` 一致（防止静默丢弃回归）；
 - ES256 Provider JWT 真实签名并用公钥验签、缓存与轮换；
@@ -161,13 +159,13 @@ wrangler secret put APNS_PRIVATE_KEY --config wrangler.generated.jsonc
 - 各渠道入场 / 结账路径识别，以及只读接口不触发推送；
 - 三种响应体形状下的 `playerId` 与场次提取；
 - 令牌注册 upsert、解绑、越权与非法输入拒绝（真实 D1，经 HTTP 路由）；
-- **端到端**：真实结账路由触发格式正确的 `end` 推送，且响应体仍可读；
+- **端到端**：扫码入场 → App Clip 令牌注册 → 实际 DO 初次更新 → 六种真实 HTTP 结账路由 → 约一秒后可执行的 Alarm → 格式正确、最终金额准确的 `end` 推送，且重复结账不重复派发；
 - **结账失败时绝不推送**。
 
 运行：
 
 ```sh
-bun test packages/platform/test/live-activity-push.test.ts
+bun test packages/server/test/live-activity-*.test.ts packages/server/test/live-billing-alarm-*.test.ts packages/server/test/shop-billing-routes.test.ts
 bun run typecheck
 ```
 
