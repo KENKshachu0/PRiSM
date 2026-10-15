@@ -173,7 +173,7 @@ shopRouter.use("*", async (c, next) => {
       if (event && sessionIds.length) {
         await pushSessionEvent(c, { shopId: shop.id, playerId, sessionIds, event, initiatorClientId });
       } else {
-        await refreshActivityBill(c.env, shop.id, playerId);
+        await refreshActivityBill(c.env, shop.id, playerId, false, true);
       }
     }));
   })().catch((error) => {

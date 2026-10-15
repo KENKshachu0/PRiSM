@@ -98,7 +98,7 @@ export async function operateMahjong(c:C, machine:MachineRow, body:Record<string
         db.prepare("DELETE FROM mahjong_seats WHERE shop_id=? AND player_id=? AND machine_id=?").bind(shop.id,player.id,machine.id),
       ]);
     }
-    const sync = Promise.all(ids.map(id => refreshActivityBill(c.env, shop.id, id)))
+    const sync = Promise.all(ids.map(id => refreshActivityBill(c.env, shop.id, id, false, true)))
       .catch(error => console.error("Mahjong live bill sync failed", error));
     try { c.executionCtx.waitUntil(sync); } catch { void sync; }
     return c.json({mahjong:await mahjongState(c,machine)});

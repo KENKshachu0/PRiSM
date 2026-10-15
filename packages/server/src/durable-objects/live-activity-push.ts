@@ -47,17 +47,21 @@ export function liveActivityContentState(input: {
   startedAtUnix: number;
   endedAtUnix?: number | null;
   bill?: ActivityBill;
+  nextBill?: ActivityBill;
 }): Record<string, unknown> {
   return {
     phase: input.phase,
     startedAtUnix: input.startedAtUnix,
     endedAtUnix: input.endedAtUnix ?? null,
     ...(input.bill ? { bill: input.bill } : {}),
+    ...(input.phase === "active" && input.endedAtUnix == null && input.nextBill
+      ? { nextBill: input.nextBill } : {}),
   };
 }
 
 export function liveActivityStartPayload(input: {
   bill?: ActivityBill;
+  nextBill?: ActivityBill;
   sessionId: string;
   shopCode: string;
   shopName: string;
@@ -85,6 +89,7 @@ export function liveActivityStartPayload(input: {
         startedAtUnix: input.startedAtUnix,
         endedAtUnix: null,
         bill: input.bill,
+        nextBill: input.nextBill,
       }),
       alert: {
         title: input.shopName || "PRiSM",
@@ -102,6 +107,7 @@ export function liveActivityUpdatePayload(input: {
   endedAtUnix?: number | null;
   now: number;
   bill?: ActivityBill;
+  nextBill?: ActivityBill;
   staleAfterSeconds?: number;
 }): Record<string, unknown> {
   return {
@@ -113,6 +119,7 @@ export function liveActivityUpdatePayload(input: {
         startedAtUnix: input.startedAtUnix,
         endedAtUnix: input.endedAtUnix,
         bill: input.bill,
+        nextBill: input.nextBill,
       }),
       "stale-date": input.now + (input.staleAfterSeconds ?? 3600),
       "relevance-score": 100,
@@ -188,6 +195,7 @@ export class LiveActivityPusher {
   async send(
     record: LiveActivityPushRecord,
     payload: Record<string, unknown>,
+    priority?: "5" | "10",
   ): Promise<LiveActivityPushOutcome> {
     if (!record.token || !isKnownLiveActivityBundle(record.bundleId)) {
       return { kind: "skipped" };
@@ -200,7 +208,7 @@ export class LiveActivityPusher {
           authorization: `bearer ${authorization}`,
           "apns-topic": liveActivityTopic(record.bundleId),
           "apns-push-type": "liveactivity",
-          "apns-priority": (payload.aps as { event?: unknown } | undefined)?.event === "update" ? "5" : "10",
+          "apns-priority": priority ?? ((payload.aps as { event?: unknown } | undefined)?.event === "update" ? "5" : "10"),
           "content-type": "application/json",
         },
         body: JSON.stringify(payload),

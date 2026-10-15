@@ -13,6 +13,7 @@ import { billingSetupStatements } from "../src/routes/platform/shops.js";
 import { sha256, sha256Hex } from "../src/crypto.js";
 import { mintMachineTicket } from "../src/routes/platform/machine-session.js";
 import { LiveBilling } from "../src/durable-objects/live-billing.js";
+import { activityBill } from "../src/durable-objects/live-activity-billing.js";
 
 class InMemoryD1Database implements D1DatabaseLike {
   constructor(private readonly db: Database) {}
@@ -277,9 +278,10 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     sqlite.run(`INSERT INTO live_activity_tokens(id,shop_id,user_id,activity_id,token,environment,bundle_id,session_id,attributes_json,created_at,updated_at)
       VALUES ('activity',?,?,'clip','token','production','moe.neri.hinatago.prism','visit','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, [shopId, staffUserId]);
     const refreshed: string[] = [];
+    const priorities: boolean[] = [];
     Object.assign(env, {
       APNS_KEY_ID: "key", APNS_TEAM_ID: "team", APNS_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----test",
-      LIVE_BILLING: { getByName(name: string) { return { async refresh() { refreshed.push(name); } }; } },
+      LIVE_BILLING: { getByName(name: string) { return { async refresh(_shop: string, _player: string, _terminal: boolean, urgent: boolean) { refreshed.push(name); priorities.push(urgent); } }; } },
     });
     const tasks: Promise<unknown>[] = [];
     const ctx = { waitUntil(task: Promise<unknown>) { tasks.push(task); } } as ExecutionContext;
@@ -295,6 +297,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         await Promise.all(tasks.splice(0));
       }
       expect(refreshed).toEqual([JSON.stringify([shopId, "player"]), JSON.stringify([shopId, "player"])]);
+      expect(priorities).toEqual([true, true]);
       const preview = await app.fetch(new Request(`${url}/staff/players/player/checkout/preview`, {
         method: "POST", headers, body: "{}",
       }), env, ctx);
@@ -310,6 +313,48 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     } finally {
       sqlite.close();
     }
+  });
+
+  it("preloads exactly the next two-minute bill without settling or changing balances", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { shopId } = await setupShopFixture(db, sqlite);
+    const start = new Date("2026-10-15T06:00:00.000Z");
+    sqlite.run(`UPDATE pricing_configs SET provider_json=json_set(provider_json,
+      '$.rules[0].pricing.unitMinutes',2,'$.rules[0].pricing.unitPrice',200,
+      '$.rules[0].pricing.roundGraceMinutes',2) WHERE shop_id=? AND kind='time.priority'`, [shopId]);
+    sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES (?,'forecast','Player','active',?)", [shopId, start.toISOString()]);
+    sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status,payment_status,pricing_config_ids_json) VALUES (?,'forecast-visit','forecast',?,'active','unpaid','[]')", [shopId, start.toISOString()]);
+    sqlite.run("INSERT INTO asset_holdings(shop_id,id,player_id,asset_type,asset_code,quantity) VALUES (?,'balance','forecast','currency','paid',100000)", [shopId]);
+    try {
+      const initial = await activityBill(env, shopId, "forecast", start);
+      expect(initial?.bill.amountCents).toBe(0);
+      expect(initial?.nextCheckAt).toBe(+start + 120_000);
+      expect(initial?.nextBill).toMatchObject({
+        amountCents: 200, asOfUnix: (+start + 120_000) / 1000,
+        nextEvent: { atUnix: (+start + 240_000) / 1000 },
+      });
+      const atBoundary = await activityBill(env, shopId, "forecast", new Date(+start + 120_000));
+      expect(initial?.nextBill).toEqual(atBoundary?.bill);
+      expect(atBoundary?.nextBill?.amountCents).toBe(400);
+      let shopReads = 0;
+      const failingForecast = { DB: {
+        prepare(sql: string) {
+          if (sql.includes("FROM shops s") && ++shopReads === 2) throw new Error("Forecast database unavailable");
+          return db.prepare(sql);
+        },
+        batch: db.batch.bind(db),
+      } } as Pick<Env, "DB">;
+      const fallback = await activityBill(failingForecast, shopId, "forecast", start);
+      expect(fallback?.bill).toEqual(initial?.bill);
+      expect(fallback?.nextBill).toBeUndefined();
+      expect(sqlite.query("SELECT quantity FROM asset_holdings WHERE id='balance'").get()).toEqual({ quantity: 100000 });
+      expect(sqlite.query("SELECT status,payment_status,ended_at FROM sessions WHERE id='forecast-visit'").get()).toEqual({ status: "active", payment_status: "unpaid", ended_at: null });
+      expect(sqlite.query("SELECT COUNT(*) AS n FROM settlements").get()).toEqual({ n: 0 });
+      sqlite.run("UPDATE sessions SET status='closed',ended_at=? WHERE id='forecast-visit'", [new Date(+start + 120_000).toISOString()]);
+      expect((await activityBill(env, shopId, "forecast", new Date(+start + 180_000)))?.nextBill).toBeUndefined();
+      sqlite.run("UPDATE sessions SET payment_status='paid' WHERE id='forecast-visit'");
+      expect(await activityBill(env, shopId, "forecast", new Date(+start + 180_000))).toBeNull();
+    } finally { sqlite.close(); }
   });
 
   for (const checkout of ["player", "staff", "override", "recharge", "bulk", "cashier"] as const) {
@@ -363,6 +408,11 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         activityId: "clip-activity", token: "a".repeat(64), sessionId,
         environment: "production", bundleId: "moe.neri.hinatago.prism",
       });
+      const recovery = await app.fetch(new Request(`${base}/player/live-activity/bill`, { headers }), env, execution);
+      expect(recovery.status).toBe(200);
+      const recovered = (await recovery.json() as { data: Record<string, any> }).data;
+      expect(recovered.nextBill.asOfUnix).toBe(recovered.bill.nextEvent.atUnix);
+      await Promise.all(tasks.splice(0));
       const pushes: Array<{ aps: Record<string, any> }> = [];
       const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (url, init) => {
         expect(String(url)).toContain("api.push.apple.com/3/device/");
@@ -373,6 +423,10 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       try {
         await liveBilling.alarm();
         expect(pushes[0]?.aps.event).toBe("update");
+        expect(pushes[0]?.aps["content-state"].nextBill?.asOfUnix).toBe(
+          pushes[0]?.aps["content-state"].bill.nextEvent.atUnix);
+        expect(pushes[0]?.aps["stale-date"]).toBeGreaterThanOrEqual(
+          pushes[0]?.aps["content-state"].bill.nextEvent.atUnix);
         // Simulate exhausted billing quota and a recent checkout of an earlier visit.
         state.set("alarm-budget", {
           tokens: 0, updatedAt: Date.now(), lastRunAt: Date.now(), lastTerminalBypassAt: Date.now(),
@@ -399,6 +453,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         await liveBilling.alarm();
         expect(pushes).toHaveLength(2);
         expect(pushes[1]?.aps.event).toBe("end");
+        expect(pushes[1]?.aps["content-state"].nextBill).toBeUndefined();
         const settled = checkout === "bulk" ? receipt.settlements[0] : receipt;
         const session = sqlite.query("SELECT ended_at FROM sessions WHERE shop_id=? AND id=?").get(shopId, sessionId) as { ended_at: string };
         expect(pushes[1]?.aps["content-state"]).toMatchObject({

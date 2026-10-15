@@ -159,7 +159,7 @@ export async function pushSessionEvent(
   if (c.env.LIVE_BILLING) {
     // A genuine completed session may send its final end state promptly.
     // Final delivery is bounded per activity by deduplication and retry limits.
-    await refreshActivityBill(c.env, input.shopId, input.playerId, input.event === "end");
+    await refreshActivityBill(c.env, input.shopId, input.playerId, input.event === "end", true);
     // The scheduler checks all remaining sessions before ending the visit.
     if (input.event === "end") return;
   }
@@ -218,6 +218,7 @@ export async function pushSessionEvent(
       startedAtUnix,
       now: nowSeconds,
       bill: snapshot?.bill,
+      nextBill: snapshot?.nextBill,
       staleAfterSeconds: snapshot?.nextCheckAt ? Math.max(1, Math.ceil(snapshot.nextCheckAt / 1000 - nowSeconds)) : undefined,
     });
 

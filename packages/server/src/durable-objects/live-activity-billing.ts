@@ -39,11 +39,41 @@ export type ActivityBill = {
   billable?: boolean;
 };
 
+type ActivitySnapshot = {
+  bill: ActivityBill;
+  nextBill?: ActivityBill;
+  nextCheckAt: number | null;
+  endedAtUnix: number | null;
+  startedAtUnix: number;
+};
+
 export async function activityBill(
   env: Pick<Env, "DB">,
   shopId: string,
   playerId: string,
   now = new Date(),
+): Promise<ActivitySnapshot | null> {
+  const snapshot = await calculateActivityBill(env, shopId, playerId, now);
+  const boundary = snapshot?.nextCheckAt;
+  if (!snapshot || snapshot.endedAtUnix !== null || !boundary || boundary <= now.getTime()
+    || boundary > now.getTime() + 8 * 3600_000) return snapshot;
+  // Forecast exactly one known boundary with the same engine, never a client rate.
+  try {
+    const next = await calculateActivityBill(env, shopId, playerId, new Date(boundary));
+    return { ...snapshot, ...(next && next.endedAtUnix === null
+      && next.startedAtUnix === snapshot.startedAtUnix ? { nextBill: next.bill } : {}) };
+  } catch {
+    // A forecast must not make the current bill or checkout unavailable.
+    console.warn("Live bill forecast unavailable");
+    return snapshot;
+  }
+}
+
+async function calculateActivityBill(
+  env: Pick<Env, "DB">,
+  shopId: string,
+  playerId: string,
+  now: Date,
 ) {
   await ensureD1UtcPricing(env.DB, now);
   const repos = createD1Repositories({
@@ -306,6 +336,7 @@ export async function refreshActivityBill(
   shopId: string,
   playerId: string,
   terminal = false,
+  urgent = false,
 ) {
   if (!env.LIVE_BILLING || !liveActivityConfig(env)) return;
   const token = await env.DB.prepare(
@@ -318,11 +349,11 @@ export async function refreshActivityBill(
   if (!token) return;
   const liveBillingNs = env.LIVE_BILLING as unknown as {
     getByName(name: string): {
-      refresh(shopId: string, playerId: string, terminal?: boolean): Promise<void>;
+      refresh(shopId: string, playerId: string, terminal?: boolean, urgent?: boolean): Promise<void>;
     };
   } | undefined;
   if (!liveBillingNs) return;
   await liveBillingNs
     .getByName(JSON.stringify([shopId, playerId]))
-    .refresh(shopId, playerId, terminal);
+    .refresh(shopId, playerId, terminal, urgent);
 }

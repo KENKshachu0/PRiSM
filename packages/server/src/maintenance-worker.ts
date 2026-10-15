@@ -16,12 +16,14 @@ try {
 
 /** Keeps the existing Durable Object class and storage; no business schema is touched. */
 export class LiveBilling extends BaseDurableObject<Env> {
-  async refresh(shopId: string, playerId: string): Promise<void> {
-    const previous = await this.ctx.storage.get<{ revision: number }>("visit");
+  async refresh(shopId: string, playerId: string, terminal = false, urgent = false): Promise<void> {
+    const previous = await this.ctx.storage.get<{ revision: number; terminal?: boolean; urgent?: boolean }>("visit");
     await this.ctx.storage.put("visit", {
       shopId,
       playerId,
       revision: (previous?.revision ?? 0) + 1,
+      terminal: terminal || previous?.terminal || false,
+      urgent: urgent || previous?.urgent || false,
     });
     // A refresh must not overwrite the maintenance alarm or accelerate the
     // exponential backoff. The alarm handler is the sole retry scheduler.

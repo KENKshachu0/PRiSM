@@ -203,7 +203,7 @@ async function handleLogin(c:C,routePublicId?:string) {
   );
   await c.env.DB.batch(writes);
   if(result.ok && playerId) {
-    const sync=refreshActivityBill(c.env,shop.id,playerId)
+    const sync=refreshActivityBill(c.env,shop.id,playerId,false,true)
       .catch(error=>console.error("Machine login live bill sync failed",error));
     try{c.executionCtx.waitUntil(sync);}catch{void sync;}
   }

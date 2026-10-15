@@ -393,7 +393,7 @@ async function handleLiveActivityRoute(
     const snapshot = await activityBill(c.env, shop.id, player.id);
     const sync = refreshActivityBill(c.env, shop.id, player.id).catch(error => console.error("Live bill recovery failed", error));
     try { c.executionCtx.waitUntil(sync); } catch { void sync; }
-    return c.json({ phase: snapshot ? "active" : null, startedAtUnix: snapshot?.startedAtUnix ?? null, bill: snapshot?.bill ?? null, nextCheckAtUnix: snapshot?.nextCheckAt ? snapshot.nextCheckAt / 1000 : null, endedAtUnix: snapshot?.endedAtUnix ?? null });
+    return c.json({ phase: snapshot ? "active" : null, startedAtUnix: snapshot?.startedAtUnix ?? null, bill: snapshot?.bill ?? null, nextBill: snapshot?.nextBill ?? null, nextCheckAtUnix: snapshot?.nextCheckAt ? snapshot.nextCheckAt / 1000 : null, endedAtUnix: snapshot?.endedAtUnix ?? null });
   }
   if (path === "live-activity/register") {
     await enforceRateLimits(c, [{ key: `live-activity:mutation:${user.id}`, limit: 5 }]);

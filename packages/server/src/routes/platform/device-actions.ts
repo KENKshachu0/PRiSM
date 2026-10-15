@@ -247,7 +247,7 @@ export async function executeDeviceAction(
         ).bind(shop.id, player?.id ?? ""),
       ]);
       if (player) {
-        const sync = refreshActivityBill(c.env, shop.id, player.id).catch(error => console.error("Device live bill sync failed", error));
+        const sync = refreshActivityBill(c.env, shop.id, player.id, false, true).catch(error => console.error("Device live bill sync failed", error));
         try { c.executionCtx.waitUntil(sync); } catch { void sync; }
       }
       return c.json({ operationId: body.operationId, ...result });

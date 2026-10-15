@@ -103,7 +103,9 @@ describe("maintenance worker alarm termination", () => {
       async deleteAlarm() { alarm = null; },
     };
     const object = new MaintenanceLiveBilling({ storage } as any, {} as any);
-    for (let i = 0; i < 10; i++) await object.refresh("s", "p");
+    await object.refresh("s", "p", true, true);
+    for (let i = 0; i < 9; i++) await object.refresh("s", "p");
+    expect(state.get("visit")).toMatchObject({ terminal: true, urgent: true });
     expect(writes).toBe(0);
     expect(alarm).toBe(initial);
     expect((state.get("visit") as { revision: number }).revision).toBe(10);

@@ -50,6 +50,13 @@ async function fixture(statuses: number[]) {
     sqlite.run("INSERT INTO player_checkouts VALUES ('shop',?,1234,?)", [id, date]);
   };
   return {
+    cacheActiveBill: (amountCents = 1200) => {
+      const visit = state.get("visit") as { revision: number };
+      state.set("bill", { revision: visit.revision, calculatedAt: now, snapshot: {
+        bill: { amountCents, planLabel: "", nextEvent: null, asOfUnix: now / 1000 },
+        nextCheckAt: now + 3600_000, endedAtUnix: null, startedAtUnix: now / 1000,
+      } });
+    },
     state, sqlite, pushes, config, object, addVisit, now: () => now, alarm: () => alarm,
     advance: (ms: number) => { now += ms; },
     runAlarm: async () => { expect(alarm).not.toBeNull(); now = alarm!; alarm = null; await object().alarm(); },
@@ -137,4 +144,67 @@ it("legacy oversized activity sets retain the four-request alarm ceiling", async
     expect(h.pushes).toHaveLength(5);
     expect(h.alarm()).toBeNull();
   } finally { h.close(); }
+});
+
+
+it("business changes bypass exhausted ordinary quota at priority ten, deduplicate, then return to ordinary scheduling", async () => {
+  const h = await fixture([]);
+  try {
+    h.addVisit("a");
+    h.sqlite.run("UPDATE sessions SET payment_status='unpaid',ended_at=NULL");
+    await h.object().refresh("shop", "player", false, true);
+    h.cacheActiveBill();
+    expect(h.alarm()).toBe(h.now() + 1000);
+    await h.runAlarm();
+    expect(h.pushes).toHaveLength(1);
+    expect(h.pushes[0]?.headers.get("apns-priority")).toBe("10");
+    expect(h.pushes[0]?.payload.aps.event).toBe("update");
+    expect(h.state.get("visit")).toMatchObject({ urgent: false });
+    await h.object().refresh("shop", "player", false, true);
+    h.cacheActiveBill();
+    await h.runAlarm();
+    expect(h.pushes).toHaveLength(1);
+    await h.object().refresh("shop", "player");
+    expect(h.alarm()).toBeGreaterThan(h.now() + 60_000);
+    await h.object().refresh("shop", "player", false, true);
+    h.cacheActiveBill(1500);
+    expect(h.alarm()).toBe(h.now() + 1000);
+    await h.runAlarm();
+    expect(h.pushes).toHaveLength(2);
+    expect(h.pushes[1]?.payload.aps["content-state"].bill.amountCents).toBe(1500);
+    expect(h.pushes[1]?.headers.get("apns-priority")).toBe("10");
+  } finally { h.close(); }
+});
+
+it("business updates preserve high priority across restart and bounded retries despite repeated refreshes", async () => {
+  for (const statuses of [[503, 200], Array(6).fill(429)]) {
+    const h = await fixture([...statuses]);
+    try {
+      h.addVisit("a");
+      h.sqlite.run("UPDATE sessions SET payment_status='unpaid',ended_at=NULL");
+      await h.object().refresh("shop", "player", false, true);
+      h.cacheActiveBill();
+      for (let attempt = 1; attempt <= statuses.length; attempt++) {
+        // Seed the cached calculation at the scheduled alarm time.
+        h.advance(h.alarm()! - h.now());
+        h.cacheActiveBill();
+        await h.runAlarm();
+        expect(h.pushes).toHaveLength(attempt);
+        expect(h.pushes.at(-1)?.headers.get("apns-priority")).toBe("10");
+        if (attempt < statuses.length) {
+          const retryAt = h.alarm();
+          await h.object().refresh("shop", "player", false, true);
+          h.cacheActiveBill();
+          await h.runAlarm();
+          expect(h.pushes).toHaveLength(attempt);
+          expect(h.alarm()).toBe(retryAt);
+        }
+      }
+      expect(h.state.get("visit")).toMatchObject({ urgent: false });
+      await h.object().refresh("shop", "player", false, true);
+      h.cacheActiveBill();
+      await h.runAlarm();
+      expect(h.pushes).toHaveLength(statuses.length);
+    } finally { h.close(); }
+  }
 });
