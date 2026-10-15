@@ -1479,7 +1479,65 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     expect(bindingRow?.subject).toBe("99887766");
   });
 
-  it("preserves independent geo gates when updating shop settings", async () => {
+  it("saves the unified location toggle despite stale legacy flags from the settings form", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { publicId, shopId, staffSessionToken } = await setupShopFixture(db, sqlite);
+    const app = createTestApp();
+    const url = `https://prism.test/api/v1/shops/${publicId}/settings`;
+    const headers = { Authorization: `Bearer ${staffSessionToken}`, "Content-Type": "application/json" };
+    // Imported shops can still contain a mixture of the legacy switches.
+    sqlite.run("UPDATE shop_billing_settings SET checkin_geo=1,checkout_geo=0,machine_geo=0 WHERE shop_id=?", [shopId]);
+    for (const enabled of [false, true, false]) {
+      const current = await (await app.fetch(new Request(url, { headers }), env)).json() as Record<string, unknown>;
+      // Match BillingSettings: fetch latest settings, merge only the edited section.
+      const response = await app.fetch(new Request(url, {
+        method: "PUT", headers, body: JSON.stringify({ ...current, locationEnabled: enabled }),
+      }), env);
+      expect(response.status).toBe(200);
+      const saved = await response.json() as Record<string, unknown>;
+      const expected = { locationEnabled: enabled, checkinGeo: enabled, checkoutGeo: enabled, machineGeo: enabled };
+      expect(saved).toMatchObject(expected);
+      const flags = sqlite.query("SELECT checkin_geo,checkout_geo,machine_geo FROM shop_billing_settings WHERE shop_id=?").get(shopId);
+      expect(flags).toEqual({ checkin_geo: +enabled, checkout_geo: +enabled, machine_geo: +enabled });
+      const reloaded = await (await app.fetch(new Request(url, { headers }), env)).json();
+      expect(reloaded).toMatchObject(expected);
+    }
+    sqlite.close();
+  });
+
+  for (const invalid of ["pricing", "balance"] as const) {
+    it(`allows location edits with invalid existing ${invalid} while still validating billing changes`, async () => {
+      const { db, sqlite, env } = createTestContext();
+      const { publicId, shopId, staffSessionToken } = await setupShopFixture(db, sqlite);
+      const app = createTestApp();
+      const url = `https://prism.test/api/v1/shops/${publicId}/settings`;
+      const headers = { Authorization: `Bearer ${staffSessionToken}`, "Content-Type": "application/json" };
+      if (invalid === "pricing") sqlite.run("UPDATE pricing_configs SET enabled=0 WHERE shop_id=?", [shopId]);
+      else sqlite.run("UPDATE asset_definitions SET status='archived' WHERE shop_id=? AND type='currency'", [shopId]);
+      const current = await (await app.fetch(new Request(url, { headers }), env)).json() as Record<string, unknown>;
+      const save = (patch: Record<string, unknown>) => app.fetch(new Request(url, {
+        method: "PUT", headers, body: JSON.stringify({ ...current, ...patch }),
+      }), env);
+      const location = await save({ locationEnabled: false });
+      expect(location.status).toBe(200);
+      expect(await location.json()).toMatchObject({ locationEnabled: false, billingEnabled: true, billingConfiguration: { ready: false } });
+      const changed = await save({ entryPricingIds: ["missing-rule"] });
+      expect(changed.status).toBe(409);
+      expect(await changed.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
+      expect((await save({ billingEnabled: false, cashierEnabled: false })).status).toBe(200);
+      const enable = await save({ billingEnabled: true });
+      expect(enable.status).toBe(409);
+      expect(await enable.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
+      // Re-enabling cashier also requires a valid billing configuration.
+      sqlite.run("UPDATE shop_billing_settings SET billing_enabled=1 WHERE shop_id=?", [shopId]);
+      const cashier = await save({ cashierEnabled: true });
+      expect(cashier.status).toBe(409);
+      expect(await cashier.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
+      sqlite.close();
+    });
+  }
+
+  it("preserves independent legacy geo gates when the unified toggle is omitted", async () => {
     const { db, sqlite, env } = createTestContext();
     const { publicId, shopId, staffSessionToken } = await setupShopFixture(db, sqlite);
     const app = createTestApp();

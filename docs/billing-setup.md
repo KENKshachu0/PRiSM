@@ -43,7 +43,7 @@
 }
 ```
 
-`ready` 表示有效余额资产存在、至少选中一个有效入场方案，独立于 `billingEnabled`。启用计费的配置校验失败仍返回 `409 BILLING_CONFIGURATION_REQUIRED`，`error.details` 带相同结构，指出未完成的部分和失效方案编号。`time.cap` 不属于有效入场方案；也不会因当前时刻落在非营业区间就要求重新初始化。
+`ready` 表示有效余额资产存在、至少选中一个有效入场方案，独立于 `billingEnabled`。已有计费店铺的资产或入场规则失效时，仍可单独修改位置校验、身份绑定等设置；不会因此自动关闭计费。启用计费、启用前台收银或更改入场规则时，配置校验失败仍返回 `409 BILLING_CONFIGURATION_REQUIRED`，`error.details` 带相同结构，指出未完成的部分和失效方案编号。`time.cap` 不属于有效入场方案；也不会因当前时刻落在非营业区间就要求重新初始化。
 
 `POST /api/v1/merchant/shops` 的 `billingSetup.createBotToken` 默认 `false`，未主动选择时不创建集成凭据，响应 `botToken: null`；显式 `true` 时创建凭据并仅在该响应返回明文 token。
 

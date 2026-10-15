@@ -469,10 +469,10 @@ shopRouter.put("/settings", async (c) => {
     },
     async () => {
       const body = settingsSchema.parse(await c.req.json());
-      // Location switches are independent. The legacy aggregate flag is only a fallback.
-      const checkinGeo = body.checkinGeo ?? body.locationEnabled ?? !!initialShop.checkin_geo;
-      const checkoutGeo = body.checkoutGeo ?? body.locationEnabled ?? !!initialShop.checkout_geo;
-      const machineGeo = body.machineGeo ?? body.locationEnabled ?? !!initialShop.machine_geo;
+      // The unified toggle wins over aliases included in a read/merge/write request.
+      const checkinGeo = body.locationEnabled ?? body.checkinGeo ?? !!initialShop.checkin_geo;
+      const checkoutGeo = body.locationEnabled ?? body.checkoutGeo ?? !!initialShop.checkout_geo;
+      const machineGeo = body.locationEnabled ?? body.machineGeo ?? !!initialShop.machine_geo;
       const cashierEnabled = body.cashierEnabled ?? !!initialShop.cashier_enabled;
       const identityBindingRequired = body.identityBindingRequired ?? !!initialShop.identity_binding_required;
 
@@ -489,7 +489,11 @@ shopRouter.put("/settings", async (c) => {
       }
 
       const configuration = await billingConfiguration(c.env.DB, initialShop.id, body.entryPricingIds);
-      if (body.billingEnabled && !configuration.ready) {
+      const billingChanged = !initialShop.billing_enabled ||
+        (!initialShop.cashier_enabled && cashierEnabled) ||
+        JSON.stringify(body.entryPricingIds) !== JSON.stringify(publicSettings(initialShop).entryPricingIds);
+      // Existing invalid pricing must not prevent editing unrelated settings.
+      if (body.billingEnabled && billingChanged && !configuration.ready) {
         jsonError(
           409,
           !configuration.balanceAssetsReady
@@ -542,6 +546,10 @@ shopRouter.put("/settings", async (c) => {
 
       return c.json({
         ...body,
+        locationEnabled: checkinGeo || checkoutGeo || machineGeo,
+        checkinGeo,
+        checkoutGeo,
+        machineGeo,
         cashierEnabled,
         identityBindingRequired,
         billingConfiguration: configuration,

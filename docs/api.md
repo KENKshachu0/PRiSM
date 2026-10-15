@@ -494,3 +494,9 @@ React `/admin` 账号管理页提供删除入口。`DELETE /api/v1/admin/users/:
 ## Web 只读计费输入
 
 统一平台为玩家、员工与前台档案提供 `GET .../billing-inputs`，返回 `{ playerId, billingSnapshot }`。Web 用同一计费引擎在浏览器 Worker 内生成账单预览，最终确认仍由后端核算。玩家只能读取自己的输入；员工读取按店铺隔离；前台入口要求可写员工和前台模式。公共店铺元数据的 `?pricing=raw` 返回完整规则及 `pricingSchedule.clientCalculation: true`，供浏览器计算当天规则。旧预估 API 保持兼容；详情见[Web 计费计算与只读输入](browser-billing-previews.md)。
+
+## 店铺位置校验设置保存
+
+`PUT /api/v1/shops/:shopCode/settings` 中显式提供的 `locationEnabled` 优先于同时提交的旧字段 `checkinGeo` / `checkoutGeo` / `machineGeo`，统一更新三项存储值。前端读取设置后合并提交时，旧别名不会覆盖用户刚修改的总开关；响应返回解析后的开关值。省略总开关的旧客户端仍可提交旧字段。租户读取时继续将旧位置标志按 OR 归一化为统一策略。
+
+仅修改位置或身份等设置，不要求已有计费配置重新通过校验；启用计费、启用收银或更改入场方案仍需配置有效，否则返回 `409 BILLING_CONFIGURATION_REQUIRED`。店主权限、未结账时禁止关闭计费／收银等限制继续生效。
