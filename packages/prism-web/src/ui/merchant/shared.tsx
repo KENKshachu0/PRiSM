@@ -194,7 +194,14 @@ export function ActionForm({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    const form = new FormData(event.currentTarget);
+    // `new FormData(form)` drops the button that submitted the form, so a
+    // second submit button cannot tell the handler what it was asked to do.
+    // Passing the submitter keeps that intent in the payload.
+    const submitter =
+      event.nativeEvent instanceof SubmitEvent
+        ? event.nativeEvent.submitter
+        : null;
+    const form = new FormData(event.currentTarget, submitter);
     setBusy(true);
     setError("");
     try {

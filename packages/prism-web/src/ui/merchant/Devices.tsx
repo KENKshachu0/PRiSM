@@ -55,6 +55,7 @@ export function DevicesPage() {
   const [editing, setEditing] = useState<Machine | "new" | null>(null);
   const [qr, setQR] = useState<Machine | null>(null);
   const [operating, setOperating] = useState<Machine | null>(null);
+  const [editorLocked, setEditorLocked] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const load = useCallback(
     () => Api.machines(shopId).then((r) => setDevices(r.machines)),
@@ -177,10 +178,12 @@ export function DevicesPage() {
         <Modal
           title={editing === "new" ? "添加设备" : "编辑设备"}
           close={() => setEditing(null)}
+          dismissDisabled={editorLocked}
           wide
         >
           <DeviceEditor
             value={editing === "new" ? undefined : editing}
+            onLockChange={setEditorLocked}
             done={() => {
               setEditing(null);
               void load();

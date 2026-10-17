@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { api, type Machine } from "../../api";
 import { useI18n } from "../../i18n";
-import { ActionForm, Field, buttonQuiet, input, useMerchant } from "./shared";
+import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant } from "./shared";
 import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
 
 /**
@@ -23,9 +23,12 @@ import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
 export function DeviceEditor({
   value,
   done,
+  onLockChange,
 }: {
   value?: Machine;
   done: () => void;
+  /** Locks the dialog while a one-time token is on screen. */
+  onLockChange: (locked: boolean) => void;
 }) {
   const { shopId, shopCode, billingEnabled } = useMerchant();
   const { t } = useI18n();
@@ -65,7 +68,6 @@ export function DeviceEditor({
   const [coinAfterSwipe, setCoinAfterSwipe] = useState(
     value?.coinAfterSwipe ?? false,
   );
-  const [rotateToken, setRotateToken] = useState(false);
 
   const [lockId, setLockId] = useState(
     value?.ttlockLockId ? String(value.ttlockLockId) : "",
@@ -94,6 +96,13 @@ export function DeviceEditor({
       .then((r) => setPricing(r.pricingConfigs))
       .catch(() => setPricing([]));
   }, [caps.mahjong, shopCode]);
+
+  // A token that is on screen has not reached the machine yet, so the dialog
+  // must stay open until the store confirms it wrote the value down.
+  useEffect(() => {
+    onLockChange(!!issued);
+    return () => onLockChange(false);
+  }, [issued, onLockChange]);
 
   /** Why a capability's own configuration is not complete yet. */
   const missingConfig = (id: CapabilityId): string | null => {
@@ -132,6 +141,57 @@ export function DeviceEditor({
   const incomplete = (id: CapabilityId): string | null =>
     caps[id] ? missingConfig(id) : null;
 
+  /** The INI fragment a machine needs to reach this platform directly. */
+  const iniSnippet = issued
+    ? `serverUrl=${issued.url}\ndeviceToken=${issued.token}`
+    : "";
+
+  if (issued) {
+    // The token is a one-time credential handout, not part of the form. The
+    // dialog stays locked until the store confirms it wrote the value down.
+    return (
+      <div className="grid gap-5">
+        <div className="grid gap-1">
+          <h3 className="text-sm font-semibold">{t("设备令牌已签发")}</h3>
+          <p className="text-xs leading-relaxed text-ink/60">
+            {t("这是唯一一次显示，离开后无法再次查看。")}
+          </p>
+        </div>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">{t("设备令牌")}</span>
+            <CopyButton value={issued.token} label="复制令牌" />
+          </div>
+          <code className="break-all rounded-lg bg-ink/5 p-3 text-xs">
+            {issued.token}
+          </code>
+        </div>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">{t("写入机台 INI")}</span>
+            <CopyButton value={iniSnippet} label="复制片段" />
+          </div>
+          <pre className="overflow-x-auto whitespace-pre rounded-lg bg-ink/5 p-3 text-xs">
+            {iniSnippet}
+          </pre>
+          <p className="text-xs leading-relaxed text-ink/60">
+            {t("把这两行写入 hinata.ini 或 segatools.ini 的 [aimeio] 段，然后重启机台。")}
+          </p>
+        </div>
+        <button
+          type="button"
+          className={`${primary} justify-self-start`}
+          onClick={() => {
+            setIssued(null);
+            done();
+          }}
+        >
+          {t("我已写入机台")}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <ActionForm
       sticky
@@ -147,15 +207,14 @@ export function DeviceEditor({
         if (saved?.machine) setLive(saved.machine);
         const token = saved?.relayToken;
         if (!token) {
-          // A save that issued no token means the previous one is still in use;
-          // showing the old value would suggest it had just been re-issued.
           setIssued(null);
           return false;
         }
         setIssued({ token, url: saved?.machine?.relayUrl ?? "" });
         return true;
       }}
-      submit={async () => {
+      submit={async (f) => {
+        const issuing = f.get("intent") === "issue";
         if (!name.trim()) throw new Error(t("请填写设备名称"));
         for (const id of ["power", "hinata_io", "door", "mahjong"] as const) {
           const reason = incomplete(id);
@@ -177,6 +236,18 @@ export function DeviceEditor({
             throw new Error(t("请先补全标记为「待配置」的能力。"));
           }
         }
+        // Minting is an explicit action. A plain save on a direct-connect
+        // device without a credential would silently create one, so it is
+        // refused instead.
+        if (
+          caps.hinata_io &&
+          embedded &&
+          !live?.hasRelayToken &&
+          !issuing
+        ) {
+          setOpen("hinata_io");
+          throw new Error(t("请先签发设备令牌，或改为外部中继。"));
+        }
         return api(`/api/v1/merchant/machines${value ? `/${value.id}` : ""}`, {
           method: value ? "PATCH" : "POST",
           body: JSON.stringify({
@@ -196,7 +267,8 @@ export function DeviceEditor({
             // A capability that is switched off is removed, which the server
             // expresses as `null` for the bound fields.
             relayConnection: caps.hinata_io && embedded ? "embedded" : "external",
-            ...(caps.hinata_io && embedded && rotateToken
+            // Re-issuing replaces the token the machine currently uses.
+            ...(caps.hinata_io && embedded && issuing && live?.hasRelayToken
               ? { rotateRelayToken: true }
               : {}),
             // Direct mode is authenticated by its device token, so it has no URL
@@ -395,10 +467,7 @@ export function DeviceEditor({
             {embedded ? (
               <DirectConnectPanel
                 live={live}
-                issued={issued}
                 hasRelayToken={!!live?.hasRelayToken}
-                rotateToken={rotateToken}
-                onRotate={setRotateToken}
               />
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
@@ -680,18 +749,18 @@ function CapabilityCard({
   );
 }
 
+/**
+ * Direct connect authenticates the machine with a token this platform issues.
+ * Minting it is a separate, explicit action: a plain save must never hand the
+ * store a secret it did not ask for. The button submits the form with
+ * `intent=issue`, which is the only path that creates or rotates the token.
+ */
 function DirectConnectPanel({
   live,
-  issued,
   hasRelayToken,
-  rotateToken,
-  onRotate,
 }: {
   live: Machine | null;
-  issued: { token: string; url: string } | null;
   hasRelayToken: boolean;
-  rotateToken: boolean;
-  onRotate: (rotate: boolean) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -708,47 +777,26 @@ function DirectConnectPanel({
           )}
         </p>
       )}
-      {issued ? (
-        <div className="grid gap-2 rounded border border-mint/30 bg-panel p-3">
-          <p className="text-sm font-medium">{t("设备令牌（仅显示一次）")}</p>
-          <code className="break-all rounded bg-ink/5 p-2 text-xs">
-            {issued.token}
-          </code>
-          <p className="text-xs text-ink/70">
-            {t(
-              "把下面两行写入机台的 hinata.ini 或 segatools.ini 的 [aimeio] 段，然后重启机台：",
-            )}
-          </p>
-          <code className="break-all rounded bg-ink/5 p-2 text-xs">
-            {`serverUrl=${issued.url}\ndeviceToken=${issued.token}`}
-          </code>
-          <p className="text-xs text-coral">
-            {t("离开本页后无法再次查看，请立即保存。")}
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* The URL is the same for every machine today, but the store
-              still needs it before the first save. */}
-          <p className="break-all text-xs text-ink/60">
-            {`serverUrl=${live?.relayUrl ?? ""}`}
-          </p>
-          <p className="text-sm text-ink/70">
-            {hasRelayToken
-              ? t("保存后如未更换令牌，可继续使用原有令牌；勾选轮换令牌可重新签发。")
-              : t("保存后签发设备令牌并显示一次。")}
-          </p>
-        </>
+      {live?.relayUrl && (
+        <p className="break-all text-xs text-ink/60">{`serverUrl=${live.relayUrl}`}</p>
       )}
-      {hasRelayToken && !issued && (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={rotateToken}
-            onChange={(e) => onRotate(e.target.checked)}
-          />
-          {t("轮换设备令牌")}
-        </label>
+      <p className="text-sm leading-relaxed text-ink/70">
+        {hasRelayToken
+          ? t("已配置设备令牌，继续保存不会改变它。")
+          : t("直连模式由设备令牌认证，签发后会显示一次并写入机台 INI。")}
+      </p>
+      <button
+        type="submit"
+        name="intent"
+        value="issue"
+        className={`${button} justify-self-start`}
+      >
+        {t(hasRelayToken ? "轮换设备令牌" : "签发设备令牌")}
+      </button>
+      {hasRelayToken && (
+        <p className="text-xs leading-relaxed text-coral">
+          {t("轮换后机台上的旧令牌立即失效，需要把新令牌重新写入 INI。")}
+        </p>
       )}
       {live?.relayE2ee === true && (
         <p className="text-sm text-coral">
@@ -758,6 +806,29 @@ function DirectConnectPanel({
         </p>
       )}
     </div>
+  );
+}
+
+/** Copies a one-time value and confirms it, because selecting it by hand is error-prone. */
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`${buttonQuiet} min-h-9 px-2 text-xs`}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // Clipboard access can be denied; the value stays selectable.
+        }
+      }}
+    >
+      {t(copied ? "已复制" : label)}
+    </button>
   );
 }
 
