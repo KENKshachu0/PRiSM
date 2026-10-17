@@ -11,6 +11,7 @@ import { Api, api, type Shop } from "../api";
 import { useI18n } from "../i18n";
 import { useAuth } from "./AuthContext";
 import { RequireLogin } from "./RequireLogin";
+import { useScrollFade } from "./use-scroll-fade";
 import { shopApi } from "./BillingPages";
 import {
   MerchantContext,
@@ -118,6 +119,7 @@ function Workspace({
 }) {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const navRef = useScrollFade<HTMLElement>();
   const [state, setState] = useState<{
     billingEnabled: boolean;
     cashierEnabled: boolean;
@@ -210,21 +212,26 @@ function Workspace({
         </div>
 
       </header>
-      <nav
-        aria-label={t("店家导航")}
-        className="flex gap-1 overflow-x-auto border-b border-ink/10"
-      >
-        {tabs.map(([key, label]) => (
-          <NavLink
-            key={key}
-            to={`/merchant/${shop.publicId}/${key}`}
-            aria-current={section === key ? "page" : undefined}
-            className={`focus-ring whitespace-nowrap border-b-2 px-4 py-3 text-sm ${section === key ? "border-mint font-semibold text-ink" : "border-transparent text-ink/55 hover:text-ink"}`}
-          >
-            {t(label!)}
-          </NavLink>
-        ))}
-      </nav>
+      {/* The fade lives on the wrapper: a pseudo-element inside a scrolling box
+          is painted at the scroll origin, so it would slide away with the tabs. */}
+      <div className="scroll-fade">
+        <nav
+          ref={navRef}
+          aria-label={t("店家导航")}
+          className="flex gap-1 overflow-x-auto border-b border-ink/10"
+        >
+          {tabs.map(([key, label]) => (
+            <NavLink
+              key={key}
+              to={`/merchant/${shop.publicId}/${key}`}
+              aria-current={section === key ? "page" : undefined}
+              className={`focus-ring whitespace-nowrap border-b-2 px-4 py-3 text-sm ${section === key ? "border-mint font-semibold text-ink" : "border-transparent text-ink/55 hover:text-ink"}`}
+            >
+              {t(label!)}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
       <div key={section}>
         {section === "devices" ? (
           <DevicesPage />

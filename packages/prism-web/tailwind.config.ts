@@ -10,6 +10,10 @@ export default {
         surface: "var(--color-surface)",
         ink: "rgb(var(--color-ink) / <alpha-value>)",
         mint: "var(--color-mint)",
+        primary: {
+          DEFAULT: "var(--color-primary)",
+          foreground: "var(--color-on-primary)",
+        },
         coral: "var(--color-coral)",
       },
       boxShadow: {

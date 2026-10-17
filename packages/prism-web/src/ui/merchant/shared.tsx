@@ -26,7 +26,10 @@ export const MerchantContext = createContext({
 export const useMerchant = () => useContext(MerchantContext);
 export const button =
   "focus-ring inline-flex whitespace-nowrap min-h-11 items-center justify-center gap-2 rounded-xl border border-ink/20 px-4 py-2 text-sm font-medium transition-colors hover:bg-ink/5 disabled:opacity-50";
-export const primary = `${button} border-transparent bg-mint text-white hover:opacity-90`;
+/** A borderless button for dense rows, where a full outline reads as a primary action. */
+export const buttonQuiet =
+  "focus-ring inline-flex whitespace-nowrap items-center gap-1.5 rounded-lg border border-transparent text-sm text-ink/65 transition-colors hover:bg-ink/5 hover:text-ink disabled:opacity-50";
+export const primary = `${button} border-transparent bg-primary text-primary-foreground hover:opacity-90`;
 export const input =
   "focus-ring min-h-11 w-full rounded-lg border border-ink/20 bg-panel px-3 py-2 text-sm font-normal disabled:opacity-60";
 export const money = (value: number | null | undefined) =>
@@ -115,11 +118,14 @@ export function Modal({
   children,
   close,
   dismissDisabled = false,
+  wide = false,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
   dismissDisabled?: boolean;
+  /** Room for a multi-section form rather than a single short confirmation. */
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const { t } = useI18n();
@@ -132,7 +138,7 @@ export function Modal({
     <dialog
       ref={ref}
       onCancel={event => { if (dismissDisabled) event.preventDefault(); else close(); }}
-      className="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-xl overflow-y-auto rounded-xl bg-panel p-0 text-ink backdrop:bg-black/35"
+      className={`m-auto max-h-[90dvh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl bg-panel p-0 text-ink backdrop:bg-black/35 ${wide ? "max-w-2xl" : "max-w-xl"}`}
       aria-label={t(title)}
     >
       <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-ink/10 bg-panel px-5 py-4">
@@ -157,6 +163,8 @@ export function ActionForm({
   label = "保存",
   done,
   onResult,
+  sticky = false,
+  noValidate = false,
 }: {
   children: ReactNode;
   submit: (form: FormData) => Promise<unknown>;
@@ -168,6 +176,17 @@ export function ActionForm({
    * freshly minted device token.
    */
   onResult?: (result: unknown) => boolean;
+  /**
+   * Keep the submit button in view while the form is longer than the dialog.
+   * A long form whose only button sits past the fold looks unsaveable.
+   */
+  sticky?: boolean;
+  /**
+   * Let the caller validate instead of the browser. Required when part of the
+   * form lives in a collapsed container: the browser cannot focus a hidden
+   * field, so it would block submit with no visible message.
+   */
+  noValidate?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -188,15 +207,30 @@ export function ActionForm({
     }
   }
   return (
-    <form onSubmit={save}>
+    <form onSubmit={save} noValidate={noValidate || undefined}>
       <fieldset disabled={busy} className="grid gap-4">
         {children}
-        {error && (
+        {!sticky && error && (
           <p role="alert" className="text-sm text-coral">
             {error}
           </p>
         )}
-        <button className={`${primary} justify-self-start`}>{t(busy ? "处理中…" : label)}</button>
+        <div
+          className={
+            sticky
+              ? "sticky bottom-0 -mx-5 -mb-5 mt-1 border-t border-ink/10 bg-panel px-5 py-4"
+              : undefined
+          }
+        >
+          {/* A sticky submit button stays visible past the fold; its error has
+              to travel with it, or the user presses Save and sees nothing. */}
+          {sticky && error && (
+            <p role="alert" className="mb-3 text-sm text-coral">
+              {error}
+            </p>
+          )}
+          <button className={`${primary} justify-self-start`}>{t(busy ? "处理中…" : label)}</button>
+        </div>
       </fieldset>
     </form>
   );

@@ -1,5 +1,5 @@
 import { PlayerAccountMenu } from "./PlayerAccountMenu";
-import { useI18n } from "../i18n";
+import { resolveLocale, translate, useI18n } from "../i18n";
 import { Component, lazy, Suspense, type ReactNode } from "react";
 import {
   Link,
@@ -184,12 +184,16 @@ class PageErrorBoundary extends Component<
 
   render() {
     if (!this.state.failed) return this.props.children;
+    // The boundary sits above I18nProvider's consumers it replaces, so it reads
+    // the same negotiated locale directly instead of requiring a provider.
+    const language =
+      typeof navigator === "undefined" ? "en" : resolveLocale(navigator.languages);
     return (
       <section role="alert" className="mx-auto max-w-lg space-y-4 rounded-xl border border-ink/10 bg-panel p-6">
-        <h1 className="text-xl font-semibold">页面暂时无法显示</h1>
-        <p className="text-sm text-ink/70">页面发生错误，请刷新重试。若问题持续，请联系管理员。</p>
-        <button className="focus-ring rounded-xl bg-mint px-4 py-3 text-sm font-medium text-white" onClick={() => window.location.reload()}>
-          刷新页面
+        <h1 className="text-xl font-semibold">{translate("页面暂时无法显示", language)}</h1>
+        <p className="text-sm text-ink/70">{translate("页面发生错误，请刷新重试。若问题持续，请联系管理员。", language)}</p>
+        <button className="focus-ring rounded-xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground" onClick={() => window.location.reload()}>
+          {translate("刷新页面", language)}
         </button>
       </section>
     );

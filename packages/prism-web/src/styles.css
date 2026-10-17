@@ -8,7 +8,13 @@
   --color-panel: #ffffff;
   --color-surface: #ffffff;
   --color-ink: 29 29 31;
-  --color-mint: #007aff;
+  /* Accent text and borders. */
+  --color-mint: #0066d6;
+  /* Filled buttons carry white text, so this must clear 4.5:1 on its own. In
+     dark mode the accent has to get lighter to read on the panel while the
+     button has to stay dark enough for white, so the two values differ. */
+  --color-primary: #0066d6;
+  --color-on-primary: #ffffff;
   --color-coral: #d94f45;
   --radius: 0.75rem;
   --shadow-soft: 0 8px 32px rgba(29, 29, 31, 0.045);
@@ -27,7 +33,9 @@
     --color-panel: #1c1c1e;
     --color-surface: #2c2c2e;
     --color-ink: 245 245 247;
-    --color-mint: #0a84ff;
+    --color-mint: #409cff;
+    --color-primary: #0b6fd8;
+    --color-on-primary: #ffffff;
     --color-coral: #e06056;
     --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.12);
 
@@ -54,6 +62,47 @@ input::placeholder {
 
 .focus-ring {
   @apply focus:outline-none focus:ring-2 focus:ring-mint focus:ring-offset-2 focus:ring-offset-panel;
+}
+
+/*
+ * The workspace is a single-column grid. `auto` track sizing would let a
+ * horizontal scroller (the tab row) push the column past the viewport, so the
+ * track is explicitly allowed to shrink and children get min-width: 0.
+ */
+.merchant-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+.merchant-workspace > * {
+  min-width: 0;
+}
+.scroll-fade {
+  position: relative;
+  min-width: 0;
+}
+.scroll-fade::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  width: 2.5rem;
+  pointer-events: none;
+  background: linear-gradient(
+    to right,
+    rgb(245 245 247 / 0) 0%,
+    var(--color-canvas) 85%
+  );
+}
+.scroll-fade[data-at-end="true"]::after {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  .scroll-fade::after {
+    background: linear-gradient(
+      to right,
+      rgb(17 17 19 / 0) 0%,
+      var(--color-canvas) 85%
+    );
+  }
 }
 
 .leaflet-container {
@@ -453,24 +502,29 @@ button.credential-row:not(:disabled):active {
 }
 @media (max-width: 640px) {
   .site-header {
-    padding: 20px 16px 0;
+    padding: 12px 16px 0;
   }
   .site-header-inner {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 20px;
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 12px;
   }
   .site-navigation {
-    justify-content: space-around;
+    justify-content: flex-end;
+    gap: 2px;
   }
   .site-nav-item {
-    padding: 8px 6px;
+    padding: 8px 10px;
     flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
+    gap: 2px;
+    font-size: 11px;
+  }
+  .site-nav-item .nav-label {
+    display: none;
   }
   .site-main {
-    padding: 28px 16px 40px;
+    padding: 20px 16px 40px;
   }
   .site-main :is(form, section).p-5 {
     padding: 22px;

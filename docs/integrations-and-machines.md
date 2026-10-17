@@ -160,6 +160,15 @@ await client.requestScanByIdentity(
 
 所有写入都经过 `packages/server/src/devices/bus.ts`：`perform`（动作）、`signal`（回报）、`setOwned`（平台权威状态）、`observe`（实时读外部状态）。其他代码不直接写设备表。卡号只作为临时参数交给执行器，从不落库；门锁临时密码只在本次响应返回。
 
+### 设备看板与编辑器（Web）
+
+商户后台的设备页按「设备是身份、能力是配置」组织，与服务端能力目录一一对应：
+
+- 设备卡片只陈述三件事：设备身份（名称、别名、启用状态）、已绑定的能力徽章、实时状态（电源、直连在线）。次要操作收进溢出菜单，底部只保留「二维码」和「操作记录」两个入口。
+- 编辑器分两段：**设备身份**（名称、别名、启用）和**设备能力**。每项能力是一张带开关的卡片——电源、刷卡（外部中继或直连）、开门密码、麻将桌；关闭的能力不渲染其表单，避免四种凭据同时铺开。提交按钮吸底，长表单无需滚到末尾才能保存。
+- 能力判定集中在前端适配层 `packages/prism-web/src/ui/merchant/device-capabilities.ts`（`deviceCapabilities`、`canOperateCoin`、`deviceActions`、`deviceSummaryKey`）。卡片徽章、操作记录里的可用动作、编辑器里的开关都读这一处，不再各自从 `ttlockLockId`/`homeAssistant`/`hasHinata` 推导。
+- 提交仍使用商户 API 的扁平字段（`homeAssistant`、`ttlockLockId`、`mahjong`、`hinataUrl`/`hinataPassword`、`relayConnection`、`coinKey`、`coinAfterSwipe`）；关闭某项能力时发送 `null`（刷卡为 `relayConnection: "external"` + `hinataUrl: null`）让服务端删除对应能力行。适配层只是视图模型，不改变接口契约。
+
 ### 引用设备与 Bot 动作
 
 Bot、员工和 integration API 用 `target.ref` 引用设备，匹配设备 ID、`public_id`、名称或任一别名（不区分大小写、去首尾空白）；多台同名返回 `DEVICE_REFERENCE_AMBIGUOUS`。`all` 只用于 `power.on/off`，作用于所有已启用且绑定电源的设备，每台一条操作，共用同一个父操作 ID。玩家发起 `coin`、`aime.scan`、`power.*` 需要处于活跃计费场次；投币受店铺 `venue.operations.coinCooldownMs` 冷却限制。返回体保持旧的 `DeviceCommand` 形状（`status` 为 `acked`/`pending`/`expired`，`executorKind`、`payload.deviceLabel`、`payload.executorFailure`、门锁的 `temporaryPassword`），Bot 与员工视图无需改动。

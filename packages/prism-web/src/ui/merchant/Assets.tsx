@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { displayDateTime } from "../bill-time";
+import { useScrollFade } from "../use-scroll-fade";
 import {
   AssetDetails,
   EffectDetails,
@@ -41,6 +42,7 @@ export function AssetsPage() {
   const presents = useResource<{ presents: Present[] }>("presents");
   const codes = useResource<{ redeemCodes: RedeemCode[] }>("redeem-codes");
   const [tab, setTab] = useState("assets");
+  const tabRef = useScrollFade<HTMLElement>();
   const [creatingAsset, setCreatingAsset] = useState(false);
   const [editing, setEditing] = useState<Asset | null>(null);
   const [effect, setEffect] = useState<Effect | null>(null);
@@ -106,26 +108,29 @@ export function AssetsPage() {
           </button>
         )}
       </div>
-      <nav
-        className="flex gap-1 overflow-x-auto border-b border-ink/10"
-        aria-label={t("资产分类")}
-      >
-        {[
-          ["assets", "资产"],
-          ["effects", "优惠"],
-          ["gifts", "礼物"],
-          ["codes", "兑换码"],
-        ].map(([key, label]) => (
-          <button
-            key={key}
-            className={`focus-ring whitespace-nowrap border-b-2 px-4 py-3 text-sm ${tab === key ? "border-ink font-semibold" : "border-transparent text-ink/60"}`}
-            onClick={() => setTab(key!)}
-            aria-current={tab === key ? "page" : undefined}
-          >
-            {t(label!)}
-          </button>
-        ))}
-      </nav>
+      <div className="scroll-fade">
+        <nav
+          ref={tabRef}
+          className="flex gap-1 overflow-x-auto border-b border-ink/10"
+          aria-label={t("资产分类")}
+        >
+          {[
+            ["assets", "资产"],
+            ["effects", "优惠"],
+            ["gifts", "礼物"],
+            ["codes", "兑换码"],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              className={`focus-ring whitespace-nowrap border-b-2 px-4 py-3 text-sm ${tab === key ? "border-mint font-semibold text-ink" : "border-transparent text-ink/55 hover:text-ink"}`}
+              onClick={() => setTab(key!)}
+              aria-current={tab === key ? "page" : undefined}
+            >
+              {t(label!)}
+            </button>
+          ))}
+        </nav>
+      </div>
       {tab !== "codes" && (
         <label className="flex gap-2 text-sm">
           <input
