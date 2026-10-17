@@ -485,16 +485,19 @@ function DeviceActions({
 }) {
   const { t } = useI18n();
   const caps = deviceCapabilities(device);
-  const actions = deviceActions(device).filter(
-    // Card scans and mahjong seats need a chosen player, so they get their own
-    // controls below instead of a plain button.
-    (name) => !name.startsWith("mahjong.") && name !== "aime.scan",
+  const allActions = deviceActions(device);
+  const actions = allActions.filter(
+    // Card scans, coin presses and mahjong seats take an input, so they get
+    // their own controls below instead of a plain button.
+    (name) =>
+      !name.startsWith("mahjong.") && name !== "aime.scan" && name !== "coin",
   );
   const players = useResource<{ players: Player[] }>(
     caps.mahjong ? "players" : null,
   );
   const [selectedPlayer, setSelectedPlayer] = useState("");
   const [cardNumber, setCardNumber] = useState("");
+  const [coinKey, setCoinKey] = useState("");
   const [table, setTable] = useState<MahjongTable | null>(null);
   const [confirming, setConfirming] = useState("");
   const [busy, setBusy] = useState("");
@@ -579,6 +582,28 @@ function DeviceActions({
             onClick={() => void send("aime.scan", { cardNumber })}
           >
             {t("刷卡")}
+          </button>
+        </div>
+      )}
+      {allActions.includes("coin") && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className={`${input} min-h-9 w-40`}
+            placeholder={t("按键")}
+            aria-label={t("投币按键")}
+            value={coinKey}
+            disabled={!device.enabled}
+            onChange={(e) => setCoinKey(e.target.value)}
+          />
+          <button
+            type="button"
+            className={button}
+            disabled={!device.enabled || !!busy}
+            onClick={() =>
+              void send("coin", coinKey.trim() ? { key: coinKey } : undefined)
+            }
+          >
+            {t("投币")}
           </button>
         </div>
       )}

@@ -11,6 +11,7 @@ import { assertNotBanned, claimCoin, getShopForMachine as getBillingShop, requir
 import type { Machine as MachineRow } from "./machine-session.js";
 import type { AppBindings } from "../../bindings.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
+import { vkFromKeyText } from "../../devices/key-text.js";
 import { createRuntimeBus, readPower } from "../../devices/runtime.js";
 import type { ActionName } from "../../devices/capabilities.js";
 
@@ -27,6 +28,8 @@ export const actionSchema=z.object({
   playerId:z.string().min(1).optional(),
   /** A card number staff typed in: 20 digits, sent to the machine as-is. */
   cardNumber:z.string().regex(/^\d{20}$/).optional(),
+  /** A key staff typed for the coin press; the configured key is the fallback. */
+  key:z.string().trim().min(1).max(12).optional(),
   consent:z.boolean().optional(),
   location:z.unknown().optional(),
 });
@@ -99,6 +102,15 @@ export async function executeDeviceAction(
       jsonError(400, "请输入卡号或选择玩家", "CARD_REQUIRED");
     }
   }
+  // A coin press may use a key the staff member typed instead of the device's
+  // configured coin key. Players cannot choose the key: pressing arbitrary
+  // keys would bypass the configured coin button.
+  let coinKey: number | null = null;
+  if (action === "coin" && body.key) {
+    if (!staff) jsonError(403, "只有店员可以指定按键", "FORBIDDEN");
+    coinKey = vkFromKeyText(body.key);
+    if (coinKey === null) jsonError(400, "无法识别的按键", "INVALID_COIN_KEY");
+  }
   return runPlayerOperation(
     c,
     shop.id,
@@ -139,7 +151,14 @@ export async function executeDeviceAction(
         actor: player ? { type: "player", playerId: player.id } : { type: "staff", staffId: `user:${user.id}` },
         operationId: body.operationId,
         payload: { holder: player?.id ?? user.id },
-        ...(accessCode ? { transient: { accessCode } } : {}),
+        ...(accessCode || coinKey !== null
+          ? {
+              transient: {
+                ...(accessCode ? { accessCode } : {}),
+                ...(coinKey !== null ? { key: coinKey } : {}),
+              },
+            }
+          : {}),
       });
       if (done.operation.status !== "succeeded") {
         return c.json(

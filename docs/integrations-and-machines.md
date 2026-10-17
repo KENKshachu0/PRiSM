@@ -178,7 +178,7 @@ await client.requestScanByIdentity(
 - `mahjong.seat` / `mahjong.unseat` 接受 `playerId`，让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
 - `GET /api/v1/merchant/machines/:id/state` 返回 `{ power, mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。
 
-投币按键按**字符**填写（字母、数字、空格、Enter、常用未加 Shift 的符号），前端映射成 Windows Virtual-Key 码后写入 `coinKey`；协议本身只传数字键码，带 Shift 的符号（如 `!`）无法表示。已有数字键码会反向显示成可读的键名（如 32 → `Space`）。
+- 投币可以在操作面板现场指定要按的键（`key`）：字母、数字、空格、Enter、常用未加 Shift 的符号都支持；不传则使用设备配置的 `coinKey`。服务端把字符映射成 Windows Virtual-Key 码，协议本身只传数字键码，带 Shift 的符号（如 `!`）无法表示。只有店员可以指定按键，玩家端仍使用设备配置。
 
 ### 引用设备与 Bot 动作
 

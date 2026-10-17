@@ -1242,6 +1242,6 @@
   "选择玩家": "Choose player",
   "输入 20 位卡号": "Enter the 20-digit card number",
   "卡号": "Card number",
-  "投币按键": "Coin key",
-  "模拟按下这个键：字母、数字、空格或 Enter 都可以。": "Presses this key on the simulated keyboard; letters, digits, Space and Enter all work."
+  "按键": "Key",
+  "投币按键": "Coin key"
 }

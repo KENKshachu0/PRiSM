@@ -104,11 +104,14 @@ function coinRunner(runtime: DeviceRuntime): ActionRunner {
   return async ({ device, operationId, payload }) => {
     const config = hinataConfigOf(device)!;
     const count = typeof payload.count === "number" ? payload.count : 1;
+    // Staff may press a key of their choosing; otherwise the device's
+    // configured coin key is used.
+    const key = typeof payload.key === "number" ? payload.key : config.coinKey;
     if (config.transport === "embedded") {
       const relay = machineRelayNamespace(runtime.env);
       if (!relay || !config.channel) return { outcome: "failed", message: "直连中继尚未配置" };
       const sent = await relay.getByName(config.channel).sendKeyPress({
-        key: config.coinKey,
+        key,
         count,
         messageId: operationId,
         expiresAt: (runtime.now?.() ?? new Date()).getTime() + KEY_PRESS_TTL_MS,
@@ -118,7 +121,7 @@ function coinRunner(runtime: DeviceRuntime): ActionRunner {
     const url = await readSecret(runtime.db, device, "hinata_io", "url", runtime.env.URL_ENCRYPTION_KEY);
     if (!url) return { outcome: "failed", message: "机台未配置连接地址" };
     const password = await readSecret(runtime.db, device, "hinata_io", "password", runtime.env.URL_ENCRYPTION_KEY);
-    return relayOutcome(await sendHinataCoin(normalizeHinataUrl(url), config.coinKey, password, operationId, {
+    return relayOutcome(await sendHinataCoin(normalizeHinataUrl(url), key, password, operationId, {
       count,
       fetcher: runtime.fetcher,
     }));
