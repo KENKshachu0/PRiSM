@@ -14,7 +14,6 @@ import {
 import { Api, api, playerOperation, type DeviceEvent, type Machine } from "../../api";
 import { useI18n } from "../../i18n";
 import {
-  ActionForm,
   date,
   input,
   Modal,
@@ -505,7 +504,6 @@ function DeviceActions({
   const [coinKey, setCoinKey] = useState("");
   const [power, setPower] = useState<string | null>(null);
   const [table, setTable] = useState<MahjongTable | null>(null);
-  const [confirming, setConfirming] = useState("");
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
@@ -539,7 +537,6 @@ function DeviceActions({
           : t("已发送"),
       );
       if (r?.mahjong) setTable(r.mahjong);
-      setConfirming("");
       refreshState();
       onChanged();
     } catch (e) {
@@ -600,8 +597,10 @@ function DeviceActions({
                       key={name}
                       type="button"
                       className={`${button} min-h-11 justify-center`}
+                      // The click is the intent; pressing the button again is
+                      // easier than confirming a second time.
                       disabled={!device.enabled || !!busy}
-                      onClick={() => setConfirming(name)}
+                      onClick={() => void send(name)}
                     >
                       {t(actionLabels[name] ?? name)}
                     </button>
@@ -729,18 +728,6 @@ function DeviceActions({
         <p className="text-sm text-coral">
           {t("设备已停用，操作不可用。")}
         </p>
-      )}
-      {confirming && (
-        <ActionForm
-          sticky
-          label="确认操作"
-          done={() => setConfirming("")}
-          submit={() => send(confirming).then(() => undefined)}
-        >
-          <p className="text-sm">
-            {device.name} · {t(actionLabels[confirming] ?? confirming)}
-          </p>
-        </ActionForm>
       )}
       {error && (
         <p role="alert" className="text-sm text-coral">
