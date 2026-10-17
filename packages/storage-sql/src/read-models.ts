@@ -1,6 +1,7 @@
-import { type Cents, type BillTimeline, yuanOf, assetQuantityFromStored, centsOfInteger, sumCents, ZERO_CENTS } from "@prism/core";
+import { type Cents, type BillTimeline, yuanOf, assetQuantityFromStored, centsOfInteger, sumCents, ZERO_CENTS, operationToLegacyCommand } from "@prism/core";
 import { buildBillTimeline } from "@prism/application";
 import { sqlShop } from "./shop-scope";
+import { createDeviceEventRepository } from "./device-event-repository";
 import type {
   ApplicationQueries,
   PlayerAssets,
@@ -23,8 +24,6 @@ import {
   evaluateAssetHoldingAvailability,
   sumCurrencyHoldings,
   type AssetDefinition,
-  type DeviceState,
-  type MachineConnection,
 } from "@prism/core";
 import type { SqlExecutor } from "./repositories";
 
@@ -354,50 +353,24 @@ function createStaffQueries(input: CreateSqlReadModelsInput): StaffQueries {
     },
 
     async listDeviceCommands(query) {
-      const rows = await input.executor.all<StaffDeviceCommandRow>(
-        `SELECT
-           id,
-           type,
-           device_id,
-           target_kind,
-           executor_kind,
-           player_id,
-           staff_id,
-           status,
-           requested_at,
-           acked_at,
-           expired_at,
-           payload_json
-         FROM (SELECT * FROM device_commands WHERE shop_id = ${sqlShop(input.executor)})
-         ORDER BY requested_at DESC, id
-         LIMIT ?`,
-        [query.limit],
-      );
-
-      return rows.map(
-        (row): StaffDeviceCommandListItem => ({
-          id: row.id,
-          type: row.type,
-          deviceId: row.device_id,
-          targetKind: row.target_kind,
-          executorKind: row.executor_kind,
-          playerId: row.player_id,
-          staffId: row.staff_id,
-          status: row.status,
-          requestedAt: new Date(row.requested_at),
-          ackedAt: row.acked_at ? new Date(row.acked_at) : null,
-          expiredAt: row.expired_at ? new Date(row.expired_at) : null,
-          payload: row.payload_json ? (JSON.parse(row.payload_json) as Record<string, unknown>) : null,
-        }),
-      );
-    },
-
-    async listDeviceStates() {
-      return listDeviceStates(input);
-    },
-
-    async listMachineConnections() {
-      return listMachineConnections(input);
+      const operations = await createDeviceEventRepository(input.executor).listRecentOperations(query.limit);
+      return operations.map((operation): StaffDeviceCommandListItem => {
+        const command = operationToLegacyCommand(operation);
+        return {
+          id: command.id,
+          type: command.type,
+          deviceId: command.deviceId,
+          targetKind: command.targetKind,
+          executorKind: command.executorKind,
+          playerId: command.playerId ?? null,
+          staffId: command.staffId ?? null,
+          status: command.status,
+          requestedAt: command.requestedAt,
+          ackedAt: command.ackedAt ?? null,
+          expiredAt: command.expiredAt ?? null,
+          payload: command.payload ?? null,
+        };
+      });
     },
 
     async getReportsSummary(query) {
@@ -471,8 +444,8 @@ async function getReportsSummary(
        WHERE delta > 0 AND created_at >= bounds.from_at AND created_at < bounds.to_at
      ), coin_summary AS (
        SELECT COUNT(*) AS coin_command_count
-       FROM (SELECT * FROM device_commands WHERE shop_id = ${sqlShop(input.executor)}), bounds
-       WHERE type = 'coin' AND requested_at >= bounds.from_at AND requested_at < bounds.to_at
+       FROM (SELECT * FROM device_operations WHERE shop_id = ${sqlShop(input.executor)}), bounds
+       WHERE action = 'coin' AND requested_at >= bounds.from_at AND requested_at < bounds.to_at
      )
      SELECT
        settlement_summary.revenue_total,
@@ -601,44 +574,6 @@ async function listReportPlayers(
       lastSettledAt: new Date(row.last_settled_at),
     }),
   );
-}
-
-async function listDeviceStates(input: CreateSqlReadModelsInput): Promise<DeviceState[]> {
-  const rows = await input.executor.all<DeviceStateRow>(
-    `SELECT device_id, type, target_kind, executor_kind, label, status, state, metadata_json, reported_at, reported_by
-     FROM (SELECT * FROM device_states WHERE shop_id = ${sqlShop(input.executor)})
-     ORDER BY reported_at DESC, device_id`,
-  );
-
-  return rows.map((row) => ({
-    deviceId: row.device_id,
-    type: row.type,
-    targetKind: row.target_kind,
-    executorKind: row.executor_kind,
-    label: row.label,
-    status: row.status,
-    state: row.state,
-    metadata: row.metadata_json ? (JSON.parse(row.metadata_json) as Record<string, unknown>) : null,
-    reportedAt: new Date(row.reported_at),
-    reportedBy: row.reported_by,
-  }));
-}
-
-async function listMachineConnections(input: CreateSqlReadModelsInput): Promise<MachineConnection[]> {
-  const rows = await input.executor.all<MachineConnectionRow>(
-    `SELECT machine_id, status, capabilities_json, connected_at, last_seen_at, disconnected_at
-     FROM (SELECT * FROM machine_connections WHERE shop_id = ${sqlShop(input.executor)})
-     ORDER BY status DESC, last_seen_at DESC, machine_id`,
-  );
-
-  return rows.map((row) => ({
-    machineId: row.machine_id,
-    status: row.status,
-    capabilities: row.capabilities_json ? (JSON.parse(row.capabilities_json) as string[]) : [],
-    connectedAt: new Date(row.connected_at),
-    lastSeenAt: new Date(row.last_seen_at),
-    disconnectedAt: row.disconnected_at ? new Date(row.disconnected_at) : undefined,
-  }));
 }
 
 async function getPlayerSessionHistoryDetail(
@@ -1092,43 +1027,6 @@ type StaffActiveSessionRow = {
 type StaffActiveSessionWithIdentityRow = StaffActiveSessionRow & {
   identity_provider: string | null;
   identity_subject: string | null;
-};
-
-type StaffDeviceCommandRow = {
-  id: string;
-  type: StaffDeviceCommandListItem["type"];
-  device_id: string | null;
-  target_kind: StaffDeviceCommandListItem["targetKind"];
-  executor_kind: StaffDeviceCommandListItem["executorKind"];
-  player_id: string | null;
-  staff_id: string | null;
-  status: StaffDeviceCommandListItem["status"];
-  requested_at: string;
-  acked_at: string | null;
-  expired_at: string | null;
-  payload_json: string | null;
-};
-
-type DeviceStateRow = {
-  device_id: string;
-  type: DeviceState["type"];
-  target_kind: DeviceState["targetKind"];
-  executor_kind: DeviceState["executorKind"];
-  label: string;
-  status: DeviceState["status"];
-  state: string;
-  metadata_json: string | null;
-  reported_at: string;
-  reported_by: string;
-};
-
-type MachineConnectionRow = {
-  machine_id: string;
-  status: MachineConnection["status"];
-  capabilities_json: string | null;
-  connected_at: string;
-  last_seen_at: string;
-  disconnected_at: string | null;
 };
 
 type StaffReportSettlementRow = {

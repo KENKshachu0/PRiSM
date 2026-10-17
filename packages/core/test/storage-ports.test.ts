@@ -6,8 +6,6 @@ import type {
   AssetLedgerEntry,
   AssetRepository,
   AssetTransaction,
-  DeviceCommand,
-  DeviceCommandRepository,
   Present,
   RedeemCode,
   RedeemRecord,
@@ -85,26 +83,6 @@ class InMemoryAssetRepository implements AssetRepository {
   }
 }
 
-class InMemoryDeviceCommandRepository implements DeviceCommandRepository {
-  private commands = new Map<string, DeviceCommand>();
-
-  async enqueueDeviceCommand(command: DeviceCommand): Promise<void> {
-    this.commands.set(command.id, command);
-  }
-
-  async getDeviceCommand(commandId: string): Promise<DeviceCommand | null> {
-    return this.commands.get(commandId) ?? null;
-  }
-
-  async listByPlayerId(playerId: string): Promise<DeviceCommand[]> {
-    return [...this.commands.values()].filter((command) => command.playerId === playerId);
-  }
-
-  async listPending(): Promise<DeviceCommand[]> {
-    return [...this.commands.values()].filter((command) => command.status === "pending");
-  }
-}
-
 class InMemoryRedeemRepository implements RedeemRepository {
   private records: RedeemRecord[] = [];
 
@@ -176,7 +154,6 @@ describe("storage ports", () => {
   it("keeps persistence as explicit repository contracts outside domain behavior", async () => {
     const sessions: SessionRepository = new InMemorySessionRepository();
     const assets: AssetRepository = new InMemoryAssetRepository();
-    const commands: DeviceCommandRepository = new InMemoryDeviceCommandRepository();
     const redeems: RedeemRepository = new InMemoryRedeemRepository();
     const settlements: SettlementRepository = new InMemorySettlementRepository();
 
@@ -211,16 +188,6 @@ describe("storage ports", () => {
         reason: "gift.redeem",
         refId: "code-1",
       }],
-    });
-    await commands.enqueueDeviceCommand({
-      id: "command-1",
-      type: "coin",
-      deviceId: "machine-1",
-      targetKind: "game_machine",
-      executorKind: "machine_ws",
-      playerId: "player-1",
-      status: "pending",
-      requestedAt: new Date("2026-06-07T10:05:00.000Z"),
     });
     await redeems.saveRedeemRecord({
       playerId: "player-1",
@@ -273,16 +240,6 @@ describe("storage ports", () => {
         transactionId: "asset-tx-1",
       },
     ]);
-    await expect(commands.getDeviceCommand("command-1")).resolves.toEqual({
-      id: "command-1",
-      type: "coin",
-      deviceId: "machine-1",
-      targetKind: "game_machine",
-      executorKind: "machine_ws",
-      playerId: "player-1",
-      status: "pending",
-      requestedAt: new Date("2026-06-07T10:05:00.000Z"),
-    });
     await expect(redeems.countRedeemCodeUses("code-1")).resolves.toBe(1);
     await expect(redeems.hasPlayerRedeemedPresent("player-1", "present-1")).resolves.toBe(true);
     await expect(settlements.findSettlementBySessionId("session-1")).resolves.toEqual({

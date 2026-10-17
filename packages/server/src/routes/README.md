@@ -17,7 +17,6 @@ routes/
 │   ├── player.ts           # 玩家计费会话、检出结算、订单与历史 (/player)
 │   ├── staff.ts            # 店员管理、流水查询、玩家资产与报表 (/staff)
 │   ├── integration.ts      # Bot 与外部系统集成接口 (/integration)
-│   ├── devices.ts          # 机台设备控制与指令分发 (/devices)
 │   ├── cashier.ts          # 前台刷卡登记、到店入场与外部收银结算 (/cashier)
 │   ├── pricing.ts          # 计费规则管理与时间线费率预测 (/pricing)
 │   ├── assets.ts           # 资产定义与计费抵扣效果配置 (/assets)
@@ -104,16 +103,10 @@ routes/
 - `POST /players/by-identity/assets`: 查询指定外部身份玩家的资产明细。
 - `POST /players/by-identity/redeem`: 机器人代为核销兑换码。
 - `POST /players/by-identity/history`: 查询历史消费会话记录。
-- `GET /devices/states`: 获取店内各机台当前同步状态。
+- `GET /device-states`（别名 `/devices/states`）: 实时读取店内绑定电源的设备的电源状态。
 
-#### 1.5 设备与机台路由 (`/devices`)
-- `GET /`: 列出店内全部机台硬件配置及在线状态。
-- `POST /`: 新建登记机台（绑定 Hinata IO / Home Assistant / TTLock 驱动配置）。
-- `GET /:id`: 获取机台详情。
-- `PATCH /:id`: 更新机台配置与绑定参数。
-- `DELETE /:id`: 移除机台登记。
-- `POST /:id/actions`: 店员向特定机台发送即时动作指令（开电、关电、投币、空调控制等）。
-- `GET /commands`: 分页拉取设备指令执行历史日志。
+#### 1.5 设备
+店铺级没有单独的设备路由。设备的增删改与日志在 `platform/merchant-machines.ts`（`/api/v1/merchant/machines`），员工与 Bot 的设备动作分别是 `/staff/device-actions` 与 `/integration/players/by-identity/device-actions`，玩家通过设备二维码页操作。设备模型见 `packages/server/src/devices` 与 `docs/integrations-and-machines.md`。
 
 #### 1.6 计费配置与资产规则 (`/pricing`, `/assets`, `/redeem`)
 - `/pricing`: 计费规则 CRUD、状态启停、费率时间线（Timeline）预演及规则版本归档。

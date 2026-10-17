@@ -3,9 +3,9 @@ import { z } from "zod";
 import { createD1Repositories } from "@prism/adapter-d1";
 import { withOperationLease } from "@prism/application";
 import type { AppBindings, TenantShop } from "../../bindings.js";
-import { decryptSecret } from "../../crypto.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
-import { sendHinataCard, sendHinataCoin } from "../../hardware/hinata.js";
+import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
+import { createRuntimeBus, readPower } from "../../devices/runtime.js";
 import { clientIp, jsonError, nowIso } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { checkShopLocation } from "../../middleware/geo.js";
@@ -90,23 +90,6 @@ export async function requireActiveEntry(c:C,shop:TenantShop):Promise<string> {
   return player.id;
 }
 
-export async function machinePower(c:C,machine:{ha_binding_encrypted:string|null}):Promise<"on"|"off"|"unknown"|"unmanaged"> {
-  if(!machine.ha_binding_encrypted)return "unmanaged";
-  if(!c.env.URL_ENCRYPTION_KEY) jsonError(503,"设备密钥尚未配置","DEVICE_ENCRYPTION_UNAVAILABLE");
-  try {
-    const ha=JSON.parse(await decryptSecret(machine.ha_binding_encrypted,c.env.URL_ENCRYPTION_KEY)) as {
-      url:string;token:string;entityId:string;
-    };
-    const response=await fetch(
-      `${ha.url.replace(new RegExp("/+$"),"")}/api/states/${encodeURIComponent(ha.entityId)}`,
-      {headers:{authorization:`Bearer ${ha.token}`},signal:AbortSignal.timeout(3000)},
-    );
-    if(!response.ok)return "unknown";
-    const body=await response.json() as {state?:string};
-    return body.state==="on"||body.state==="off"?body.state:"unknown";
-  }catch{return "unknown";}
-}
-
 async function recordLoginEvent(c:C,event:{
   userId:string;cardId:string;machineId:string;ip:string;
   lat:number|null;lng:number|null;accuracy:number|null;result:string;
@@ -159,58 +142,47 @@ async function handleLogin(c:C,routePublicId?:string) {
   const shop=await getShopForMachine(c,machine.shop_public_id);
   checkShopLocation(shop,"machine",body);
   const playerId=shop.billing_enabled?await requireActiveEntry(c,shop):null;
-  if(!shop.billing_enabled&&machine.ttlock_lock_id)await requireShopPlayer(c,shop,true);
-  if(!machine.hinata_url_encrypted)jsonError(409,"设备不支持此操作","DEVICE_ACTION_UNSUPPORTED");
-  if(await machinePower(c,machine)==="off")jsonError(409,"请先开机","DEVICE_POWER_OFF");
-  if(!c.env.URL_ENCRYPTION_KEY)jsonError(503,"设备密钥尚未配置","DEVICE_ENCRYPTION_UNAVAILABLE");
-  const targetUrl=await decryptSecret(machine.hinata_url_encrypted,c.env.URL_ENCRYPTION_KEY);
-  const password=machine.hinata_password_encrypted
-    ?await decryptSecret(machine.hinata_password_encrypted,c.env.URL_ENCRYPTION_KEY):null;
+  const device=await loadDevice(c.env.DB,shop.id,machine.id);
+  if(!device||!can(device,"aime.scan"))jsonError(409,"设备不支持此操作","DEVICE_ACTION_UNSUPPORTED");
+  // A door on the same device means the shop gates entry even without billing.
+  if(!shop.billing_enabled&&device.capabilities.has("door"))await requireShopPlayer(c,shop,true);
+  const runtime={db:c.env.DB,env:c.env,shopId:shop.id};
+  // Only an explicit "off" blocks: an unreadable switch must not lock players out.
+  if(device.capabilities.has("power")&&await readPower(runtime,device)==="off")
+    jsonError(409,"请先开机","DEVICE_POWER_OFF");
   const operationId=crypto.randomUUID(),now=nowIso();
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT INTO player_operations (shop_id,user_id,id,kind,status,created_at,device_id) VALUES (?,?,?,'aime.scan','pending',?,?)",
-    ).bind(shop.id,user.id,operationId,now,machine.id),
-    c.env.DB.prepare(
-      `INSERT INTO device_commands
-        (shop_id,id,type,device_id,target_kind,executor_kind,player_id,status,payload_json,requested_at)
-        VALUES (?,?,'aime.scan',?,'game_machine','hinata_io',?,'pending',?,?)`,
-    ).bind(shop.id,operationId,machine.id,playerId,JSON.stringify({cardId:card.id}),now),
-  ]);
-  const result=await sendHinataCard(targetUrl,card.access_code,password,operationId);
+  await c.env.DB.prepare(
+    "INSERT INTO player_operations (shop_id,user_id,id,kind,status,created_at,device_id) VALUES (?,?,?,'aime.scan','pending',?,?)",
+  ).bind(shop.id,user.id,operationId,now,machine.id).run();
+  const bus=createRuntimeBus(runtime);
+  const actor=playerId?{type:"player" as const,playerId}:{type:"staff" as const,staffId:`user:${user.id}`};
+  // The card number reaches the machine only; the log keeps the card id.
+  const scan=await bus.perform({
+    device,action:"aime.scan",actor,operationId,
+    payload:{cardId:card.id},transient:{accessCode:card.access_code},
+  });
+  const sent=scan.operation.status==="succeeded";
+  const status=sent?"completed":scan.operation.status==="pending"?"unknown":"failed";
   await recordLoginEvent(c,{
     userId:user.id,cardId:card.id,machineId:machine.id,ip,
     lat:body.lat??null,lng:body.lng??null,accuracy:body.accuracy??null,
-    result:result.ok?"sent":"failed",responseCode:result.status||null,errorMessage:result.error||null,
+    result:sent?"sent":"failed",responseCode:scan.httpStatus,errorMessage:scan.operation.failure,
   });
-  const status=result.ok?"completed":result.status===0?"unknown":"failed";
   const response:{
     operationId:string;status:string;coin?:{status:"sent"|"skipped"|"failed"|"unknown";operationId:string;reason?:string}
   }={operationId,status};
-  const writes=[
-    c.env.DB.prepare(
-      "UPDATE player_operations SET status=?,result_json=? WHERE shop_id=? AND user_id=? AND id=?",
-    ).bind(status,JSON.stringify(response),shop.id,user.id,operationId),
-    c.env.DB.prepare(
-      "UPDATE device_commands SET status=?,acked_at=?,expired_at=? WHERE shop_id=? AND id=?",
-    ).bind(result.ok?"acked":result.status===0?"pending":"expired",
-      result.ok?nowIso():null,!result.ok&&result.status!==0?nowIso():null,shop.id,operationId),
-  ];
-  if(result.ok&&playerId)writes.push(
-    c.env.DB.prepare(
-      "UPDATE sessions SET metadata_json=json_set(COALESCE(metadata_json,'{}'),'$.deviceOperated',json('true')) WHERE shop_id=? AND player_id=? AND status='active'",
-    ).bind(shop.id,playerId),
-  );
-  await c.env.DB.batch(writes);
-  if(result.ok && playerId) {
+  await c.env.DB.prepare(
+    "UPDATE player_operations SET status=?,result_json=? WHERE shop_id=? AND user_id=? AND id=?",
+  ).bind(status,JSON.stringify(response),shop.id,user.id,operationId).run();
+  if(sent&&playerId) {
     const sync=refreshActivityBill(c.env,shop.id,playerId,false,true)
       .catch(error=>console.error("Machine login live bill sync failed",error));
     try{c.executionCtx.waitUntil(sync);}catch{void sync;}
   }
-  if(!result.ok)jsonError(502,
-    result.status===0||result.status===404?"设备离线或连接地址不正确，请联系店员":"设备连接失败，请联系店员检查配置",
+  if(!sent)jsonError(502,
+    status==="unknown"?"设备离线或连接地址不正确，请联系店员":"设备连接失败，请联系店员检查配置",
     "DEVICE_UNAVAILABLE",response);
-  if(machine.coin_after_swipe) {
+  if(hinataConfigOf(device)?.coinAfterSwipe&&can(device,"coin")) {
     const coinId=crypto.randomUUID();
     response.coin={operationId:coinId,status:"unknown"};
     try {
@@ -218,19 +190,8 @@ async function handleLogin(c:C,routePublicId?:string) {
         operationId:coinId,status:"skipped",reason:"COIN_COOLDOWN",
       };
       else {
-        await c.env.DB.prepare(
-          `INSERT INTO device_commands
-            (shop_id,id,type,device_id,target_kind,executor_kind,player_id,status,payload_json,requested_at)
-            VALUES (?,?,'coin',?,'game_machine','hinata_io',?,'pending',?,?)`,
-        ).bind(shop.id,coinId,machine.id,playerId,JSON.stringify({parentOperationId:operationId}),nowIso()).run();
-        const coin=await sendHinataCoin(targetUrl,machine.coin_key,password,coinId);
-        response.coin.status=coin.ok?"sent":coin.status===0?"unknown":"failed";
-        await c.env.DB.prepare(
-          "UPDATE device_commands SET status=?,acked_at=?,expired_at=? WHERE shop_id=? AND id=?",
-        ).bind(
-          coin.ok?"acked":coin.status===0?"pending":"expired",
-          coin.ok?nowIso():null,!coin.ok&&coin.status!==0?nowIso():null,shop.id,coinId,
-        ).run();
+        const coin=await bus.perform({device,action:"coin",actor,operationId:coinId,parentOperationId:operationId});
+        response.coin.status=coin.operation.status==="succeeded"?"sent":coin.operation.status==="pending"?"unknown":"failed";
       }
     }catch{response.coin.status="unknown";}
     await c.env.DB.prepare(

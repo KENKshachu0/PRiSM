@@ -11,9 +11,7 @@ import {
   createAssetDefinitionEffectProvider,
   createAvailableAssetReader,
   createBusinessItemOrderService,
-  createDeviceActionService,
   createIntegrationService,
-  createMachineConnectionService,
   createPlayerAuthService,
   createPlayerCommandService,
   createRedeemService,
@@ -40,11 +38,11 @@ import {
   type PricingConfig,
   type Session,
 } from "@prism/core";
-import type { AppBindings, PrismAppDependencies, TenantShop } from "../bindings.js";
+import type { AppBindings, Env, PrismAppDependencies, TenantShop } from "../bindings.js";
 import { jsonError } from "../http.js";
 import { sha256Hex, toBase64Url } from "../crypto.js";
-import { createShopFacilityResolver } from "../hardware/shop-facility-resolver.js";
-import { createShopGameMachineResolver } from "../hardware/shop-game-machine-resolver.js";
+import { createDeviceActionService, coinCooldownMs } from "../devices/actions.js";
+import { listDeviceStates, listMachineConnections } from "../devices/legacy-views.js";
 
 type CachedShopDependencies = { settings: string; encryptionKey?: string; deps: PrismAppDependencies };
 // A D1 client is request/deployment scoped. Never reuse tenant repositories across databases.
@@ -145,6 +143,8 @@ export function createShopDependencies(input: {
   encryptionKey?: string;
   now?: () => Date;
   id?: () => string;
+  /** Passed to the machine resolver so embedded-relay devices can be executed. */
+  env?: Env;
 }): PrismAppDependencies {
   const now = input.now ?? (() => new Date());
   const id = input.id ?? (() => crypto.randomUUID());
@@ -214,27 +214,16 @@ export function createShopDependencies(input: {
         };
   };
 
-  const deviceTargetResolvers = {
-    facility: createShopFacilityResolver({ db: input.db, shopId, encryptionKey: input.encryptionKey }),
-    gameMachine: createShopGameMachineResolver({ db: input.db, shopId, encryptionKey: input.encryptionKey }),
-  };
-
   const deviceActions = createDeviceActionService({
+    db: input.db,
+    env: input.env ?? ({ DB: input.db, URL_ENCRYPTION_KEY: input.encryptionKey } as Env),
+    shopId,
     sessions: repos.sessions,
-    deviceCommands: repos.deviceCommands,
+    deviceEvents: repos.deviceEvents,
     playerIdentities: repos.playerIdentities,
-    resolveFacilityTarget: deviceTargetResolvers.facility,
-    resolveGameMachineTarget: deviceTargetResolvers.gameMachine,
+    coinCooldownMs: () => coinCooldownMs(input.db, shopId),
     id,
     now,
-    coinCooldownMs: 60_000,
-  });
-
-  const machineConnectionCommands = createMachineConnectionService({
-    machineConnections: repos.machineConnections,
-    deviceCommands: repos.deviceCommands,
-    now,
-    commandTtlMs: 30_000,
   });
 
   const playerAuthCommands = createPlayerAuthService({
@@ -279,11 +268,7 @@ export function createShopDependencies(input: {
     pricingConfigs: repos.pricingConfigs,
     resolvePricingConfigs: async (playerId) =>
       (await playerPricing(playerId)).configs,
-    deviceCommands: repos.deviceCommands,
     playerIdentities: repos.playerIdentities,
-    resolveFacilityTarget: deviceTargetResolvers.facility,
-    resolveGameMachineTarget: deviceTargetResolvers.gameMachine,
-    coinCooldownMs: 60_000,
     canStartSessionAt: async ({ at, playerId }) => {
       const pinned = await playerPricing(playerId);
       const timeConfigs = pinned.configs.filter(
@@ -318,7 +303,7 @@ export function createShopDependencies(input: {
     system: repos.system,
     pricingHistory: repos.pricingHistory,
     pricingCapHistory: repos.pricingCapHistory,
-    deviceCommands: repos.deviceCommands,
+    deviceOperations: repos.deviceEvents,
     pricingProviders: [],
     ...createVersionedPricingResolvers({
       sessionPricing,
@@ -519,10 +504,24 @@ export function createShopDependencies(input: {
     now,
   });
 
+  // Device state is read live from the hardware, so it cannot be a SQL read model.
+  const deviceRuntime = {
+    db: input.db,
+    env: input.env ?? ({ DB: input.db, URL_ENCRYPTION_KEY: input.encryptionKey } as Env),
+    shopId,
+    now,
+    id,
+  };
+  const staffQueries = {
+    ...queries.staffQueries,
+    listDeviceStates: () => listDeviceStates(deviceRuntime),
+    listMachineConnections: () => listMachineConnections(deviceRuntime),
+  };
+
   return {
     repositories: repos,
     playerQueries: queries.playerQueries,
-    staffQueries: queries.staffQueries,
+    staffQueries,
     playerCommands,
     playerCheckoutCommands,
     playerRedeemCommands,
@@ -548,7 +547,6 @@ export function createShopDependencies(input: {
     staffApiTokenCommands,
     staffUserCommands,
     deviceActions,
-    machineConnectionCommands,
     setupCommands,
     playerAuthCommands,
   };
@@ -558,6 +556,7 @@ export function getOrCreateShopDependencies(
   db: D1DatabaseLike,
   shop: TenantShop,
   encryptionKey?: string,
+  env?: Env,
 ): PrismAppDependencies {
   // Service closures capture shop configuration (pricing, auto-registration, timezone).
   // Rebuild them whenever tenant settings change rather than serving stale closures.
@@ -568,8 +567,10 @@ export function getOrCreateShopDependencies(
   }
   const settings = JSON.stringify(shop);
   const cached = byShop.get(shop.id);
+  // `env` is stable per deployment, so it is not part of the cache key beyond
+  // the encryption key that already distinguishes local from hosted runtimes.
   if (cached?.settings === settings && cached.encryptionKey === encryptionKey) return cached.deps;
-  const deps = createShopDependencies({ db, shop, encryptionKey });
+  const deps = createShopDependencies({ db, shop, encryptionKey, env });
   byShop.set(shop.id, { settings, encryptionKey, deps });
   return deps;
 }
@@ -622,7 +623,7 @@ export const tenantMiddleware: MiddlewareHandler<AppBindings> = async (
   c.set("shop", shop);
   c.set("responseTimeZone", shop.time_zone);
 
-  const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY);
+  const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY, c.env);
   c.set("deps", deps);
 
   await next();

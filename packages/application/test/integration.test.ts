@@ -2,8 +2,6 @@ import { centsOf as moneyFixture, centsOfInteger as integerFixture } from "@pris
 import { describe, expect, it } from "bun:test";
 import {
   AssetHolding,
-  DeviceCommand,
-  DeviceCommandRepository,
   Player,
   PlayerIdentity,
   PlayerIdentityRepository,
@@ -14,7 +12,7 @@ import {
   yuanOf,
 } from "@prism/core";
 import { PrismDomainError } from "@prism/core";
-import { createDeviceActionService, createIntegrationService } from "../src/index";
+import { createIntegrationService, type DeviceActionService, type RequestDeviceActionInput } from "../src/index";
 
 class MemoryPlayerRepository implements PlayerRepository {
   saved: Player[] = [];
@@ -89,26 +87,27 @@ class MemorySessionRepository implements SessionRepository {
   }
 }
 
-class MemoryDeviceCommandRepository implements DeviceCommandRepository {
-  queued: DeviceCommand[] = [];
-
-  constructor(private readonly previous: DeviceCommand[] = []) {}
-
-  async enqueueDeviceCommand(command: DeviceCommand): Promise<void> {
-    this.queued.push(command);
-  }
-
-  async getDeviceCommand(commandId: string): Promise<DeviceCommand | null> {
-    return this.queued.find((command) => command.id === commandId) ?? null;
-  }
-
-  async listByPlayerId(playerId: string): Promise<DeviceCommand[]> {
-    return this.previous.filter((command) => command.playerId === playerId);
-  }
-
-  async listPending(limit: number): Promise<DeviceCommand[]> {
-    return this.queued.filter((command) => command.status === "pending").slice(0, limit);
-  }
+/** Records what the integration service asks of devices; device rules are the server's. */
+function recordingDeviceActions(id = "command-1") {
+  const calls: RequestDeviceActionInput[] = [];
+  const service: DeviceActionService = {
+    async requestDeviceAction(input) {
+      calls.push(input);
+      return {
+        id,
+        type: input.type,
+        deviceId: input.target.id ?? input.target.ref ?? null,
+        targetKind: input.target.kind,
+        executorKind: input.target.kind === "facility" ? "home_assistant" : "hinata_io",
+        playerId: input.actor.type === "player" ? input.actor.playerId : undefined,
+        staffId: input.actor.type === "staff" ? input.actor.staffId : undefined,
+        status: "acked",
+        payload: input.payload,
+        requestedAt: new Date("2026-07-07T10:30:00.000Z"),
+      };
+    },
+  };
+  return { service, calls };
 }
 
 describe("createIntegrationService", () => {
@@ -149,9 +148,6 @@ describe("createIntegrationService", () => {
             paymentStatus: "unpaid",
             label: input.label,
           } satisfies Session & { status: "active" };
-        },
-        async requestDeviceCommand() {
-          throw new Error("not used");
         },
       },
       now: () => new Date("2026-07-07T10:30:00.000Z"),
@@ -203,9 +199,6 @@ describe("createIntegrationService", () => {
             pricingConfigIds: input.pricingConfigIds,
             paymentStatus: "unpaid",
           } satisfies Session & { status: "active" };
-        },
-        async requestDeviceCommand() {
-          throw new Error("not used");
         },
       },
       now: () => new Date("2026-07-07T11:00:00.000Z"),
@@ -273,9 +266,6 @@ describe("createIntegrationService", () => {
             metadata: input.metadata,
           } satisfies Session & { status: "active" };
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
       now: () => new Date("2026-07-07T10:30:00.000Z"),
       id: () => "unused",
@@ -323,7 +313,7 @@ describe("createIntegrationService", () => {
         paymentStatus: "unpaid",
       },
     ]);
-    const deviceCommands = new MemoryDeviceCommandRepository();
+    const devices = recordingDeviceActions();
     const service = createIntegrationService({
       players,
       playerIdentities: identities,
@@ -332,17 +322,8 @@ describe("createIntegrationService", () => {
         async startSession() {
           throw new Error("not used");
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
-      deviceActions: createDeviceActionService({
-        sessions,
-        deviceCommands,
-        now: () => new Date("2026-07-07T10:30:00.000Z"),
-        id: () => "command-1",
-        coinCooldownMs: 60_000,
-      }),
+      deviceActions: devices.service,
       now: () => new Date("2026-07-07T10:30:00.000Z"),
       id: () => "unused",
     });
@@ -364,79 +345,20 @@ describe("createIntegrationService", () => {
       },
     });
 
-    expect(action).toMatchObject({
-      id: "command-1",
-      playerId: "player-1",
+    expect(action).toMatchObject({ id: "command-1", playerId: "player-1", type: "coin" });
+    expect(devices.calls).toEqual([{
+      actor: { type: "player", playerId: "player-1" },
+      target: { kind: "game_machine", id: "maimai-dx-1" },
       type: "coin",
-      deviceId: "maimai-dx-1",
-      targetKind: "game_machine",
-      executorKind: "machine_ws",
-      status: "pending",
-    });
-    expect(deviceCommands.queued).toEqual([action]);
-  });
-
-  it("rejects integration machine actions for players without active sessions", async () => {
-    const player = {
-      id: "player-1",
-      displayName: "A",
-      status: "active",
-      createdAt: new Date("2026-07-07T10:00:00.000Z"),
-    } satisfies Player;
-    const players = new MemoryPlayerRepository([player]);
-    const identities = new MemoryPlayerIdentityRepository(players, [
-      {
-        playerId: "player-1",
-        provider: "qq",
-        subject: "123456",
-        createdAt: new Date("2026-07-07T10:00:00.000Z"),
-      },
-    ]);
-    const sessions = new MemorySessionRepository();
-    const service = createIntegrationService({
-      players,
-      playerIdentities: identities,
-      sessions,
-      playerCommands: {
-        async startSession() {
-          throw new Error("not used");
-        },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
-      },
-      deviceActions: createDeviceActionService({
-        sessions,
-        deviceCommands: new MemoryDeviceCommandRepository(),
-        now: () => new Date("2026-07-07T10:30:00.000Z"),
-        id: () => "command-1",
-        coinCooldownMs: 60_000,
-      }),
-      now: () => new Date("2026-07-07T10:30:00.000Z"),
-      id: () => "unused",
-    });
-
-    await expect(
-      service.requestDeviceActionByIdentity({
-        identityKey: "qq:123456",
-        target: {
-          kind: "game_machine",
-          id: "maimai-dx-1",
-        },
-        action: {
-          type: "coin",
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: "DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION",
-    });
+      payload: { count: 1 },
+    }]);
   });
 
   it("allows trusted integration power actions to use a staff override", async () => {
     const players = new MemoryPlayerRepository();
     const identities = new MemoryPlayerIdentityRepository(players);
     const sessions = new MemorySessionRepository();
-    const deviceCommands = new MemoryDeviceCommandRepository();
+    const devices = recordingDeviceActions();
     const service = createIntegrationService({
       players,
       playerIdentities: identities,
@@ -445,21 +367,8 @@ describe("createIntegrationService", () => {
         async startSession() {
           throw new Error("not used");
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
-      deviceActions: createDeviceActionService({
-        sessions,
-        deviceCommands,
-        now: () => new Date("2026-07-07T10:30:00.000Z"),
-        id: () => "command-1",
-        coinCooldownMs: 60_000,
-        resolveFacilityTarget: async () => ({
-          target: { kind: "facility", id: "switch.maimai" },
-          deviceLabel: "舞萌一号机",
-        }),
-      }),
+      deviceActions: devices.service,
       now: () => new Date("2026-07-07T10:30:00.000Z"),
       id: () => "unused",
     });
@@ -471,17 +380,15 @@ describe("createIntegrationService", () => {
       action: { type: "power.off" },
     });
 
-    expect(action).toMatchObject({
-      type: "power.off",
-      staffId: "integration:qq:admin-1",
-      deviceId: "switch.maimai",
-    });
+    expect(action).toMatchObject({ type: "power.off", staffId: "integration:qq:admin-1" });
+    expect(devices.calls[0]?.target).toEqual({ kind: "facility", ref: "舞萌一号机" });
     expect(players.saved).toEqual([]);
   });
 
   it("limits integration staff override to power actions", async () => {
     const players = new MemoryPlayerRepository();
     const identities = new MemoryPlayerIdentityRepository(players);
+    const devices = recordingDeviceActions();
     const service = createIntegrationService({
       players,
       playerIdentities: identities,
@@ -489,17 +396,8 @@ describe("createIntegrationService", () => {
         async startSession() {
           throw new Error("not used");
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
-      deviceActions: createDeviceActionService({
-        sessions: new MemorySessionRepository(),
-        deviceCommands: new MemoryDeviceCommandRepository(),
-        now: () => new Date("2026-07-07T10:30:00.000Z"),
-        id: () => "command-1",
-        coinCooldownMs: 60_000,
-      }),
+      deviceActions: devices.service,
       now: () => new Date("2026-07-07T10:30:00.000Z"),
       id: () => "unused",
     });
@@ -518,6 +416,7 @@ describe("createIntegrationService", () => {
     const players = new MemoryPlayerRepository();
     const identities = new MemoryPlayerIdentityRepository(players);
     const sessions = new MemorySessionRepository();
+    const devices = recordingDeviceActions();
     const service = createIntegrationService({
       players,
       playerIdentities: identities,
@@ -526,17 +425,8 @@ describe("createIntegrationService", () => {
         async startSession() {
           throw new Error("not used");
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
-      deviceActions: createDeviceActionService({
-        sessions,
-        deviceCommands: new MemoryDeviceCommandRepository(),
-        now: () => new Date("2026-07-07T10:30:00.000Z"),
-        id: () => "command-1",
-        coinCooldownMs: 60_000,
-      }),
+      deviceActions: devices.service,
       now: () => new Date("2026-07-07T10:30:00.000Z"),
       id: () => "player-new",
     });
@@ -585,9 +475,6 @@ describe("createIntegrationService", () => {
       playerIdentities: identities,
       playerCommands: {
         async startSession() {
-          throw new Error("not used");
-        },
-        async requestDeviceCommand() {
           throw new Error("not used");
         },
       },
@@ -747,9 +634,6 @@ describe("createIntegrationService", () => {
         async startSession() {
           throw new Error("not used");
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
       now: () => new Date("2026-07-07T12:00:00.000Z"),
       id: () => "unused",
@@ -800,9 +684,6 @@ describe("createIntegrationService", () => {
       sessions,
       playerCommands: {
         async startSession() {
-          throw new Error("not used");
-        },
-        async requestDeviceCommand() {
           throw new Error("not used");
         },
       },
@@ -888,9 +769,6 @@ describe("createIntegrationService", () => {
         async startSession() {
           throw new Error("not used");
         },
-        async requestDeviceCommand() {
-          throw new Error("not used");
-        },
       },
       playerCheckoutCommands: {
         async previewCheckout() {
@@ -951,9 +829,6 @@ describe("createIntegrationService", () => {
       playerIdentities: identities,
       playerCommands: {
         async startSession() {
-          throw new Error("not used");
-        },
-        async requestDeviceCommand() {
           throw new Error("not used");
         },
       },

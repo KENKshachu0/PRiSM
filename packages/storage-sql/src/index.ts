@@ -1,4 +1,5 @@
 import { cashierSchema } from "./cashier-schema";
+import { deviceEventSchema } from "./device-event-schema";
 import { pricingVersionSchema } from "./pricing-version-schema";
 import { utcPricingSchema } from "./utc-pricing-schema";
 
@@ -389,6 +390,7 @@ export const sqliteSchema = [
     expires_at TEXT NOT NULL,
     PRIMARY KEY (shop_id, scope, resource_id)
   )`,
+  ...deviceEventSchema,
   `CREATE INDEX IF NOT EXISTS idx_sessions_player_status ON sessions(shop_id, player_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_player_identities_player ON player_identities(shop_id, player_id)`,
   `CREATE INDEX IF NOT EXISTS idx_player_sessions_token ON player_sessions(shop_id, token_hash)`,
@@ -422,6 +424,8 @@ export const sqliteSchema = [
 ] as const;
 
 export { cashierSchema } from "./cashier-schema";
+export { deviceEventSchema } from "./device-event-schema";
+export { createDeviceEventRepository } from "./device-event-repository";
 export * from "./repositories";
 export * from "./read-models";
 

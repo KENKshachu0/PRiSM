@@ -71,6 +71,24 @@ export type Shop = {
   radiusMeters?: number;
 };
 
+/**
+ * One entry of a device's log. `request`/`result` are an action the platform
+ * asked for and its outcome (paired by `operationId`), `signal` is something
+ * the machine reported, `change` is a state that moved.
+ */
+export type DeviceEvent = {
+  id: string;
+  capability: string;
+  kind: "request" | "result" | "signal" | "change";
+  /** Action, signal or state name, e.g. `power.on`, `card.consumed`, `link`. */
+  name: string;
+  origin: "platform" | "device" | "observer";
+  operationId: string | null;
+  parentOperationId: string | null;
+  at: string;
+  payload: Record<string, unknown>;
+};
+
 export type Machine = {
   mahjong?: { capacity: number; pricingConfigIds: string[] } | null;
   coinAfterSwipe: boolean;
@@ -89,6 +107,16 @@ export type Machine = {
   aliases: string[];
   enabled: boolean | number;
   hasPassword?: boolean | number;
+  /** "embedded" means the machine connects straight to this platform. */
+  relayConnection?: "external" | "embedded";
+  /** Whether a device token exists. The token itself is only returned on mint. */
+  hasRelayToken?: boolean;
+  /** The `[aimeio] serverUrl` value to paste into the machine's INI. */
+  relayUrl?: string | null;
+  /** null means the state could not be determined, not necessarily offline. */
+  relayOnline?: boolean | null;
+  /** The connected IO still encrypts payloads, which embedded mode cannot read. */
+  relayE2ee?: boolean | null;
 };
 
 export type UserSummary = {

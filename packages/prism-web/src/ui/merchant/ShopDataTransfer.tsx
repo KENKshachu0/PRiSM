@@ -54,7 +54,12 @@ const labels: Record<string, string> = {
   shop_billing_settings: "计费设置",
   api_tokens: "接入凭据",
   machines: "设备",
+  device_capabilities: "设备能力与连接",
   mahjong_seats: "麻将座位",
+  device_operations: "设备操作记录",
+  device_events: "设备事件",
+  device_state: "设备状态",
+  // Tables of v2 backups, converted on import.
   device_commands: "设备操作记录",
   device_states: "设备状态记录",
   machine_connections: "设备连接记录",

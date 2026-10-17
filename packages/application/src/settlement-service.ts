@@ -8,8 +8,7 @@ import type {
   AssetLedgerEntry,
   AssetRepository,
   ChargeItem,
-  DeviceCommand,
-  DeviceCommandRepository,
+  DeviceOperation,
   PricingCapHistoryEntry,
   PricingCapHistoryRepository,
   PricingHistoryEntry,
@@ -30,6 +29,7 @@ import type {
   TimeCapPricingProviderConfig,
 } from "@prism/core";
 import {
+  operatedWithin,
   addCents,
   assetQuantityFromStored,
   applyTimeCapPricing,
@@ -79,7 +79,8 @@ export type SettlementServiceDependencies = {
   system?: SystemRepository;
   pricingHistory?: PricingHistoryRepository;
   pricingCapHistory?: PricingCapHistoryRepository;
-  deviceCommands?: DeviceCommandRepository;
+  /** A player's device operations; billing treats a non-failed play as device use. */
+  deviceOperations?: { listOperationsByPlayer(playerId: string): Promise<DeviceOperation[]> };
   pricingProviders: readonly PricingProvider[];
   pricingProviderResolver?: (context: PricingProviderResolverContext) => Promise<readonly PricingProvider[]>;
   globalCapResolver?: (context: GlobalCapResolverContext) => Promise<readonly TimeCapPricingProviderConfig[]>;
@@ -470,14 +471,14 @@ async function calculateUnifiedCheckoutDetails(
     extraLedgerEntries: AssetLedgerEntry[];
   }> = [];
 
-  const playerCommands = dependencies.deviceCommands
-    ? await dependencies.deviceCommands.listByPlayerId(playerId)
+  const playerOperations = dependencies.deviceOperations
+    ? await dependencies.deviceOperations.listOperationsByPlayer(playerId)
     : [];
 
   for (const session of orderedSessions) {
     const hasDeviceActivity = Boolean(
       session.metadata?.deviceOperated ||
-      hasMatchingMachineCommand(session, playerCommands, now),
+      operatedWithin(playerOperations, session.playerId, session.startedAt, session.endedAt ?? now),
     );
     if (hasDeviceActivity) {
       session.metadata = {
@@ -1055,19 +1056,3 @@ function toPricingHistoryEntries(
   });
 }
 
-function hasMatchingMachineCommand(
-  session: Session,
-  commands: readonly DeviceCommand[],
-  now: Date,
-): boolean {
-  const started = session.startedAt.getTime();
-  const ended = (session.endedAt ?? now).getTime();
-  return commands.some((cmd) => {
-    if (cmd.playerId !== session.playerId) return false;
-    if (cmd.type === "door.open") return false;
-    if (cmd.status === "expired" || cmd.status === "rejected") return false;
-    const req = (cmd.requestedAt ?? (cmd as any).createdAt)?.getTime?.();
-    if (req === undefined) return false;
-    return req >= started && req <= ended;
-  });
-}

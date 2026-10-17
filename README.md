@@ -82,7 +82,7 @@ The React platform signs users in through MuNET/passkeys and checks shop members
 - Staff calls: log in through `/rpc/admin/login`; use the returned session token.
 - Player Web calls: log in through `/rpc/player-auth/login/by-identity`; use the returned player session token.
 - Bot/self-service entry calls: `Authorization: Bearer <integration-api-token>` and structured external identities.
-- Machine software calls: connect to `/rpc/machine/ws` with `Authorization: Bearer <machine-api-token>`.
+- HINATA IO machines: connect directly to `/io/ws` with the per-device token issued on the device board (`Authorization: Bearer <deviceToken>`).
 
 The owner can create manager/viewer/owner staff users, disable staff accounts, and reset staff passwords from Staff Web. Staff users are archived by status rather than physically deleted, so historical audit references stay readable. Staff-created asset definitions, presents, and pricing configs also use archive semantics; archived catalog records stay visible but must be restored before they can be edited or reused. System base assets created by OOBE cannot be archived because they anchor settlement and migration.
 

@@ -1,9 +1,3 @@
-import type {
-  DeviceActionExecutionInput,
-  DeviceActionExecutionResult,
-  DeviceActionExecutor,
-  HinataIoDeviceConfig,
-} from "@prism/application";
 
 const KEY_PRESS_TTL_MS = 30_000;
 const MAX_KEY_PRESS_COUNT = 20;
@@ -16,16 +10,6 @@ export type HinataResult = {
   status: number;
   error?: string;
 };
-
-export type HinataExecutorInput = {
-  devices: readonly HinataIoDeviceConfig[];
-  fetch?: (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
-  now?: () => Date;
-  id?: () => string;
-  nonce?: () => Uint8Array;
-};
-
-export type HinataIoExecutorInput = HinataExecutorInput;
 
 export type EncryptHinataIoMessageInput = {
   password: string;
@@ -49,22 +33,6 @@ export function normalizeHinataUrl(targetUrl: string): string {
   }
   return url.replace(/\/+$/, "");
 }
-
-export function resolveHinataIoDeviceRef(
-  deviceRef: string,
-  devices: readonly HinataIoDeviceConfig[],
-): HinataIoDeviceConfig | null {
-  const target = deviceRef.trim().toLowerCase();
-  if (!target) return null;
-  return (
-    devices.find((device) => {
-      if (device.name.trim().toLowerCase() === target) return true;
-      return (device.aliases ?? []).some((alias) => alias.trim().toLowerCase() === target);
-    }) ?? null
-  );
-}
-
-export const resolveHinataDeviceRef = resolveHinataIoDeviceRef;
 
 export async function encryptHinataIoMessage(
   input: EncryptHinataIoMessageInput,
@@ -353,134 +321,6 @@ async function sendHinataRequest(input: {
   }
 
   return { ok: false, status: 0, error: "机台通信失败" };
-}
-
-export function createHinataExecutor(input: HinataExecutorInput): DeviceActionExecutor {
-  const fetcher = input.fetch ?? ((url: string | URL | Request, init?: RequestInit) => fetch(url, init));
-  const now = input.now ?? (() => new Date());
-  const id = input.id ?? (() => crypto.randomUUID());
-  const nonce = input.nonce ?? (() => crypto.getRandomValues(new Uint8Array(12)));
-  const devicesById = new Map(input.devices.map((device) => [device.id, device]));
-
-  return {
-    async execute(executionInput: DeviceActionExecutionInput): Promise<DeviceActionExecutionResult> {
-      const command = executionInput.command;
-      if (command.executorKind !== "hinata_io" || command.targetKind !== "game_machine" || !command.deviceId) {
-        return failed(`Hinata IO cannot execute ${command.type}.`);
-      }
-      const device = devicesById.get(command.deviceId);
-      if (!device) return failed("Hinata IO 设备配置不存在。");
-
-      try {
-        if (command.type === "coin") {
-          return await executeCoinCommand({ executionInput, device, fetcher, now, id, nonce });
-        }
-        if (command.type === "aime.scan") {
-          return await executeCardCommand({ executionInput, device, fetcher, id, nonce });
-        }
-        return failed(`Hinata IO cannot execute ${command.type}.`);
-      } catch (error) {
-        return failed(error instanceof Error ? error.message : "Hinata IO request failed.");
-      }
-    },
-  };
-}
-
-export const createHinataIoExecutor = createHinataExecutor;
-
-async function executeCoinCommand(input: {
-  executionInput: DeviceActionExecutionInput;
-  device: HinataIoDeviceConfig;
-  fetcher: NonNullable<HinataExecutorInput["fetch"]>;
-  now: () => Date;
-  id: () => string;
-  nonce: () => Uint8Array;
-}): Promise<DeviceActionExecutionResult> {
-  const count = input.executionInput.command.payload?.count ?? 1;
-  if (!Number.isInteger(count) || typeof count !== "number" || count < 1 || count > MAX_KEY_PRESS_COUNT) {
-    return failed(`投币数量必须是 1 到 ${MAX_KEY_PRESS_COUNT} 的整数。`);
-  }
-  const coinKey = input.device.coinKey ?? 32;
-  if (!Number.isInteger(coinKey) || coinKey < 0 || coinKey > MAX_KEY_VALUE) {
-    return failed("投币按键配置无效。");
-  }
-
-  const payload = await encryptHinataIoMessage({
-    password: input.device.password,
-    salt: input.device.salt,
-    message: { action: "KEY_PRESS", body: { key: coinKey, count } },
-    messageId: input.id(),
-    expiresAt: input.now().getTime() + KEY_PRESS_TTL_MS,
-    nonce: input.nonce(),
-  });
-
-  return postRemote(input.fetcher, eventUrl(input.device.url), payload);
-}
-
-async function executeCardCommand(input: {
-  executionInput: DeviceActionExecutionInput;
-  device: HinataIoDeviceConfig;
-  fetcher: NonNullable<HinataExecutorInput["fetch"]>;
-  id: () => string;
-  nonce: () => Uint8Array;
-}): Promise<DeviceActionExecutionResult> {
-  const provider = stringPayloadField(input.executionInput, "provider").toLowerCase();
-  const subject = stringPayloadField(input.executionInput, "subject");
-  const expectedProvider = (input.device.cardType ?? "aime").trim().toLowerCase();
-  if (provider !== expectedProvider) return failed("该设备不支持这类卡片。");
-
-  const payload = await encryptHinataIoMessage({
-    password: input.device.password,
-    salt: input.device.salt,
-    message: {
-      action: "SET_CARD",
-      body: { type: provider, value: subject, disposable: true },
-    },
-    messageId: input.id(),
-    expiresAt: null,
-    nonce: input.nonce(),
-  });
-
-  return postRemote(input.fetcher, stateUrl(input.device.url), payload);
-}
-
-async function postRemote(
-  fetcher: NonNullable<HinataExecutorInput["fetch"]>,
-  url: string,
-  payload: Record<string, unknown>,
-): Promise<DeviceActionExecutionResult> {
-  const response = await fetcher(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (response.ok) return { status: "success" };
-  if (response.status === 404) return failed("Hinata IO 没有在线客户端。");
-  return failed(`Hinata IO request failed with ${response.status}.`);
-}
-
-function stateUrl(value: string): string {
-  const url = new URL(normalizeHinataUrl(value));
-  url.pathname = url.pathname.replace(/\/+$/, "");
-  return url.toString().replace(/\/$/, "");
-}
-
-function eventUrl(value: string): string {
-  const url = new URL(stateUrl(value));
-  url.pathname = `${url.pathname}/event`;
-  return url.toString();
-}
-
-function stringPayloadField(input: DeviceActionExecutionInput, field: string): string {
-  const value = input.command.payload?.[field];
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`Hinata IO ${field} is required.`);
-  }
-  return value.trim();
-}
-
-function failed(message: string): DeviceActionExecutionResult {
-  return { status: "failed", message };
 }
 
 function encodeBase64Url(bytes: Uint8Array): string {

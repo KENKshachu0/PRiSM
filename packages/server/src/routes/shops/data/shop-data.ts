@@ -30,7 +30,7 @@ const settingsState = `(SELECT json_array(
   json_array(s.name,s.latitude,s.longitude,s.radius_meters,s.hero_data,s.hero_hash,s.updated_at)) FROM shops s WHERE s.id=?)`;
 const billingState = `(SELECT COALESCE(json_group_array(json_array(billing_enabled,auto_register,checkin_geo,checkout_geo,
   machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)),'[]') FROM shop_billing_settings WHERE shop_id=?)`;
-const emptyTables = [...businessTables, "api_tokens", "machines", "shop_player_accounts", "shop_platform_bindings", "mahjong_seats", "device_commands", "device_states", "machine_connections"];
+const emptyTables = [...businessTables, "api_tokens", "machines", "shop_player_accounts", "shop_platform_bindings", "mahjong_seats", "device_capabilities", "device_operations", "device_events", "device_state"];
 // One statement captures all target state and is reused as the atomic apply condition.
 export const snapshotSql = `SELECT (${emptyTables.map(table => `(SELECT COUNT(*) FROM ${table} WHERE shop_id=?)`).join("+")})
   +(SELECT COUNT(*) FROM staff_users WHERE shop_id=? AND id NOT LIKE 'account:%')

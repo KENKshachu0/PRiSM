@@ -1,28 +1,18 @@
 import type {
-  DeviceCommand,
-  DeviceCommandRepository,
-  DeviceCommandType,
-  DeviceReferenceTarget,
   PlayerIdentityRepository,
   PricingConfigRepository,
   Session,
   SessionRepository,
 } from "@prism/core";
 import { PrismDomainError, startSession } from "@prism/core";
-import { createDeviceActionService, type DeviceActionServiceDependencies } from "./device-actions";
 
 export type PlayerCommandServiceDependencies = {
   sessions: SessionRepository;
-  deviceCommands: DeviceCommandRepository;
   pricingConfigs?: PricingConfigRepository;
   resolvePricingConfigs?: (playerId: string) => Promise<import("@prism/core").PricingConfig[]>;
   playerIdentities?: PlayerIdentityRepository;
   now: () => Date;
   id: () => string;
-  coinCooldownMs: number;
-  getCoinCooldownMs?: () => Promise<number>;
-  resolveFacilityTarget?: DeviceActionServiceDependencies["resolveFacilityTarget"];
-  resolveGameMachineTarget?: DeviceActionServiceDependencies["resolveGameMachineTarget"];
   canStartSessionAt?: (input: { playerId: string; at: Date }) => Promise<boolean>;
 };
 
@@ -33,21 +23,11 @@ export type StartPlayerSessionCommand = {
   metadata?: Record<string, unknown>;
 };
 
-export type RequestPlayerDeviceCommand = {
-  playerId: string;
-  type: DeviceCommandType;
-  target: DeviceReferenceTarget;
-  payload?: Record<string, unknown>;
-};
-
 export type PlayerCommandService = {
   startSession(input: StartPlayerSessionCommand): Promise<Session & { status: "active" }>;
-  requestDeviceCommand(input: RequestPlayerDeviceCommand): Promise<DeviceCommand>;
 };
 
 export function createPlayerCommandService(dependencies: PlayerCommandServiceDependencies): PlayerCommandService {
-  const deviceActions = createDeviceActionService(dependencies);
-
   return {
     async startSession(input) {
       const now = dependencies.now();
@@ -94,18 +74,6 @@ export function createPlayerCommandService(dependencies: PlayerCommandServiceDep
       await dependencies.sessions.save(session);
       const saved = await dependencies.sessions.findById(session.id);
       return { ...session, pricingReleaseId: saved?.pricingReleaseId };
-    },
-
-    async requestDeviceCommand(input) {
-      return deviceActions.requestDeviceAction({
-        actor: {
-          type: "player",
-          playerId: input.playerId,
-        },
-        type: input.type,
-        target: input.target,
-        payload: input.payload,
-      });
     },
   };
 }

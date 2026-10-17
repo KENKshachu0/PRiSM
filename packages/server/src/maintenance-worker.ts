@@ -14,6 +14,19 @@ try {
   } as any;
 }
 
+/**
+ * Keeps every declared Durable Object class and its storage alive while the
+ * schema is migrated. The deploy script uses this module as `main` for the
+ * maintenance and verify phases, so each class named in wrangler config must be
+ * exported here or those deploys fail with "class not found".
+ */
+export class MachineRelay extends BaseDurableObject<Env> {
+  async fetch(): Promise<Response> {
+    // Devices reconnect after the deployment; nothing is served while fenced.
+    return new Response("Maintenance", { status: 503 });
+  }
+}
+
 /** Keeps the existing Durable Object class and storage; no business schema is touched. */
 export class LiveBilling extends BaseDurableObject<Env> {
   async refresh(shopId: string, playerId: string, terminal = false, urgent = false): Promise<void> {

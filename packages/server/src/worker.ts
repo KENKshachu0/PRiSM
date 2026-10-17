@@ -4,6 +4,7 @@ import {
   isDeploymentMaintenance,
   maintenanceResponse,
 } from "./deployment-gate.js";
+import { dispatchToRelay, relayGateway } from "./gateway/machine-relay-gateway.js";
 import { purgeExpiredPlatformState } from "./tasks/cron-handlers.js";
 import { isAssetEligiblePath } from "./routes/web-assets.js";
 import type { Env } from "./bindings.js";
@@ -54,6 +55,16 @@ export const worker = {
       return maintenanceResponse(request);
     }
 
+    // Device relay upgrades. Handled before app.fetch because this is a bare
+    // WebSocket upgrade, not a JSON route, and it must win over the static-asset
+    // gate above. A device retries on 5xx but treats 401 as permanent, so an
+    // offline platform during maintenance is a clean, non-fatal interruption.
+    const relay = await relayGateway(request, env);
+    if (relay.kind === "rejected") return relay.response;
+    if (relay.kind === "dispatch") {
+      return dispatchToRelay(request, env, relay);
+    }
+
     const startedAt = performance.now();
     const response = await app.fetch(request, env, ctx);
 
@@ -93,3 +104,4 @@ export const worker = {
 
 export default worker;
 export { LiveBilling } from "./durable-objects/live-billing.js";
+export { MachineRelay } from "./durable-objects/machine-relay.js";

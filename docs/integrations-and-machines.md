@@ -46,7 +46,7 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 | 路由 | 用途 |
 | --- | --- |
 | `GET /rpc/integration/sessions/active` | 列出在场所有活跃 session，含 `playerDisplayName`、`identities` (provider+subject)、`startedAt`、`label`、`elapsedMinutes`。机器人在 `/list`、`/窝里` 这类命令里用 `identities` 中的 `subject`（平台用户 ID）去调用聊天平台 API 拉昵称，而不是直接显示后台存的 `playerDisplayName`。 |
-| `GET /rpc/integration/device-states` | 列出当前所有设备的最新电源/状态。`state` 为普通字符串（如 `on`、`off`），bot 的 `/show` 命令直接消费。 |
+| `GET /rpc/integration/device-states` | 列出每台已启用、绑定了电源的设备的电源状态，**每次请求实时读取 Home Assistant**（电源可能在平台外被改动）。`state` 为 `on`/`off`；读不到时 `status` 为 `offline`、`state` 为最后一次观测值或 `unknown`。`metadata.aliases` 为设备别名。bot 的 `/show` 与自动关机直接消费。 |
 
 平台昵称的取法因适配器而异：Koishi 走 `session.bot.getUser(qq)`，AstrBot 在 aiocqhttp 走 `bot.call_action("get_stranger_info", user_id=qq)`，telegram、微信、Aime 等按对应适配器提供的方法拉取；取不到则退化为后台存的玩家名。机器人不要把后台存的 displayName 直接写进消息，避免不同身份来源的玩家出现 `Player 123` 这种开发者命名。
 
@@ -136,81 +136,79 @@ await client.requestScanByIdentity(
 
 ---
 
-## 2. Machine：机器软件与设备控制
+## 2. 设备：能力、动作与事件
 
-Machine 适合店内机器软件、投币控制器、Aime 桥接程序、门禁/电源/空调控制桥接程序。Machine Token 不代表玩家，只代表一套可信机器接入程序。
+一台设备（`machines`）只表示身份：名称、别名、二维码 `public_id`、是否启用。它能做什么由绑定的**能力**决定，每个能力是 `device_capabilities` 的一行：
 
-**Token 要求：**
+| 能力 | 配置（`config_json`） | 密钥（`secret_json`，每个值单独加密） | 动作 | 设备回报 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| `power` | — | `binding`（HA 地址、实体、令牌） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
+| `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`led.set`（不存） | `link`，平台权威 |
+| `door` | `lockId` | — | `door.open` | — | — |
+| `mahjong` | `capacity`、`pricingConfigIds` | — | —（上下桌走麻将流程） | — | — |
 
-- 在 Staff Web「员工与系统」中创建「机器软件接入」密钥。
-- 请求 Header 使用 `Authorization: Bearer <machine-token>`。
+能力目录写在 `packages/server/src/devices/capabilities.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
 
-新机器软件应优先连接 `GET /rpc/machine/ws`，使用 `Authorization: Bearer <machine-token>`。连接后先发送：
+### 动作、副作用与事件
+
+- **动作**是平台向设备提出的请求（意图）。每次动作记为一条 `device_operations`，同时写入一条 `request` 事件；执行后写 `result` 事件并结算为 `succeeded`/`failed`。网络超时等**无法确定结果**的情况保持 `pending`：设备可能已经动作了，计费一直把未结算的请求算作使用。
+- **副作用**是现实中发生的事（机器开了、卡进了游戏），平台不能直接观察。
+- **事件**是平台记录下来的事实（`device_events`，只增不改）：`request`/`result`（平台发起）、`signal`（设备回报，如 `card.consumed`）、`change`（状态变化，如电源从开到关、机台上线/掉线）。
+- 设备回报 `card.consumed` 时，会把对应的 `aime.scan` 操作标记为 `confirmed_at`（只认本设备的操作）。
+- 状态（`device_state`）只在值变化时写一条 `change` 事件。电源是**外部权威**：每次需要时实时读取 Home Assistant，存储只保留观测历史；直连链路 `link` 是**平台权威**，由中继在连接/断开时写入。
+- 以后要做「空闲/忙碌」这类派生状态时，应当监听**事件**（包括设备回报和观测到的变化），而不是只看平台发出的动作。
+
+所有写入都经过 `packages/server/src/devices/bus.ts`：`perform`（动作）、`signal`（回报）、`setOwned`（平台权威状态）、`observe`（实时读外部状态）。其他代码不直接写设备表。卡号只作为临时参数交给执行器，从不落库；门锁临时密码只在本次响应返回。
+
+### 引用设备与 Bot 动作
+
+Bot、员工和 integration API 用 `target.ref` 引用设备，匹配设备 ID、`public_id`、名称或任一别名（不区分大小写、去首尾空白）；多台同名返回 `DEVICE_REFERENCE_AMBIGUOUS`。`all` 只用于 `power.on/off`，作用于所有已启用且绑定电源的设备，每台一条操作，共用同一个父操作 ID。玩家发起 `coin`、`aime.scan`、`power.*` 需要处于活跃计费场次；投币受店铺 `venue.operations.coinCooldownMs` 冷却限制。返回体保持旧的 `DeviceCommand` 形状（`status` 为 `acked`/`pending`/`expired`，`executorKind`、`payload.deviceLabel`、`payload.executorFailure`、门锁的 `temporaryPassword`），Bot 与员工视图无需改动。
+
+### 旧版设备注册表
+
+早期部署把 HA、HINATA IO、TTLock 设备存在店铺设置（`devices.homeassistant` + `devices.homeassistant_connection`、`devices.hinata_io`、`devices.ttlock`）。读取设备列表时（设备看板、Bot 动作、设备状态），这些条目会**自动转成正式设备**：固定 ID `legacy:ha|io|lock:<店铺>:<原 id>`，原 id（HA 实体等）加入别名以保持 Bot 指令可用，旧操作记录里以原 id 或名称记录的设备改指向新设备，然后删除注册表（`devices.homeassistant_connection` 与 `devices.ttlock_connection` 保留）。转换需要平台加密密钥，未配置 `URL_ENCRYPTION_KEY` 时保持原样等待下次。原来的 `scripts/import-legacy-devices.ts` 因此删除。
+
+### TTLock
+
+TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_connection`（字段兼容旧 `prism-neo`：`baseUrl`、`clientId`、`clientSecret`、`appAccount`、`appPwd`、`accessToken`、`refreshToken`、`accessTokenExpiresAt`）。设备上绑定 `door` 能力并填写 `lockId`。`door.open` 调用 `/v3/keyboardPwd/add` 创建 8 位随机临时密码，有效期 3 分钟；access token 过期时先用 `refreshToken`，失败后用账号密码重新获取，并把新 token 写回设置。
+
+### HINATA IO：外部中继
+
+`transport: "external"` 时平台通过 HTTP 访问外部 relay（`secret.url`）。有连接密码时按 Hinata IO 协议用 PBKDF2-HMAC-SHA256 与 AES-256-GCM 生成 `E2EE_V1`：投币向 `<url>/event` 发送有效期 30 秒、带去重 ID 的 `KEY_PRESS`；刷卡向 `<url>` 发送一次性 `SET_CARD`。投币必须有密码，按键码 1–65535。relay 的 HTTP 拒绝记为失败（状态码写入结果事件和登录审计），无响应记为结果未知。外部 relay 的「已接收」不等于机台真正读到了卡。
+
+### HINATA IO：机台直连（内嵌中继）
+
+`transport: "embedded"` 时机台直接连本平台：`[aimeio] serverUrl=<APP_ORIGIN>/io/ws`，再填写平台签发的 `deviceToken`。
+
+- 保存时生成 `prism_io_` 前缀的随机令牌，**只在保存响应里返回一次**，库里只存 SHA-256（`device_capabilities.credential_hash`）。`rotateRelayToken: true` 轮换令牌；通道名 `config.channel` 与令牌无关，轮换不会断开在线机台。
+- WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`，平台在握手前按令牌找到设备和通道；令牌无效返回 401，机台客户端把 401/403 当作永久失败停止重连。
+- 直连不做端到端加密：平台既是中继也是控制端，卡号本来就由平台从 `cards.access_code` 取出，身份由设备令牌承担，机密性由 `wss://` 承担。保存为直连时会丢弃之前给外部中继存的密码；请求里同时提交密码返回 `DEVICE_RELAY_PASSWORD_CONFLICT`。机台若仍设置了 `remotePassword`，会在 `CLIENT_HELLO` 里声明 `e2ee: true`，平台拒绝下发并在设备看板提示清空。
+- 通道是 `MachineRelay` Durable Object（binding `MACHINE_RELAY`，迁移 tag `machine-relay-v1`）。控制端接口不对外暴露，`/io/ws` 是唯一公开路径。设备看板上的「已连接」直接问 Durable Object，不读存储：部署重启会断开连接却不触发断开回调。
+- 机台通过同一连接回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`，分别记为 `card.state`、`card.consumed` 信号；`led.set` 每帧都有，不存储。下发刷卡时平台把操作 ID 放进 `source`，机台原样回传；只有 UUID 形式的 `source` 被当作关联，`Remote`、`HINATA(<实例>)` 等机台本地来源不关联任何操作。
+
+### 设备日志
+
+`GET /api/v1/merchant/machines/:id/events?limit=50`（1–200）按时间倒序返回该设备的事件：
 
 ```json
-{
-  "type": "hello",
-  "machineId": "maimai-dx-1",
-  "capabilities": ["coin", "aime.scan"]
-}
+{ "events": [
+  { "id": "...", "capability": "hinata_io", "kind": "signal", "name": "card.consumed", "origin": "device",
+    "operationId": "6f1c…", "parentOperationId": null, "at": "2026-10-17T10:00:02.000Z",
+    "payload": { "card": { "source": "6f1c…" } } },
+  { "id": "...", "capability": "hinata_io", "kind": "result", "name": "aime.scan", "origin": "platform",
+    "operationId": "6f1c…", "parentOperationId": null, "at": "2026-10-17T10:00:00.400Z", "payload": { "outcome": "ok" } },
+  { "id": "...", "capability": "hinata_io", "kind": "request", "name": "aime.scan", "origin": "platform",
+    "operationId": "6f1c…", "parentOperationId": null, "at": "2026-10-17T10:00:00.000Z", "payload": { "cardId": "card-1" } }
+] }
 ```
 
-服务端会回复 `hello.ack` 并推送该机器的待执行命令。机器执行后发送 `ack`，`status` 为 `success` 或 `failed`。失败 ACK 的 `message` 会保存到命令记录里，方便后台排查机器故障。
+`origin` 为 `platform`（平台发起）、`device`（设备回报）或 `observer`（平台读外部状态时发现变化）。看板把同一操作的 `request` 与 `result` 合并成一行。
 
-设备动作统一使用明确类型和目标分类：`door.open`、`power.on`、`power.off`、`ac.set_temperature` 属于 `facility`，执行方向是 `home_assistant`、`ttlock` 或设施网关；`coin` 和 `aime.scan` 属于 `game_machine`。原生 PRiSM 机器软件仍可走 `machine_ws`；Hinata IO 客户端走 `hinata_io` 直接执行器，由后端调用 relay HTTP 端点。Home Assistant 电源/空调控制与 TTLock 门锁控制保持独立边界。
+**由事件触发操作目前只预留、未实现。** 投币要先抢冷却锁、刷卡要先确定玩家，在确定哪些动作能安全自动执行之前，事件只被记录和读取。
 
-### TTLock 配置与门禁控制
+### 旧接口
 
-TTLock 由员工在设备看板的设施设备区域点击锁形设置按钮配置，保存于 `app_settings` 的 `devices.ttlock_connection` 和 `devices.ttlock`。配置更新后，后端会在执行命令和同步状态时动态读取，不需要 Worker 环境变量或重新部署。连接配置兼容旧 `prism-neo` 的字段：
-
-```json
-{
-  "baseUrl": "https://api.sciener.com",
-  "clientId": "app-id",
-  "clientSecret": "app-secret",
-  "appAccount": "ttlock-app-account",
-  "appPwd": "ttlock-app-password",
-  "accessToken": "access-token",
-  "refreshToken": "refresh-token",
-  "accessTokenExpiresAt": null
-}
-```
-
-门锁映射格式为 `[{ "id": "front-door", "name": "主门锁", "aliases": ["front-door", "门禁"], "lockId": 25356943 }]`。玩家或员工只需使用 `name` / `aliases` 作为 `target.ref`；匹配到 TTLock 映射的 `door.open` 会保存为 `executorKind: "ttlock"`，调用 `/v3/keyboardPwd/add` 创建一个 8 位随机临时密码，默认有效期 3 分钟。看板会定期调用 `/v3/lock/queryOpenState` 展示锁定/解锁状态。access token 过期时，运行时会优先使用 `refreshToken`，失败后再使用 TTLock APP 账号密码重新获取 token，并把新 token 写回数据库。
-
-### Hinata IO 配置与协议
-
-Hinata IO 设备由员工在设备看板的游戏机器区域配置，保存于 `app_settings` 的 `devices.hinata_io`。配置更新后，后端解析设备和执行命令时会读取最新设置，无需修改环境变量或重新部署。每项数据格式如下：
-
-```json
-[
-  {
-    "id": "maimai-left",
-    "name": "舞萌 DX 左机",
-    "aliases": ["舞萌左机", "mai-left"],
-    "url": "https://relay.example/instance-id",
-    "password": "remotePassword",
-    "salt": "ABEiM0RVZneImaq7zN3u_w",
-    "coinKey": 32,
-    "cardType": "aime"
-  }
-]
-```
-
-`id` 仅用于后端持久化与审计，玩家输入不会与它匹配；玩家只能使用 `name` 或 `aliases`。所有设备的 `id` 必须唯一；忽略大小写和首尾空白后，`name` 与 `aliases` 也必须全局唯一，冲突配置会被拒绝。`url` 是 Hinata IO relay 的实例状态端点。`password` 必须与客户端远程密码一致；`salt` 是 16 字节随机值的无 padding base64url 表示；`coinKey` 默认 `32`（空格键），范围为 `0..65535`；`cardType` 默认 `aime`。
-
-后端按 Hinata IO 协议使用 PBKDF2-HMAC-SHA256（600000 次）和 AES-256-GCM 生成 `E2EE_V1`：投币向 `<url>/event` 发送有效期 30 秒、带 UUID 去重 ID 的 `KEY_PRESS`；刷卡向 `<url>` 发送可重放状态通道中的一次性 `SET_CARD`。relay 返回 404 时命令记为执行失败，bot 只显示“设备未连接”，详细错误保留在后端设备命令审计中。刷卡卡号只在一次命令执行期间存在于内存中，持久化命令前会从 payload 中移除。
-
-### 玩家面对的设备别名与 Home Assistant 解析
-
-玩家通过机器人指令（如 `/prism on wacca` 或 `/prism lock`）发起设施动作时，插件把用户输入作为 `target.ref` 设备引用发送。用户只能输入后台配置的设备 `name`、任意一个 `alias`（别名）或 `all`，不能直接输入 Home Assistant entity ID 或 TTLock `lockId`，后端也不接受设施请求中的 `target.id`。`door.open` 会先读取 `devices.ttlock`，其他设施动作读取 `devices.homeassistant`，因此门锁与电源可以使用相同的设备引用体系而不会串用执行器。
-
-1. 匹配设备 `name`；
-2. 匹配设备 `alias` 列表中的任一条目；
-
-`alias` 必须配置为字符串数组；单个字符串不是有效格式，设置接口会拒绝保存。匹配大小写不敏感并去除首尾空白。解析成功后，Home Assistant 命令的 `DeviceCommand.deviceId` 保存真实 entity ID，TTLock 命令的 `DeviceCommand.deviceId` 保存后台映射的内部 `id`；执行器不再解析 name、alias 或原始用户输入。`all` 被表示为没有单一 `deviceId` 的设施批量目标，持久化为 `device_id = NULL`；它只支持 `power.on/off`。普通设备和批量动作分别在 `action.payload.deviceLabel` 中返回设备 `name` 和“所有设备”。批量失败信息同样使用设备 `name`，不会暴露 entity ID。未命中的 name/alias（包括用户直接输入的 entity ID 或 TTLock lockId）统一返回「设备不存在」。
-
-> 需注意：设备状态同步（`syncHomeAssistantStates`）始终使用注册表里的真实 `id` 调用 `/api/states/<entity_id>`，因此看板上的在线/离线状态不会被别名影响；只有命令执行路径此前漏掉了这一解析，现已修复。
+`/rpc/machine/ws`（原生机器软件 WebSocket 与 `machine_ws` 执行器，只有本地 Bun 服务端提供过，Worker 部署从未开放）已移除；机台改用 `/io/ws` 直连。`GET /rpc/staff/machine-connections` 保留，内容改为直连机台的 `link` 状态。`/api/v1/merchant/device-bindings` 保留但总是返回空列表（注册表已自动转为设备）。旧的 `device_commands`、`device_states`、`machine_connections` 表与 `machines` 上的能力列由迁移 0037 复制到新表后不再写入，保留一个版本以便回滚。
 
 Cloudflare Workers 运行时通过保持原生 `fetch` 调用上下文的包装函数访问 Home Assistant，避免把运行时函数作为普通对象方法调用而触发 `Illegal invocation`。
 

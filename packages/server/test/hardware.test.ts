@@ -1,48 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import type { DeviceCommand } from "@prism/core";
 import type { TTLockConnectionConfig } from "@prism/application";
 import {
-  createHinataExecutor,
-  createHinataIoExecutor,
   decryptHinataIoMessage,
   encryptHinataIoMessage,
   normalizeHinataUrl,
-  resolveHinataIoDeviceRef,
   sendHinataCard,
   sendHinataCoin,
 } from "../src/hardware/hinata.js";
-import {
-  createTtlockExecutor,
-  createTTLockExecutor,
-  queryTTLockDeviceState,
-  resolveTTLockDeviceRef,
-  TTLockClient,
-  unlockTtlockDoor,
-} from "../src/hardware/ttlock.js";
-import {
-  createHomeAssistantExecutor,
-  executeHomeAssistantAction,
-  getHomeAssistantEntityState,
-  resolveHomeAssistantDeviceRef,
-} from "../src/hardware/home-assistant.js";
-import {
-  authenticateMachineWebSocketRequest,
-  handleMachineWebSocketClose,
-  handleMachineWebSocketMessage,
-  machineWebSocketHandler,
-  type MachineWebSocketPeer,
-} from "../src/hardware/machine-ws.js";
-
-const hinataDevice = {
-  id: "maimai-left",
-  name: "舞萌 DX 左机",
-  aliases: ["舞萌左机", "mai-left"],
-  url: "https://relay.example/maimai-left",
-  password: "test-remote-password",
-  salt: "ABEiM0RVZneImaq7zN3u_w",
-  coinKey: 32,
-  cardType: "aime",
-};
+import { TTLockClient } from "../src/hardware/ttlock.js";
+import { callHomeAssistantPower, getHomeAssistantEntityState } from "../src/hardware/home-assistant.js";
 
 describe("Hinata IO encryption", () => {
   it("matches the Rust and Dart E2EE_V1 fixture", async () => {
@@ -94,117 +60,8 @@ describe("Hinata IO encryption", () => {
   });
 });
 
-describe("Hinata executor and direct send functions", () => {
-  it("posts encrypted coin key events to the non-replay event endpoint", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = [];
-    const executor = createHinataExecutor({
-      devices: [hinataDevice],
-      fetch: async (url: string | URL | Request, init?: RequestInit) => {
-        requests.push({ url: String(url), init });
-        return new Response("success");
-      },
-      now: () => new Date(1_700_000_000_000),
-      id: () => "00000000-0000-4000-8000-000000000001",
-      nonce: () => Uint8Array.from([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]),
-    });
 
-    const result = await executor.execute({
-      command: {
-        id: "cmd-coin-1",
-        type: "coin",
-        deviceId: "maimai-left",
-        targetKind: "game_machine",
-        executorKind: "hinata_io",
-        playerId: "p1",
-        status: "pending",
-        payload: { count: 2 },
-        requestedAt: new Date(),
-      },
-    });
-
-    expect(result).toEqual({ status: "success" });
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe("https://relay.example/maimai-left/event");
-    const envelope = JSON.parse(String(requests[0]?.init?.body)) as Record<string, unknown>;
-    const decrypted = await decryptHinataIoMessage(hinataDevice.password, envelope);
-    expect(decrypted).toEqual({
-      action: "KEY_PRESS",
-      body: { key: 32, count: 2 },
-    });
-  });
-
-  it("posts the player card as a disposable encrypted state", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = [];
-    const executor = createHinataIoExecutor({
-      devices: [hinataDevice],
-      fetch: async (url: string | URL | Request, init?: RequestInit) => {
-        requests.push({ url: String(url), init });
-        return new Response("success");
-      },
-      id: () => "00000000-0000-4000-8000-000000000002",
-      nonce: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
-    });
-
-    const result = await executor.execute({
-      command: {
-        id: "cmd-card-1",
-        type: "aime.scan",
-        deviceId: "maimai-left",
-        targetKind: "game_machine",
-        executorKind: "hinata_io",
-        playerId: "p1",
-        status: "pending",
-        payload: { provider: "aime", subject: "01234567890123456789" },
-        requestedAt: new Date(),
-      },
-    });
-
-    expect(result).toEqual({ status: "success" });
-    expect(requests[0]?.url).toBe("https://relay.example/maimai-left");
-    const envelope = JSON.parse(String(requests[0]?.init?.body)) as Record<string, unknown>;
-    const decrypted = await decryptHinataIoMessage(hinataDevice.password, envelope);
-    expect(decrypted).toEqual({
-      action: "SET_CARD",
-      body: {
-        type: "aime",
-        value: "01234567890123456789",
-        disposable: true,
-      },
-    });
-  });
-
-  it("records an offline relay as a failed execution", async () => {
-    const executor = createHinataExecutor({
-      devices: [hinataDevice],
-      fetch: async () => new Response("No active client connected", { status: 404 }),
-    });
-
-    const result = await executor.execute({
-      command: {
-        id: "cmd-coin-2",
-        type: "coin",
-        deviceId: "maimai-left",
-        targetKind: "game_machine",
-        executorKind: "hinata_io",
-        playerId: "p1",
-        status: "pending",
-        payload: { count: 1 },
-        requestedAt: new Date(),
-      },
-    });
-
-    expect(result).toEqual({
-      status: "failed",
-      message: "Hinata IO 没有在线客户端。",
-    });
-  });
-
-  it("resolves Hinata devices by name or alias", () => {
-    expect(resolveHinataIoDeviceRef("舞萌左机", [hinataDevice])?.id).toBe("maimai-left");
-    expect(resolveHinataIoDeviceRef("舞萌 DX 左机", [hinataDevice])?.id).toBe("maimai-left");
-    expect(resolveHinataIoDeviceRef("maimai-left", [hinataDevice])).toBeNull();
-  });
-
+describe("Hinata IO relay calls", () => {
   it("sendHinataCard sends encrypted payload when password is provided and plaintext fallback when not", async () => {
     const calls: Array<{ url: string; body: unknown }> = [];
     const mockFetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -266,52 +123,9 @@ const ttlockConnection = {
   accessTokenExpiresAt: null,
 };
 
-const ttlockDevice = {
-  id: "front-door",
-  name: "前门",
-  aliases: ["door", "门禁"],
-  lockId: 25356943,
-};
+const ttlockDevice = { lockId: 25356943 };
 
-describe("TTLock driver & executor", () => {
-  it("resolves configured names and aliases", () => {
-    expect(resolveTTLockDeviceRef("门禁", [ttlockDevice])).toEqual(ttlockDevice);
-    expect(resolveTTLockDeviceRef("DOOR", [ttlockDevice])).toEqual(ttlockDevice);
-    expect(resolveTTLockDeviceRef("25356943", [ttlockDevice])).toBeNull();
-  });
-
-  it("creates a random temporary password for a configured lock", async () => {
-    const requests: Request[] = [];
-    const executor = createTtlockExecutor({
-      connection: ttlockConnection,
-      devices: [ttlockDevice],
-      now: () => new Date("2026-09-07T00:00:00.000Z"),
-      fetch: async (url: string | URL | Request, init?: RequestInit) => {
-        requests.push(new Request(url, init));
-        return Response.json({ errcode: 0, keyboardPwdId: 987654321 });
-      },
-    });
-
-    const result = await executor.execute({
-      command: {
-        id: "cmd-ttlock-1",
-        type: "door.open",
-        deviceId: "front-door",
-        targetKind: "facility",
-        executorKind: "ttlock",
-        status: "pending",
-        requestedAt: new Date("2026-09-07T00:00:00.000Z"),
-      },
-    });
-
-    expect(result.status).toBe("success");
-    if (result.status === "success") {
-      expect(result.payload?.temporaryPassword).toMatch(/^\d{8}$/);
-      expect(result.payload?.keyboardPwdId).toBe(987654321);
-      expect(result.payload?.temporaryPasswordExpiresAt).toBe("2026-09-07T00:03:00.000Z");
-    }
-  });
-
+describe("TTLock client", () => {
   it("refreshes expired token and invokes onConnectionUpdated callback", async () => {
     const requests: Request[] = [];
     let updatedConnection: TTLockConnectionConfig | undefined;
@@ -346,129 +160,39 @@ describe("TTLock driver & executor", () => {
     });
     expect(updatedConnection?.accessToken).toBe("new-access-token");
   });
-
-  it("unlockTtlockDoor and queryTTLockDeviceState function correctly", async () => {
-    const client = new TTLockClient({
-      connection: ttlockConnection,
-      fetcher: async (url: string | URL | Request) => {
-        if (String(url).endsWith("/v3/lock/queryOpenState")) {
-          return Response.json({ state: 1 });
-        }
-        return Response.json({ errcode: 0 });
-      },
-    });
-
-    await expect(queryTTLockDeviceState(client, ttlockDevice)).resolves.toEqual({ state: 1 });
-
-    const unlockResult = await unlockTtlockDoor({
-      connection: ttlockConnection,
-      lockId: ttlockDevice.lockId,
-      fetch: async () => Response.json({ errcode: 0, msg: "unlocked" }),
-    });
-    expect(unlockResult.errcode).toBe(0);
-  });
 });
 
-describe("Home Assistant driver & executor", () => {
-  it("maps power.on to switch.turn_on service call", async () => {
+describe("Home Assistant driver", () => {
+  it("calls the entity's own domain service", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
-    const executor = createHomeAssistantExecutor({
+    const result = await callHomeAssistantPower({
       baseUrl: "https://ha.example.com/",
       accessToken: "ha-token",
+      entityId: "input_boolean.maimai_dx",
+      service: "turn_off",
       fetch: async (url: string | URL | Request, init?: RequestInit) => {
         calls.push({ url: String(url), init });
         return Response.json([{ changed: true }]);
       },
     });
-
-    const result = await executor.execute({
-      command: {
-        id: "cmd-ha-1",
-        type: "power.on",
-        deviceId: "switch.maimai_dx",
-        targetKind: "facility",
-        executorKind: "home_assistant",
-        status: "pending",
-        requestedAt: new Date(),
-      },
-    });
-
-    expect(result).toEqual({ status: "success" });
-    expect(calls[0]?.url).toBe("https://ha.example.com/api/services/switch/turn_on");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ entity_id: "switch.maimai_dx" });
+    expect(result).toEqual({ ok: true, status: 200 });
+    expect(calls[0]?.url).toBe("https://ha.example.com/api/services/input_boolean/turn_off");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ entity_id: "input_boolean.maimai_dx" });
   });
 
-  it("handles climate and lock commands", async () => {
-    const calls: Array<{ url: string; body: unknown }> = [];
-    const executor = createHomeAssistantExecutor({
-      baseUrl: "https://ha.example.com",
-      accessToken: "ha-token",
-      fetch: async (url: string | URL | Request, init?: RequestInit) => {
-        calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
-        return Response.json([]);
-      },
-    });
-
-    await executor.execute({
-      command: {
-        id: "cmd-ac",
-        type: "ac.set_temperature",
-        deviceId: "climate.room",
-        targetKind: "facility",
-        executorKind: "home_assistant",
-        status: "pending",
-        payload: { temperature: 25 },
-        requestedAt: new Date(),
-      },
-    });
-
-    expect(calls[0]?.url).toBe("https://ha.example.com/api/services/climate/set_temperature");
-    expect(calls[0]?.body).toEqual({ entity_id: "climate.room", temperature: 25 });
-  });
-
-  it("operates all devices and skips duplicates", async () => {
-    const calls: string[] = [];
-    const executor = createHomeAssistantExecutor({
-      baseUrl: "https://ha.example.com",
-      accessToken: "ha-token",
-      devices: [
-        { name: "d1", id: "switch.d1" },
-        { name: "d2", id: "switch.d2" },
-        { name: "d1-dup", id: "switch.d1" },
-      ],
-      fetch: async (url: string | URL | Request, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body)) as { entity_id: string };
-        calls.push(body.entity_id);
-        return Response.json([]);
-      },
-    });
-
-    const res = await executor.execute({
-      command: {
-        id: "cmd-all",
-        type: "power.off",
-        deviceId: null,
-        targetKind: "facility",
-        executorKind: "home_assistant",
-        status: "pending",
-        requestedAt: new Date(),
-      },
-    });
-
-    expect(res).toEqual({ status: "success" });
-    expect(calls).toEqual(["switch.d1", "switch.d2"]);
-  });
-
-  it("executeHomeAssistantAction directly executes actions and getHomeAssistantEntityState reads state", async () => {
-    const res = await executeHomeAssistantAction({
+  it("reports status 0 when no response arrived, so the outcome stays unknown", async () => {
+    const result = await callHomeAssistantPower({
       baseUrl: "https://ha.example.com",
       accessToken: "ha-token",
       entityId: "switch.light",
-      action: "power.on",
-      fetch: async () => Response.json({ success: true }),
+      service: "turn_on",
+      fetch: async () => { throw new TypeError("network down"); },
     });
-    expect(res.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(0);
+  });
 
+  it("reads the entity state", async () => {
     const state = await getHomeAssistantEntityState({
       baseUrl: "https://ha.example.com",
       accessToken: "ha-token",
@@ -476,131 +200,5 @@ describe("Home Assistant driver & executor", () => {
       fetch: async () => Response.json({ state: "on" }),
     });
     expect(state).toBe("on");
-  });
-
-  it("resolves device references", () => {
-    const devices = [{ name: "wacca", alias: ["wc"], id: "switch.wacca" }];
-    expect(resolveHomeAssistantDeviceRef("wc", devices)).toEqual(devices[0]);
-    expect(resolveHomeAssistantDeviceRef("unknown", devices)).toBeNull();
-  });
-});
-
-describe("Machine WebSocket handler", () => {
-  function createTestPeer(sent: string[], data: Record<string, unknown> = {}): MachineWebSocketPeer {
-    return {
-      data,
-      send(msg: string) {
-        sent.push(msg);
-      },
-      close() {},
-    };
-  }
-
-  it("authenticates valid machine tokens and rejects unauthorized", async () => {
-    const deps = {
-      apiTokenAuth: {
-        async authenticateApiToken(token: string) {
-          if (token === "token-mach") return { role: "machine", machineId: "mach-1" };
-          return { role: "player" };
-        },
-      },
-      machineConnectionCommands: {
-        async hello() {},
-        async heartbeat() {},
-        async disconnect() {},
-        async listDeliverableCommands() {
-          return [];
-        },
-        async ack() {
-          return {} as DeviceCommand;
-        },
-      },
-    };
-
-    const forbidden = await authenticateMachineWebSocketRequest(
-      new Request("https://example.com/ws", {
-        headers: { Authorization: "Bearer bad-token" },
-      }),
-      deps,
-    );
-    expect(forbidden).toBeInstanceOf(Response);
-    expect((forbidden as Response).status).toBe(403);
-
-    const ok = await authenticateMachineWebSocketRequest(
-      new Request("https://example.com/ws", {
-        headers: { Authorization: "Bearer token-mach" },
-      }),
-      deps,
-    );
-    expect((ok as { ok: boolean }).ok).toBe(true);
-    expect((ok as { data: { authorizedMachineId: string } }).data.authorizedMachineId).toBe("mach-1");
-  });
-
-  it("processes hello, ping, and ack messages", async () => {
-    const sent: string[] = [];
-    const calls: string[] = [];
-    const deps = {
-      machineConnectionCommands: {
-        async hello(input: { machineId: string }) {
-          calls.push(`hello:${input.machineId}`);
-        },
-        async heartbeat(input: { machineId: string }) {
-          calls.push(`ping:${input.machineId}`);
-        },
-        async disconnect(input: { machineId: string }) {
-          calls.push(`disconnect:${input.machineId}`);
-        },
-        async listDeliverableCommands() {
-          return [
-            {
-              type: "command" as const,
-              commandId: "cmd-ws-1",
-              action: "coin" as DeviceCommand["type"],
-              expiresAt: new Date("2026-07-07T10:00:00.000Z"),
-            },
-          ];
-        },
-        async ack(input: { commandId: string; status: "success" | "failed" }) {
-          calls.push(`ack:${input.commandId}:${input.status}`);
-          return { status: "acked" } as DeviceCommand;
-        },
-      },
-    };
-
-    const peer = createTestPeer(sent, { authorizedMachineId: "mach-1" });
-
-    await handleMachineWebSocketMessage(
-      peer,
-      JSON.stringify({ type: "hello", machineId: "mach-1", capabilities: ["coin"] }),
-      deps,
-    );
-
-    expect(peer.data?.machineId).toBe("mach-1");
-    const otherPeer = createTestPeer([], { authorizedMachineId: "mach-1" });
-    await expect(handleMachineWebSocketMessage(
-      otherPeer,
-      JSON.stringify({ type: "hello", machineId: "another-machine", capabilities: [] }),
-      deps,
-    )).rejects.toThrow("Machine token does not authorize this machine.");
-    expect(sent.map((s) => JSON.parse(s).type)).toEqual(["hello.ack", "command"]);
-
-    await handleMachineWebSocketMessage(peer, JSON.stringify({ type: "ping" }), deps);
-    expect(sent.map((s) => JSON.parse(s).type)).toContain("pong");
-
-    await handleMachineWebSocketMessage(
-      peer,
-      JSON.stringify({ type: "ack", commandId: "cmd-ws-1", status: "success" }),
-      deps,
-    );
-    expect(sent.map((s) => JSON.parse(s).type)).toContain("ack.received");
-
-    await handleMachineWebSocketClose(peer, deps);
-    expect(calls).toContain("disconnect:mach-1");
-  });
-
-  it("exports machineWebSocketHandler facade", () => {
-    expect(machineWebSocketHandler.authenticate).toBe(authenticateMachineWebSocketRequest);
-    expect(machineWebSocketHandler.handleMessage).toBe(handleMachineWebSocketMessage);
-    expect(machineWebSocketHandler.handleClose).toBe(handleMachineWebSocketClose);
   });
 });

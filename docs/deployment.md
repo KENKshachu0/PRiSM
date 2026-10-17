@@ -254,7 +254,7 @@ PRiSM Next 对网络接口实行严格的数据库级 Token 认证拦截：
 - **员工端**：通过 `/rpc/admin/login` 进行登录。系统在数据库（SQLite/D1）中匹配加盐哈希的密码，并生成有时效的 `admin_sessions` 记录。
 - **玩家端**：通过 `/rpc/player-auth/login/by-identity` 使用已绑定外部身份创建 `player_sessions`。玩家浏览器随后只携带该会话 Token 调用 `/rpc/player/*`；后端从 token hash 解析唯一玩家，不接受 `X-PRiSM-Player-Id` 作为浏览器身份来源。
 - **机器人/店内入口**：调用第三方身份解析和后续 integration RPC 时，携带 `Authorization: Bearer <integration-api-token>`。
-- **机器软件接入**：投币、Aime 等游戏机软件连接 `GET /rpc/machine/ws` WebSocket，并携带 `Authorization: Bearer <machine-api-token>`。连接后先发送 `hello` 声明 `machineId` 和能力列表；后端不再提供 HTTP 轮询、ACK 或设备状态上报路由。
+- **机台直连**：HINATA IO 机台连接 `GET /io/ws`，携带设备看板签发的 `Authorization: Bearer <deviceToken>`；令牌按设备单独签发和轮换。部署需要 `MACHINE_RELAY` Durable Object 绑定（迁移 tag `machine-relay-v1`）。
 
 **角色说明**：
 - `owner` 与 `manager` 角色员工具有全部写路由的操作特权。
@@ -303,12 +303,11 @@ PRiSM Next 对网络接口实行严格的数据库级 Token 认证拦截：
 ### D. 设备动作预检
 - [ ] 在激活玩家活跃场次的情况下，能够成功调用 `coin` 和 `aime.scan` 游戏机器动作。
 - [ ] 在关闭场次或场次未开启的情况下，`coin` 与 `aime.scan` 被系统正确拦截（返回 400 或 403 错误）。
-- [ ] `door.open`、`power.on`、`power.off`、`ac.set_temperature` 等设施动作进入设施执行器，不与投币/Aime 机器软件通道混用。
+- [ ] `door.open`、`power.on`、`power.off` 只对绑定了门锁／电源能力的设备可用，未绑定时返回 `DEVICE_ACTION_UNSUPPORTED`。
 - [ ] 玩家投币冷却（Coin Cooldown）机制已生效，高频出币请求被正确拦截。
-- [ ] 机器软件能用 Machine Token 连接 `/rpc/machine/ws`，非 Machine Token 会被拒绝。
-- [ ] 机器连接后发送 `hello`，后台记录该机器在线、能力列表和最后心跳时间。
-- [ ] 确认机器软件在收到命令后，执行成功时回复 ACK，执行失败或超时能正确使指令状态变更为 `expired`。
-- [ ] 机器软件定时发送 `ping` 或状态上报后，前台后台「设备管理」页面中能看见设备绿色的 online 指示灯。
+- [ ] 直连机台用设备令牌连接 `/io/ws` 成功，错误或已轮换的令牌返回 401。
+- [ ] 机台连接后设备看板显示「已连接」，设备日志出现「机台已连接」；断开后显示「机台已断开」。
+- [ ] 网页刷卡后机台收到卡片，设备日志中刷卡请求、结果与机台回报的「卡片已送入游戏」对应同一操作。
 
 ### E. 前台后台系统 (Staff Web) 预检
 - [ ] 后台管理面板 `/admin` 在对应 Worker 域名或本地 IP 下能够正常加载。
@@ -369,4 +368,4 @@ Wrangler 报告上传/发布成功后，部署脚本会使用本次随机令牌�
 - 初始化完成后应移除该部署变量，并保证旧安装接口不能再次创建 owner。
 - 云端环境请使用 Cloudflare Secrets 配置此变量，不要将原文或摘要提交到 Git 仓库。
 
-机器 WebSocket `/rpc/machine/ws` 不再接受通用的 machine token 或其他店铺的 token。现有机器需要在对应店铺创建机器记录后，由有写权限的店员调用 `POST /rpc/staff/api-tokens`，传递 `{"label":"Machine 1","role":"machine","machineId":"<该店铺机器 ID 或 public_id>"}` 重新签发令牌。服务端会把新令牌绑定到一台机器；WebSocket 的 `hello.machineId` 必须使用该机器的内部 ID。旧初始化自动生成的通用机器 token 不再有效。
+机器 WebSocket `/rpc/machine/ws` 已移除，`role: "machine"` 的 API 令牌不再有用途。HINATA IO 机台在设备看板设为直连后获得自己的设备令牌。

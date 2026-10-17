@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppBindings } from "../../bindings.js";
 import { decryptSecret, encryptSecret, sha256 } from "../../crypto.js";
 import { jsonError } from "../../http.js";
+import { hinataConfigOf, loadDevice, publicCapabilities } from "../../devices/device.js";
 
 export const machineSessionRouter = new Hono<AppBindings>();
 export const machineTicketRouter = new Hono<AppBindings>();
@@ -21,16 +22,9 @@ export type Machine = {
   shop_hero_url: string | null;
   name: string;
   kind: string;
-  coin_after_swipe: number;
-  coin_key: number;
   enabled: number;
   billing_enabled: number;
   machine_geo: number;
-  ha_binding_encrypted: string | null;
-  hinata_url_encrypted: string | null;
-  hinata_password_encrypted: string | null;
-  ttlock_lock_id: number | null;
-  mahjong_config_json: string | null;
   latitude: number;
   longitude: number;
   radius_meters: number;
@@ -94,18 +88,18 @@ export async function resolveMachineSession(c: Context<AppBindings>, ticket: str
   return machine;
 }
 
-function publicMachine(m: Machine) {
+async function publicMachine(c: Context<AppBindings>, m: Machine) {
+  const device = await loadDevice(c.env.DB, m.shop_id, m.id);
+  const capabilities = device
+    ? publicCapabilities(device)
+    : { power: false, card: false, coin: false, door: false, mahjong: false };
+  const io = device ? hinataConfigOf(device) : null;
   return {
-    publicId: m.public_id, name: m.name, kind: m.kind, coinAfterSwipe: !!m.coin_after_swipe,
-    capabilities: {
-      power: !!m.ha_binding_encrypted,
-      card: !!m.hinata_url_encrypted,
-      coin: !!m.hinata_url_encrypted && !!m.hinata_password_encrypted && m.coin_key > 0,
-      door: !!m.ttlock_lock_id,
-      mahjong: !!m.mahjong_config_json,
-    },
-    webOnly: !!m.coin_after_swipe || !!m.billing_enabled || !m.hinata_url_encrypted ||
-      !!m.ttlock_lock_id || !!m.ha_binding_encrypted,
+    publicId: m.public_id, name: m.name, kind: m.kind, coinAfterSwipe: !!io?.coinAfterSwipe,
+    capabilities,
+    // Native apps render the full device flow only for a plain card cabinet.
+    webOnly: !!io?.coinAfterSwipe || !!m.billing_enabled || !capabilities.card ||
+      capabilities.door || capabilities.power,
     shop: {
       name: m.shop_name, publicId: m.shop_public_id,
       locationEnabled: !!m.machine_geo, machineGeo: !!m.machine_geo,
@@ -124,16 +118,16 @@ machineSessionRouter.post("/session/start", async (c) => {
   if (!machine || machine.enabled !== 1 || machine.shop_public_id !== body.shopCode)
     jsonError(404, "机台不可用", "MACHINE_NOT_FOUND");
   const navigation = await mintMachineTicket(c.env.SESSION_SECRET, body.shopCode, body.publicId);
-  return c.json({ ...navigation, machine: publicMachine(machine) });
+  return c.json({ ...navigation, machine: await publicMachine(c, machine) });
 });
 
 machineSessionRouter.get("/session", async (c) => {
   const machine = await resolveMachineSession(c, c.req.query("ticket") ?? "");
-  return c.json({ machine: publicMachine(machine) });
+  return c.json({ machine: await publicMachine(c, machine) });
 });
 machineSessionRouter.get("/:publicId", async (c) => {
   const machine = await resolveMachineSession(c, c.req.query("ticket") || c.req.param("publicId"), c.req.param("publicId"));
-  return c.json({ machine: publicMachine(machine) });
+  return c.json({ machine: await publicMachine(c, machine) });
 });
 
 machineTicketRouter.get("/:shopCode/:publicId", async (c) => {

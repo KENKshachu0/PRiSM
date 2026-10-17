@@ -21,7 +21,6 @@ import type {
   StaffApiTokenService,
   StaffUserService,
   DeviceActionService,
-  MachineConnectionService,
   PlayerAuthService,
   StaffReportService,
   SettlePlayerCheckoutResult,
@@ -95,7 +94,6 @@ export type PrismAppDependencies = {
   staffApiTokenCommands: StaffApiTokenService;
   staffUserCommands: StaffUserService;
   deviceActions: DeviceActionService;
-  machineConnectionCommands: MachineConnectionService;
   setupCommands: SetupService;
   playerAuthCommands: PlayerAuthService;
 };
@@ -121,6 +119,7 @@ export type Env = {
   APNS_TEAM_ID?: string;
   APNS_PRIVATE_KEY?: string;
   LIVE_BILLING?: DurableObjectNamespace<any>;
+  MACHINE_RELAY?: DurableObjectNamespace<any>;
   EXTRA_ALLOWED_ORIGINS?: string;
   ANDROID_CERT_FINGERPRINTS?: string;
   PRISM_DEPLOY_GUARD?: string;

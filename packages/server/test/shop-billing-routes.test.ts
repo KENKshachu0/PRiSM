@@ -1296,6 +1296,8 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     sqlite.run("ALTER TABLE machines ADD COLUMN ha_binding_encrypted TEXT");
     sqlite.run("ALTER TABLE machines ADD COLUMN hinata_url_encrypted TEXT");
     sqlite.run("ALTER TABLE machines ADD COLUMN hinata_password_encrypted TEXT");
+    sqlite.run("ALTER TABLE machines ADD COLUMN relay_connection TEXT DEFAULT 'external'");
+    sqlite.run("ALTER TABLE machines ADD COLUMN relay_channel TEXT");
     for (const [actionType, target, staffOverride] of [
       ["power.off", { kind: "facility", ref: "missing-power-target" }, true],
       ["coin", { kind: "game_machine", ref: "missing-coin-target" }, false],

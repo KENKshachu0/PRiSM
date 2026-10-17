@@ -728,7 +728,7 @@ function printSummary(plan: PrismNeoMigrationPlan, sqlitePath: string): void {
     `presents: ${plan.presents.length}`,
     `redeemCodes: ${plan.redeemCodes.length}`,
     `redeemRecords: ${plan.redeemRecords.length}`,
-    `deviceCommands: ${plan.deviceCommands.length}`,
+    `deviceOperations: ${plan.deviceOperations.length}`,
   ];
   console.log(lines.join("\n"));
 }

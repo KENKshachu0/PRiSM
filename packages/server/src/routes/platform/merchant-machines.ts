@@ -1,38 +1,21 @@
 import { Hono, type Context } from "hono";
+import { createD1Executor } from "@prism/adapter-d1";
+import { createDeviceEventRepository } from "@prism/storage-sql";
 import type { AppBindings, AuthUser } from "../../bindings.js";
-import { decryptSecret, encryptSecret, randomToken } from "../../crypto.js";
+import { decryptSecret, encryptSecret, randomToken, sha256Hex } from "../../crypto.js";
 import { normalizeHinataUrl } from "../../hardware/hinata.js";
+import { machineRelayPath } from "../../gateway/relay-path.js";
+import { machineRelayNamespace } from "../../gateway/machine-relay-gateway.js";
+import { loadDevice, loadDevices, hinataConfigOf, doorConfigOf, mahjongConfigOf, readSecret, type Device } from "../../devices/device.js";
+import { capabilityWrites, storedCapabilities, type StoredCapability } from "../../devices/configure.js";
+import type { CapabilityId, HinataConfig } from "../../devices/capabilities.js";
 import { z } from "zod";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
-import { getOrCreateShopDependencies } from "../../middleware/tenant.js";
-import { findLegacyShopByCode } from "../../legacy/tenant-resolver.js";
 
 /** Restore pre-fork merchant machine discovery and audit-history contracts. */
 export const merchantMachineRouter = new Hono<AppBindings>();
 type C = Context<AppBindings>;
-type MachineRecord = {
-  id: string;
-  shop_id: string;
-  shop_public_id: string;
-  public_id: string;
-  name: string;
-  enabled: number;
-  kind: string;
-  aliases_json: string | null;
-  hinata_url_encrypted: string | null;
-  hinata_password_encrypted: string | null;
-  ha_binding_encrypted: string | null;
-  ttlock_lock_id: number | null;
-  mahjong_config_json: string | null;
-  coin_key: number;
-  coin_after_swipe: number;
-};
-
-function parseObject(value: string | null): unknown {
-  if (!value) return null;
-  try { return JSON.parse(value); } catch { return null; }
-}
 
 async function assertMachineShop(c: C, user: AuthUser, shopId: string) {
   if (user.role === "admin") return;
@@ -54,35 +37,106 @@ async function canConfigureMachine(c: C, user: AuthUser, shopId: string) {
   return Boolean(owner);
 }
 
-async function decode(c: C, value: string) {
-  if (!c.env.URL_ENCRYPTION_KEY) jsonError(503, "设备密钥未配置", "DEVICE_ENCRYPTION_UNAVAILABLE");
-  return decryptSecret(value, c.env.URL_ENCRYPTION_KEY);
+function encryptionKey(c: C): string {
+  if (!c.env.URL_ENCRYPTION_KEY) jsonError(503, "设备密钥尚未配置", "DEVICE_ENCRYPTION_UNAVAILABLE");
+  return c.env.URL_ENCRYPTION_KEY;
 }
 
-async function presentMachine(c: C, row: MachineRecord, canConfigure: boolean) {
-  const aliases = parseObject(row.aliases_json);
-  const ha = row.ha_binding_encrypted
-    ? JSON.parse(await decode(c, row.ha_binding_encrypted)) as { url: string; entityId: string; token: string }
-    : null;
+type HaBinding = { url: string; entityId: string; token: string };
+
+async function readHaBinding(c: C, device: Device): Promise<HaBinding | null> {
+  if (!device.capabilities.has("power")) return null;
+  const raw = await readSecret(c.env.DB, device, "power", "binding", encryptionKey(c));
+  if (!raw) return null;
+  try { return JSON.parse(raw) as HaBinding; } catch { return null; }
+}
+
+async function presentMachine(c: C, device: Device, shopPublicId: string, canConfigure: boolean) {
+  const hinata = hinataConfigOf(device);
+  const io = device.capabilities.get("hinata_io");
+  const ha = await readHaBinding(c, device);
+  const embedded = hinata?.transport === "embedded";
+  const coinKey = hinata?.coinKey ?? 32;
   return {
-    id: row.id,
-    publicId: row.public_id,
-    shopId: row.shop_id,
-    shopPublicId: row.shop_public_id,
-    name: row.name,
-    aliases: Array.isArray(aliases) ? aliases.filter((a): a is string => typeof a === "string") : [],
-    enabled: !!row.enabled,
-    kind: row.kind,
-    hasHinata: !!row.hinata_url_encrypted,
-    hinataUrl: canConfigure && row.hinata_url_encrypted ? await decode(c, row.hinata_url_encrypted) : null,
-    hasPassword: !!row.hinata_password_encrypted,
+    id: device.id,
+    publicId: device.publicId,
+    shopId: device.shopId,
+    shopPublicId,
+    name: device.name,
+    aliases: device.aliases,
+    enabled: device.enabled,
+    kind: device.kind,
+    hasHinata: !!io?.secretNames.has("url"),
+    hinataUrl: canConfigure && io?.secretNames.has("url")
+      ? await readSecret(c.env.DB, device, "hinata_io", "url", encryptionKey(c))
+      : null,
+    hasPassword: !!io?.secretNames.has("password"),
     homeAssistant: ha ? { url: canConfigure ? ha.url : "", entityId: ha.entityId } : null,
-    ttlockLockId: row.ttlock_lock_id,
-    mahjong: parseObject(row.mahjong_config_json),
-    coinKey: row.coin_key,
-    coinEnabled: row.coin_key > 0,
-    coinAfterSwipe: !!row.coin_after_swipe,
+    ttlockLockId: doorConfigOf(device)?.lockId ?? null,
+    mahjong: mahjongConfigOf(device),
+    coinKey,
+    coinEnabled: coinKey > 0,
+    coinAfterSwipe: !!hinata?.coinAfterSwipe,
+    relayConnection: embedded ? "embedded" : "external",
+    // The token itself is only ever returned once, at mint time. What the board
+    // needs afterwards is whether one exists and where the device should point.
+    hasRelayToken: embedded && !!io?.credentialHash,
+    relayUrl: embedded ? relayDeviceUrl(c) : null,
+    relayOnline: null as boolean | null,
+    relayE2ee: null as boolean | null,
   };
+}
+
+/**
+ * Whether each embedded machine currently has its IO connected.
+ *
+ * Asked of the relay Durable Object rather than read from stored state: a
+ * deploy drops sockets without a close callback, so the stored link state can
+ * say online for a device that is gone. Every lookup is independent and
+ * failures are swallowed, so one unreachable object does not blank the board
+ * and an unknown state is reported as unknown rather than as offline.
+ */
+async function relayStatus(
+  c: C,
+  devices: readonly Device[],
+): Promise<Map<string, { online: boolean; e2ee: boolean }>> {
+  const status = new Map<string, { online: boolean; e2ee: boolean }>();
+  const relay = machineRelayNamespace(c.env);
+  if (!relay) return status;
+  await Promise.all(
+    devices.map(async (device) => {
+      const hinata = hinataConfigOf(device);
+      if (hinata?.transport !== "embedded" || !hinata.channel) return;
+      try {
+        const capabilities = await relay.getByName(hinata.channel).getCapabilities();
+        status.set(device.id, { online: capabilities.online, e2ee: capabilities.e2ee });
+      } catch {
+        // Leave it unreported; the board shows "unknown" instead of "offline".
+      }
+    }),
+  );
+  return status;
+}
+
+async function presentWithStatus(c: C, devices: readonly Device[], shopPublicId: string, canConfigure: boolean) {
+  const status = await relayStatus(c, devices);
+  return Promise.all(devices.map(async (device) => {
+    const presented = await presentMachine(c, device, shopPublicId, canConfigure);
+    const live = status.get(device.id);
+    return { ...presented, relayOnline: live ? live.online : null, relayE2ee: live ? live.e2ee : null };
+  }));
+}
+
+async function shopPublicId(c: C, shopId: string): Promise<string> {
+  const row = await c.env.DB.prepare("SELECT public_id FROM shops WHERE id=?").bind(shopId).first<{ public_id: string }>();
+  if (!row) jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
+  return row.public_id;
+}
+
+/** The exact `[aimeio] serverUrl` value a store pastes into the machine's INI. */
+export function relayDeviceUrl(c: C): string {
+  const origin = c.env.APP_ORIGIN || new URL(c.req.url).origin;
+  return `${origin.replace(/\/+$/, "")}${machineRelayPath}`;
 }
 
 merchantMachineRouter.get("/machines", async (c) => {
@@ -91,12 +145,10 @@ merchantMachineRouter.get("/machines", async (c) => {
   if (!shopId) jsonError(400, "请选择店铺", "SHOP_REQUIRED");
   await assertMachineShop(c, user, shopId);
   const canConfigure = await canConfigureMachine(c, user, shopId);
-  const machines = await c.env.DB.prepare(
-    `SELECT machines.*, shops.public_id AS shop_public_id
-     FROM machines JOIN shops ON shops.id=machines.shop_id
-     WHERE machines.shop_id=? ORDER BY (machines.ttlock_lock_id IS NOT NULL) DESC,machines.created_at`,
-  ).bind(shopId).all<MachineRecord>();
-  return c.json({ machines: await Promise.all(machines.results.map(m => presentMachine(c,m,canConfigure))) });
+  const devices = await loadDevices(c.env.DB, shopId, c.env.URL_ENCRYPTION_KEY);
+  // Doors first, as the board has always listed them.
+  const ordered = [...devices.filter((d) => d.capabilities.has("door")), ...devices.filter((d) => !d.capabilities.has("door"))];
+  return c.json({ machines: await presentWithStatus(c, ordered, await shopPublicId(c, shopId), canConfigure) });
 });
 
 merchantMachineRouter.get("/machines/:id/events", async (c) => {
@@ -105,10 +157,22 @@ merchantMachineRouter.get("/machines/:id/events", async (c) => {
     .bind(c.req.param("id")).first<{ shop_id: string }>();
   if (!machine) jsonError(404, "没有找到这台设备", "DEVICE_NOT_FOUND");
   await assertMachineShop(c,user,machine.shop_id);
-  const rows = await c.env.DB.prepare(
-    "SELECT id,type,status,requested_at AS requestedAt FROM device_commands WHERE shop_id=? AND device_id=? ORDER BY requested_at DESC LIMIT 30",
-  ).bind(machine.shop_id,c.req.param("id")).all();
-  return c.json({ events: rows.results });
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50) || 50, 1), 200);
+  const events = await createDeviceEventRepository(createD1Executor(c.env.DB, machine.shop_id))
+    .listEvents({ deviceId: c.req.param("id"), limit });
+  return c.json({
+    events: events.map((event) => ({
+      id: event.id,
+      capability: event.capability,
+      kind: event.kind,
+      name: event.name,
+      origin: event.origin,
+      operationId: event.operationId,
+      parentOperationId: event.parentOperationId,
+      at: event.occurredAt.toISOString(),
+      payload: event.payload,
+    })),
+  });
 });
 
 merchantMachineRouter.get("/login-events", async (c) => {
@@ -148,7 +212,11 @@ merchantMachineRouter.get("/login-events", async (c) => {
   return c.json({ events: result.results });
 });
 
-/** Historical binding picker, restricted to staff able to configure machines. */
+/**
+ * The old picker for registry entries kept in shop settings. Those entries are
+ * now adopted as devices when the device list is first read, so there is never
+ * anything left to pick; the route stays for clients that still call it.
+ */
 merchantMachineRouter.get("/device-bindings", async (c) => {
   const user = requireUser(c);
   const shopId = c.req.query("shopId");
@@ -157,15 +225,7 @@ merchantMachineRouter.get("/device-bindings", async (c) => {
   if (!(await canConfigureMachine(c, user, shopId))) {
     jsonError(403, "只读账号不能配置设备", "FORBIDDEN");
   }
-  const shop = await findLegacyShopByCode(c.env.DB, shopId);
-  if (!shop) jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
-  const settings = await getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY).staffSettingsCommands.getSettings();
-  const bindings = [
-    ...settings.homeAssistantDevices.map(device => ({ id: device.id, name: device.name, kind: "home_assistant" })),
-    ...settings.hinataIoDevices.map(device => ({ id: device.id, name: device.name, kind: "hinata_io" })),
-    ...(settings.ttLockDevices ?? []).map(device => ({ id: device.id, name: device.name, kind: "ttlock" })),
-  ];
-  return c.json({ bindings });
+  return c.json({ bindings: [] });
 });
 
 const urlInput = z.string().trim().url().refine(
@@ -192,134 +252,163 @@ const machineInput=z.object({
   ttlockLockId:z.number().int().positive().nullable().optional(),
   coinKey:z.number().int().min(0).max(65535).default(32),
   coinAfterSwipe:z.boolean().default(false),
+  // Choosing `embedded` points the device at this platform instead of an
+  // external relay. Existing devices stay on `external`, so nothing changes
+  // until a store opts in per machine.
+  relayConnection:z.enum(["external","embedded"]).optional(),
+  // Mints a fresh device token and shows it once. Only meaningful for embedded.
+  rotateRelayToken:z.boolean().optional(),
   mahjong:z.object({
     capacity:z.number().int().min(2).max(8),
     pricingConfigIds:z.array(z.string().min(1)).max(20),
   }).nullable().optional(),
-  legacyBindings:z.array(z.object({
-    kind:z.enum(["home_assistant","hinata_io","ttlock"]),id:z.string().min(1),
-  })).max(3).optional(),
 });
 const patchInput=machineInput.partial();
+type MachineInput=z.infer<typeof patchInput>;
 
-type MachineEditable = MachineRecord & {
-  shop_public_id:string; coin_after_swipe:number;
-  mahjong_config_json:string|null;
-};
+async function validateMahjong(c:C,shopId:string,current:Device|null,body:MachineInput){
+  if(body.mahjong===undefined)return;
+  const ids=body.mahjong?.pricingConfigIds??[];
+  if(ids.length){
+    const active=await c.env.DB.prepare(
+      "SELECT id FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active'",
+    ).bind(shopId).all<{id:string}>();
+    const valid=new Set(active.results.map(row=>row.id));
+    if(ids.some(id=>!valid.has(id)))jsonError(400,"请选择有效的麻将计费规则","MAHJONG_PRICING_INVALID");
+  }
+  const before=current?mahjongConfigOf(current):null;
+  if(current&&JSON.stringify(body.mahjong)!==JSON.stringify(before)){
+    const seated=await c.env.DB.prepare(
+      "SELECT 1 FROM mahjong_seats WHERE machine_id=? LIMIT 1",
+    ).bind(current.id).first();
+    if(seated)jsonError(409,"请先让玩家下桌再修改麻将配置","MAHJONG_IN_USE");
+  }
+}
+
+/**
+ * The capabilities the device should carry after this edit. A field left out
+ * of the request keeps what is stored; `null` unbinds. Secrets that did not
+ * change are carried over still encrypted.
+ */
+async function nextCapabilities(
+  c:C,
+  stored:ReadonlyMap<CapabilityId,StoredCapability>,
+  body:MachineInput,
+):Promise<{next:Map<CapabilityId,StoredCapability>;relayToken:string|null}>{
+  const next=new Map(stored);
+  const seal=(value:string)=>encryptSecret(value,encryptionKey(c));
+
+  if(body.homeAssistant===null)next.delete("power");
+  else if(body.homeAssistant){
+    const previous=stored.get("power")?.secrets.binding;
+    const previousToken=previous
+      ?(JSON.parse(await decryptSecret(previous,encryptionKey(c))) as Partial<HaBinding>).token
+      :undefined;
+    const token=body.homeAssistant.token||previousToken;
+    if(!token)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
+    const binding:HaBinding={url:body.homeAssistant.url,entityId:body.homeAssistant.entityId,token};
+    next.set("power",{config:{},secrets:{binding:await seal(JSON.stringify(binding))},credentialHash:null});
+  }
+
+  if(body.ttlockLockId===null)next.delete("door");
+  else if(body.ttlockLockId!==undefined)
+    next.set("door",{config:{lockId:body.ttlockLockId},secrets:{},credentialHash:null});
+
+  if(body.mahjong===null)next.delete("mahjong");
+  else if(body.mahjong)next.set("mahjong",{config:body.mahjong,secrets:{},credentialHash:null});
+
+  const io=stored.get("hinata_io");
+  const before=io?.config as Partial<HinataConfig>|undefined;
+  const secrets={...io?.secrets};
+  if(body.hinataUrl!==undefined){
+    if(body.hinataUrl)secrets.url=await seal(body.hinataUrl);else delete secrets.url;
+  }
+  if(body.hinataPassword!==undefined){
+    if(body.hinataPassword)secrets.password=await seal(body.hinataPassword);else delete secrets.password;
+  }
+  const transport=body.relayConnection??before?.transport??"external";
+  const coinKey=body.coinKey??before?.coinKey??32;
+  let relayToken:string|null=null;
+  if(transport==="embedded"){
+    // E2EE and the embedded relay are mutually exclusive: this platform sends
+    // plaintext over an authenticated, TLS-protected socket, and a device with
+    // remotePassword set rejects every plaintext command. A password kept from
+    // the external relay is meaningless here and is dropped; asking for one is
+    // an error.
+    if(body.hinataPassword)jsonError(400,"直连模式需要清空机台的 remotePassword","DEVICE_RELAY_PASSWORD_CONFLICT");
+    delete secrets.password;
+    let credentialHash=before?.transport==="embedded"?io?.credentialHash??null:null;
+    if(body.rotateRelayToken||!credentialHash){
+      // Shown once in the response; only the hash is stored.
+      relayToken=`prism_io_${randomToken(32)}`;
+      credentialHash=await sha256Hex(relayToken);
+    }
+    // The channel is independent of the token so rotating the key does not
+    // orphan a connected device.
+    const channel=before?.channel??`m_${randomToken(16)}`;
+    const coinAfterSwipe=coinKey>0&&(body.coinAfterSwipe??!!before?.coinAfterSwipe);
+    next.set("hinata_io",{config:{transport,coinKey,coinAfterSwipe,channel},secrets,credentialHash});
+  }else if(secrets.url){
+    const coinAfterSwipe=coinKey>0&&(body.coinAfterSwipe??!!before?.coinAfterSwipe);
+    if(coinAfterSwipe&&!secrets.password)
+      jsonError(400,"自动投币需要 HINATA IO 连接密码","DEVICE_CONFIGURATION_REQUIRED");
+    next.set("hinata_io",{config:{transport,coinKey,coinAfterSwipe},secrets,credentialHash:null});
+  }else{
+    next.delete("hinata_io");
+  }
+  return {next,relayToken};
+}
 
 async function changeMachine(c:C, machineId?:string) {
   const user=requireUser(c);
   const raw=await c.req.json();
-  const body=machineId?patchInput.parse(raw):machineInput.parse(raw);
-  const current=machineId
-    ?await c.env.DB.prepare(
-      "SELECT machines.*, shops.public_id AS shop_public_id FROM machines JOIN shops ON shops.id=machines.shop_id WHERE machines.id=?",
-    ).bind(machineId).first<MachineEditable>():null;
-  if(machineId&&!current)jsonError(404,"没有找到这台设备","DEVICE_NOT_FOUND");
-  const shopId=current?.shop_id??body.shopId;
+  const body:MachineInput=machineId?patchInput.parse(raw):machineInput.parse(raw);
+  const located=machineId
+    ?await c.env.DB.prepare("SELECT shop_id FROM machines WHERE id=?").bind(machineId).first<{shop_id:string}>()
+    :null;
+  if(machineId&&!located)jsonError(404,"没有找到这台设备","DEVICE_NOT_FOUND");
+  const shopId=located?.shop_id??body.shopId;
   if(!shopId)jsonError(400,"请选择店铺","SHOP_REQUIRED");
   await assertMachineShop(c,user,shopId);
   if(!await canConfigureMachine(c,user,shopId))
     jsonError(403,"只读账号不能配置设备","FORBIDDEN");
   if(body.shopId&&body.shopId!==shopId)
     jsonError(400,"设备不能移动到其他店铺","DEVICE_SHOP_IMMUTABLE");
-  const shop=await findLegacyShopByCode(c.env.DB,shopId);
-  if(!shop)jsonError(404,"没有找到这个店铺","SHOP_NOT_FOUND");
+  const publicShopId=await shopPublicId(c,shopId);
+  const current=machineId?await loadDevice(c.env.DB,shopId,machineId):null;
 
-  // The old machine picker allows reusing migrated venue.settings connections.
-  if(body.legacyBindings?.length){
-    const settings=await getOrCreateShopDependencies(c.env.DB,shop).staffSettingsCommands.getSettings();
-    for(const binding of body.legacyBindings){
-      if(binding.kind==="home_assistant"){
-        const device=settings.homeAssistantDevices.find(d=>d.id===binding.id);
-        if(!device)jsonError(404,"没有找到原设备配置","LEGACY_DEVICE_NOT_FOUND");
-        body.homeAssistant=homeAssistantInput.parse({
-          ...settings.homeAssistantConnection,entityId:device.id,
-        });
-      }else if(binding.kind==="hinata_io"){
-        const device=settings.hinataIoDevices.find(d=>d.id===binding.id);
-        if(!device)jsonError(404,"没有找到原设备配置","LEGACY_DEVICE_NOT_FOUND");
-        body.hinataUrl=normalizeHinataUrl(device.url);
-        body.hinataPassword=device.password;
-        body.coinKey??=device.coinKey;
-      }else{
-        const device=settings.ttLockDevices?.find(d=>d.id===binding.id);
-        if(!device)jsonError(404,"没有找到原设备配置","LEGACY_DEVICE_NOT_FOUND");
-        body.ttlockLockId=device.lockId;
-      }
-    }
-  }
-  const mahjong=body.mahjong===undefined?parseObject(current?.mahjong_config_json??null):body.mahjong;
-  if(mahjong&&typeof mahjong==="object"&&"pricingConfigIds" in mahjong){
-    const ids=(mahjong as {pricingConfigIds:string[]}).pricingConfigIds;
-    if(ids.length){
-      const active=await c.env.DB.prepare(
-        "SELECT id FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active'",
-      ).bind(shopId).all<{id:string}>();
-      const valid=new Set(active.results.map(row=>row.id));
-      if(ids.some(id=>!valid.has(id)))jsonError(400,"请选择有效的麻将计费规则","MAHJONG_PRICING_INVALID");
-    }
-  }
-  if(current&&body.mahjong!==undefined&&JSON.stringify(mahjong)!==JSON.stringify(parseObject(current.mahjong_config_json))){
-    const seated=await c.env.DB.prepare(
-      "SELECT 1 FROM mahjong_seats WHERE machine_id=? LIMIT 1",
-    ).bind(current.id).first();
-    if(seated)jsonError(409,"请先让玩家下桌再修改麻将配置","MAHJONG_IN_USE");
-  }
-  const needsEncryption=body.hinataUrl!==undefined&&body.hinataUrl!==null
-    ||body.hinataPassword!==undefined&&body.hinataPassword!==null
-    ||body.homeAssistant!==undefined&&body.homeAssistant!==null
-    ||Boolean(current?.ha_binding_encrypted);
-  if(needsEncryption&&!c.env.URL_ENCRYPTION_KEY)
-    jsonError(503,"设备密钥尚未配置","DEVICE_ENCRYPTION_UNAVAILABLE");
+  await validateMahjong(c,shopId,current,body);
+  const id=current?.id??crypto.randomUUID();
+  const stored=current?await storedCapabilities(c.env.DB,shopId,id):new Map<CapabilityId,StoredCapability>();
+  const {next,relayToken}=await nextCapabilities(c,stored,body);
 
-  const url=body.hinataUrl===undefined?(current?.hinata_url_encrypted??"")
-    :body.hinataUrl?await encryptSecret(body.hinataUrl,c.env.URL_ENCRYPTION_KEY!):"";
-  const password=body.hinataPassword===undefined?current?.hinata_password_encrypted??null
-    :body.hinataPassword?await encryptSecret(body.hinataPassword,c.env.URL_ENCRYPTION_KEY!):null;
-  let ha=current?.ha_binding_encrypted
-    ?JSON.parse(await decryptSecret(current.ha_binding_encrypted,c.env.URL_ENCRYPTION_KEY!)) as {
-      url:string;entityId:string;token:string;
-    }:null;
-  if(body.homeAssistant===null)ha=null;
-  else if(body.homeAssistant){
-    const token=body.homeAssistant.token||ha?.token;
-    if(!token)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
-    ha={...body.homeAssistant,token};
-  }
-  const encryptedHA=ha?await encryptSecret(JSON.stringify(ha),c.env.URL_ENCRYPTION_KEY!):null;
-  const kind=body.kind??current?.kind??"machine";
-  const aliases=[...new Set((body.aliases??(Array.isArray(parseObject(current?.aliases_json??null))?parseObject(current?.aliases_json??null) as string[]:[])).map(x=>x.trim()).filter(Boolean))];
-  const coinKey=body.coinKey??current?.coin_key??32;
-  const coinAfterSwipe=!!url&&coinKey>0&&(body.coinAfterSwipe??!!current?.coin_after_swipe);
-  if(coinAfterSwipe&&!password)jsonError(400,"自动投币需要 HINATA IO 连接密码","DEVICE_CONFIGURATION_REQUIRED");
   const name=body.name??current?.name;
-  if (!name) jsonError(400,"设备名称不能为空","INVALID_DEVICE_NAME");
-  const values: Array<string|number|null>=[
-    name, url,url?password:null,+(body.enabled??!!current?.enabled),
-    kind,encryptedHA,body.ttlockLockId===undefined?current?.ttlock_lock_id??null:body.ttlockLockId,
-    coinKey,+coinAfterSwipe,mahjong?JSON.stringify(mahjong):null,JSON.stringify(aliases),
-  ];
-  const id=current?.id??crypto.randomUUID(), publicId=current?.public_id??randomToken(12);
-  if(current){
-    await c.env.DB.prepare(
-      `UPDATE machines SET name=?,hinata_url_encrypted=?,hinata_password_encrypted=?,enabled=?,kind=?,
-      ha_binding_encrypted=?,ttlock_lock_id=?,coin_key=?,coin_after_swipe=?,mahjong_config_json=?,
-      aliases_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND shop_id=?`,
-    ).bind(...values,id,shopId).run();
-  }else{
-    await c.env.DB.prepare(
-      `INSERT INTO machines(name,hinata_url_encrypted,hinata_password_encrypted,enabled,kind,
-      ha_binding_encrypted,ttlock_lock_id,coin_key,coin_after_swipe,mahjong_config_json,aliases_json,
-      id,public_id,shop_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(...values,id,publicId,shopId).run();
-  }
-  const updated=await c.env.DB.prepare(
-    "SELECT machines.*,shops.public_id AS shop_public_id FROM machines JOIN shops ON shops.id=machines.shop_id WHERE machines.id=?",
-  ).bind(id).first<MachineRecord>();
+  if(!name)jsonError(400,"设备名称不能为空","INVALID_DEVICE_NAME");
+  const aliases=[...new Set((body.aliases??current?.aliases??[]).map(x=>x.trim()).filter(Boolean))];
+  const enabled=+(body.enabled??current?.enabled??true);
+  const kind=body.kind??current?.kind??"machine";
+  const identity=current
+    ?c.env.DB.prepare(
+      `UPDATE machines SET name=?,enabled=?,kind=?,aliases_json=?,updated_at=CURRENT_TIMESTAMP
+       WHERE id=? AND shop_id=?`,
+    ).bind(name,enabled,kind,JSON.stringify(aliases),id,shopId)
+    // The pre-capability columns are kept only for rollback and stay empty.
+    :c.env.DB.prepare(
+      `INSERT INTO machines(id,public_id,shop_id,name,enabled,kind,aliases_json,hinata_url_encrypted)
+       VALUES (?,?,?,?,?,?,?,'')`,
+    ).bind(id,randomToken(12),shopId,name,enabled,kind,JSON.stringify(aliases));
+  await c.env.DB.batch([
+    identity,
+    ...capabilityWrites(c.env.DB,{shopId,deviceId:id,next,now:new Date()}),
+  ]);
+  const updated=await loadDevice(c.env.DB,shopId,id);
   if(!updated)jsonError(500,"设备保存失败","DEVICE_SAVE_FAILED");
-  return c.json({machine:await presentMachine(c,updated,true)},current?200:201);
+  const [machine]=await presentWithStatus(c,[updated],publicShopId,true);
+  return c.json({
+    machine,
+    // Returned exactly once, here. Reloading the device list never re-exposes it.
+    ...(relayToken?{relayToken}:{}),
+  },current?200:201);
 }
 
 merchantMachineRouter.post("/machines",c=>changeMachine(c));
@@ -336,11 +425,14 @@ merchantMachineRouter.delete("/machines/:id",async(c)=>{
   const used=await c.env.DB.prepare(
     `SELECT 1 FROM machine_login_events WHERE machine_id=?
      UNION ALL SELECT 1 FROM player_operations WHERE device_id=?
-     UNION ALL SELECT 1 FROM device_commands WHERE shop_id=? AND device_id=? LIMIT 1`,
+     UNION ALL SELECT 1 FROM device_operations WHERE shop_id=? AND device_id=? LIMIT 1`,
   ).bind(id,id,machine.shop_id,id).first();
   if(used)jsonError(409,"机台已有操作记录，请改为停用","MACHINE_HAS_HISTORY");
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM machine_tickets WHERE machine_id=?").bind(id),
+    c.env.DB.prepare("DELETE FROM device_capabilities WHERE shop_id=? AND device_id=?").bind(machine.shop_id,id),
+    c.env.DB.prepare("DELETE FROM device_events WHERE shop_id=? AND device_id=?").bind(machine.shop_id,id),
+    c.env.DB.prepare("DELETE FROM device_state WHERE shop_id=? AND device_id=?").bind(machine.shop_id,id),
     c.env.DB.prepare("DELETE FROM machines WHERE id=? AND shop_id=?").bind(id,machine.shop_id),
   ]);
   return c.json({ok:true});

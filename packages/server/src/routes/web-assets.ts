@@ -1,10 +1,14 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { AppBindings } from "../bindings.js";
+import { machineRelayPath } from "../gateway/relay-path.js";
 
 export function isAssetEligiblePath(path: string): boolean {
   return (
     !path.startsWith("/api/") &&
     !path.startsWith("/rpc") &&
+    // The relay upgrade is a GET, so without this it is served as a static asset
+    // and the WebSocket handshake never happens.
+    !path.startsWith(machineRelayPath) &&
     !path.startsWith("/.well-known/") &&
     !path.startsWith("/callback") &&
     !path.startsWith("/__prism_deploy") &&

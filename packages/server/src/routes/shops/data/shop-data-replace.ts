@@ -32,9 +32,9 @@ export function replaceBusinessStatements(
     "player_sessions",
     "live_activity_tokens",
     "mahjong_seats",
-    "device_commands",
-    "device_states",
-    "machine_connections",
+    "device_events",
+    "device_operations",
+    "device_state",
     "checkout_report_states",
   ])
     remove(table);
@@ -53,6 +53,7 @@ export function replaceBusinessStatements(
         )
         .bind(shopId),
     );
+    remove("device_capabilities");
     remove("machines");
     remove("api_tokens");
     remove("admin_sessions");

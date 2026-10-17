@@ -407,18 +407,22 @@ describe("createPrismNeoMigrationPlan", () => {
         redeemedAt: new Date("2026-01-04T00:00:00.000Z"),
       },
     ]);
-    expect(plan.deviceCommands).toEqual([
+    expect(plan.deviceOperations).toEqual([
       {
         id: "legacy:coin-record:91",
-        type: "coin",
         deviceId: "mai-1",
-        targetKind: "game_machine",
-        executorKind: "machine_ws",
+        capability: "hinata_io",
+        action: "coin",
+        parentId: null,
         playerId: "legacy:user:7",
-        status: "acked",
+        staffId: null,
+        status: "succeeded",
+        countsAsPlay: true,
+        failure: null,
         payload: { count: 2, legacyCoinRecordId: 91 },
         requestedAt: new Date("2026-01-05T00:00:00.000Z"),
-        ackedAt: new Date("2026-01-05T00:00:00.000Z"),
+        settledAt: new Date("2026-01-05T00:00:00.000Z"),
+        confirmedAt: null,
       },
     ]);
   });

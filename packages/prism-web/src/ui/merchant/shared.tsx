@@ -156,11 +156,18 @@ export function ActionForm({
   submit,
   label = "保存",
   done,
+  onResult,
 }: {
   children: ReactNode;
   submit: (form: FormData) => Promise<unknown>;
   label?: string;
   done: () => void;
+  /**
+   * Return `true` to keep the form open after a successful submit. Used where
+   * the response carries something that can only be shown once, such as a
+   * freshly minted device token.
+   */
+  onResult?: (result: unknown) => boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -172,8 +179,8 @@ export function ActionForm({
     setBusy(true);
     setError("");
     try {
-      await submit(form);
-      done();
+      const result = await submit(form);
+      if (!onResult?.(result)) done();
     } catch (error) {
       setError(error instanceof Error ? error.message : t("操作失败"));
     } finally {

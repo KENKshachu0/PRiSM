@@ -20,7 +20,7 @@ Web 请求 `/devices/session/state?includePower=0`，先取得绑定/入场/麻�
 
 ## 清理与可观测性
 
-迁移 `0031_platform_retention.sql` 增加过期索引。每小时第 17 分运行 Cron，每张临时表最多删除 500 条过期行：machine_tickets、auth_challenges、platform_binding_codes、operation_locks；auth_sessions 额外保留过期后一天。维护期间不清理。积压超过每小时 500 条/表时，可重复运行同一有界清理；不在扫码请求里 purge。账务 session、player_operations、device_commands 和财务历史没有自动删除，业务保留期需另外确定。
+迁移 `0031_platform_retention.sql` 增加过期索引。每小时第 17 分运行 Cron，每张临时表最多删除 500 条过期行：machine_tickets、auth_challenges、platform_binding_codes、operation_locks；auth_sessions 额外保留过期后一天。维护期间不清理。积压超过每小时 500 条/表时，可重复运行同一有界清理；不在扫码请求里 purge。账务 session、player_operations、设备操作与事件（device_operations、device_events）和财务历史没有自动删除，业务保留期需另外确定。
 
 Worker CPU 上限为 1000ms，避免意外无限执行；应根据生产 CPU 分位数调整，不等同于端到端网络等待预算。现有 observability 保持启用，动态请求记录 1% 样本和全部 5xx 的 route/method/status/durationMs；不记录 ticket、明文二维码参数、IP 或玩家 ID。该样本适合比较延迟，不能直接当作精确 RPS。Cloudflare dashboard 分别查看 Worker request/CPU、D1 rows read/written、DO requests/alarms；尤其比较 `/t`、session/state 的调用量及 HA 超时。D1 暂时仍保留 isolate 内 memoized migration 兼容检查；它不是每请求扫描，生产发布脚本也会先执行迁移/转换。
 

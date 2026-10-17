@@ -30,9 +30,12 @@ async function fixture(){
   sqlite.run("INSERT INTO cards(id,user_id,label,access_code) VALUES ('card-one','player-one','Aime','01234567890123456789')");
   sqlite.run("INSERT INTO cards(id,user_id,label,access_code) VALUES ('card-two','player-two','Other','99999999999999999999')");
   const secret="device-test-secret";
-  sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted) VALUES ('machine-id','cabinet-code','shop-id','Cabinet',?)",[
-    await encryptSecret("https://hinata.example/scan",secret),
-  ]);
+  sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted) VALUES ('machine-id','cabinet-code','shop-id','Cabinet','')");
+  sqlite.run(
+    `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+     VALUES ('shop-id','machine-id','hinata_io','{"transport":"external"}',?,?,?)`,
+    [JSON.stringify({url:await encryptSecret("https://hinata.example/scan",secret)}),now,now],
+  );
   const limiter={limit:async()=>({success:true})};
   const env={
     DB:createD1DatabaseFromSqlite(sqlite),
@@ -61,9 +64,11 @@ describe("pre-fork authenticated Aime machine login",()=>{
       expect(sent).toHaveLength(1);
       expect(sent[0]?.[0]).toBe("https://hinata.example/scan");
       const command=sqlite.query(
-        "SELECT type,status FROM device_commands WHERE id=?",
-      ).get(reply.data.operationId) as {type:string;status:string}|null;
-      expect(command).toEqual({type:"aime.scan",status:"acked"});
+        "SELECT action,status FROM device_operations WHERE id=?",
+      ).get(reply.data.operationId) as {action:string;status:string}|null;
+      expect(command).toEqual({action:"aime.scan",status:"succeeded"});
+      // The card number reaches the machine but is never written down.
+      expect(JSON.stringify(sqlite.query("SELECT * FROM device_events").all())).not.toContain("01234567890123456789");
       const op=sqlite.query(
         "SELECT status FROM player_operations WHERE id=?",
       ).get(reply.data.operationId) as {status:string}|null;
@@ -88,9 +93,9 @@ describe("pre-fork authenticated Aime machine login",()=>{
       expect(body.error.details.status).toBe("failed");
       const operationId=body.error.details.operationId;
       const command=sqlite.query(
-        "SELECT status FROM device_commands WHERE id=?",
+        "SELECT status FROM device_operations WHERE id=?",
       ).get(operationId) as {status:string}|null;
-      expect(command?.status).toBe("expired");
+      expect(command?.status).toBe("failed");
       const operation=sqlite.query(
         "SELECT status FROM player_operations WHERE id=?",
       ).get(operationId) as {status:string}|null;
@@ -112,7 +117,7 @@ describe("pre-fork authenticated Aime machine login",()=>{
       }),env);
       expect(res.status).toBe(404);
       expect(responseFetch).not.toHaveBeenCalled();
-      expect((sqlite.query("SELECT COUNT(*) AS n FROM device_commands").get() as {n:number}).n).toBe(0);
+      expect((sqlite.query("SELECT COUNT(*) AS n FROM device_operations").get() as {n:number}).n).toBe(0);
     }finally{responseFetch.mockRestore(); sqlite.close();}
   });
 });

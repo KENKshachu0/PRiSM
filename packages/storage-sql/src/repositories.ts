@@ -10,6 +10,7 @@ import {
   PrismDomainError,
 } from "@prism/core";
 import { sqlShop, shopValues } from "./shop-scope";
+import { createDeviceEventRepository } from "./device-event-repository";
 import type {
   CheckoutCommit,
   AssetHolding,
@@ -25,12 +26,7 @@ import type {
   BusinessItemOrderRepository,
   OperationLockRepository,
   BusinessItemRepository,
-  DeviceCommand,
-  DeviceCommandRepository,
-  DeviceState,
-  DeviceStateRepository,
-  MachineConnection,
-  MachineConnectionRepository,
+  DeviceEventRepository,
   Player,
   PlayerCheckout,
   PlayerIdentity,
@@ -89,9 +85,7 @@ export type SqlRepositories = {
   sessions: SessionRepository;
   operationLocks: OperationLockRepository;
   assets: AssetRepository;
-  deviceCommands: DeviceCommandRepository;
-  deviceStates: DeviceStateRepository;
-  machineConnections: MachineConnectionRepository;
+  deviceEvents: DeviceEventRepository;
   redeems: RedeemRepository;
   settlements: SettlementRepository;
   pricingConfigs: PricingConfigRepository;
@@ -158,9 +152,7 @@ export function createSqlRepositories(
     sessions: createSessionRepository(input.executor),
     operationLocks: createOperationLockRepository(input.executor),
     assets: createAssetRepository(input),
-    deviceCommands: createDeviceCommandRepository(input.executor),
-    deviceStates: createDeviceStateRepository(input.executor),
-    machineConnections: createMachineConnectionRepository(input.executor),
+    deviceEvents: createDeviceEventRepository(input.executor),
     redeems: createRedeemRepository(input),
     settlements: createSettlementRepository(input),
     pricingConfigs: createPricingConfigRepository(input.executor),
@@ -897,163 +889,6 @@ function insertStatements(
     statements.push({ sql: createSql(valueGroups), params: chunk.flat() });
   }
   return statements;
-}
-
-function createDeviceCommandRepository(
-  executor: SqlExecutor,
-): DeviceCommandRepository {
-  return {
-    async enqueueDeviceCommand(command) {
-      await executor.run(
-        `INSERT INTO device_commands (shop_id, id, type, device_id, target_kind, executor_kind, player_id, staff_id, status, payload_json, requested_at, acked_at, expired_at)
-         VALUES (${sqlShop(executor)}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(shop_id, id) DO UPDATE SET
-           type = excluded.type,
-           device_id = excluded.device_id,
-           target_kind = excluded.target_kind,
-           executor_kind = excluded.executor_kind,
-           player_id = excluded.player_id,
-           staff_id = excluded.staff_id,
-           status = excluded.status,
-           payload_json = excluded.payload_json,
-           requested_at = excluded.requested_at,
-           acked_at = excluded.acked_at,
-           expired_at = excluded.expired_at`,
-        [
-          command.id,
-          command.type,
-          command.deviceId,
-          command.targetKind,
-          command.executorKind,
-          command.playerId ?? null,
-          command.staffId ?? null,
-          command.status,
-          command.payload ? JSON.stringify(command.payload) : null,
-          command.requestedAt.toISOString(),
-          command.ackedAt?.toISOString() ?? null,
-          command.expiredAt?.toISOString() ?? null,
-        ],
-      );
-    },
-
-    async getDeviceCommand(commandId) {
-      const row = await executor.first<DeviceCommandRow>(
-        `SELECT id, type, device_id, target_kind, executor_kind, player_id, staff_id, status, payload_json, requested_at, acked_at, expired_at FROM (SELECT * FROM device_commands WHERE shop_id = ${sqlShop(executor)}) WHERE id = ?`,
-        [commandId],
-      );
-      return row ? toDeviceCommand(row) : null;
-    },
-
-    async listByPlayerId(playerId) {
-      const rows = await executor.all<DeviceCommandRow>(
-        `SELECT id, type, device_id, target_kind, executor_kind, player_id, staff_id, status, payload_json, requested_at, acked_at, expired_at FROM (SELECT * FROM device_commands WHERE shop_id = ${sqlShop(executor)}) WHERE player_id = ? ORDER BY requested_at`,
-        [playerId],
-      );
-      return rows.map(toDeviceCommand);
-    },
-
-    async listPending(limit) {
-      const rows = await executor.all<DeviceCommandRow>(
-        `SELECT id, type, device_id, target_kind, executor_kind, player_id, staff_id, status, payload_json, requested_at, acked_at, expired_at FROM (SELECT * FROM device_commands WHERE shop_id = ${sqlShop(executor)}) WHERE status = 'pending' ORDER BY requested_at, id LIMIT ?`,
-        [limit],
-      );
-      return rows.map(toDeviceCommand);
-    },
-  };
-}
-
-function createDeviceStateRepository(
-  executor: SqlExecutor,
-): DeviceStateRepository {
-  const saveSql = (values: string) => `INSERT INTO device_states (shop_id, device_id, type, target_kind, executor_kind, label, status, state, metadata_json, reported_at, reported_by)
-    VALUES ${shopValues(executor, values)}
-    ON CONFLICT(shop_id, device_id) DO UPDATE SET
-      type = excluded.type,
-      target_kind = excluded.target_kind,
-      executor_kind = excluded.executor_kind,
-      label = excluded.label,
-      status = excluded.status,
-      state = excluded.state,
-      metadata_json = excluded.metadata_json,
-      reported_at = excluded.reported_at,
-      reported_by = excluded.reported_by`;
-  const toValues = (state: DeviceState): SqlValue[] => [
-    state.deviceId,
-    state.type,
-    state.targetKind ?? defaultTargetKindForAction(state.type),
-    state.executorKind ?? defaultExecutorKindForAction(state.type),
-    state.label,
-    state.status,
-    state.state,
-    state.metadata ? JSON.stringify(state.metadata) : null,
-    state.reportedAt.toISOString(),
-    state.reportedBy,
-  ];
-
-  return {
-    async save(state) {
-      await executor.run(saveSql("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"), toValues(state));
-    },
-
-    async saveMany(states) {
-      await runSqlValuesInBatches(executor, states.map(toValues), saveSql);
-    },
-
-    async listAll() {
-      const rows = await executor.all<DeviceStateRow>(
-        `SELECT device_id, type, target_kind, executor_kind, label, status, state, metadata_json, reported_at, reported_by
-         FROM (SELECT * FROM device_states WHERE shop_id = ${sqlShop(executor)})
-         ORDER BY reported_at DESC, device_id`,
-      );
-      return rows.map(toDeviceState);
-    },
-  };
-}
-
-function createMachineConnectionRepository(
-  executor: SqlExecutor,
-): MachineConnectionRepository {
-  return {
-    async save(connection) {
-      await executor.run(
-        `INSERT INTO machine_connections (shop_id, machine_id, status, capabilities_json, connected_at, last_seen_at, disconnected_at)
-         VALUES (${sqlShop(executor)}, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(shop_id, machine_id) DO UPDATE SET
-           status = excluded.status,
-           capabilities_json = excluded.capabilities_json,
-           connected_at = excluded.connected_at,
-           last_seen_at = excluded.last_seen_at,
-           disconnected_at = excluded.disconnected_at`,
-        [
-          connection.machineId,
-          connection.status,
-          JSON.stringify(connection.capabilities),
-          connection.connectedAt.toISOString(),
-          connection.lastSeenAt.toISOString(),
-          connection.disconnectedAt?.toISOString() ?? null,
-        ],
-      );
-    },
-
-    async findByMachineId(machineId) {
-      const row = await executor.first<MachineConnectionRow>(
-        `SELECT machine_id, status, capabilities_json, connected_at, last_seen_at, disconnected_at
-         FROM (SELECT * FROM machine_connections WHERE shop_id = ${sqlShop(executor)})
-         WHERE machine_id = ?`,
-        [machineId],
-      );
-      return row ? toMachineConnection(row) : null;
-    },
-
-    async listAll() {
-      const rows = await executor.all<MachineConnectionRow>(
-        `SELECT machine_id, status, capabilities_json, connected_at, last_seen_at, disconnected_at
-         FROM (SELECT * FROM machine_connections WHERE shop_id = ${sqlShop(executor)})
-         ORDER BY status DESC, last_seen_at DESC, machine_id`,
-      );
-      return rows.map(toMachineConnection);
-    },
-  };
 }
 
 const redeemCodeSelectSql = (executor: SqlExecutor) => `SELECT rc.id,
@@ -1820,43 +1655,6 @@ type AssetTransactionRow = {
   metadata_json: string | null;
 };
 
-type DeviceCommandRow = {
-  id: string;
-  type: DeviceCommand["type"];
-  device_id: string | null;
-  target_kind: DeviceCommand["targetKind"];
-  executor_kind: DeviceCommand["executorKind"];
-  player_id: string | null;
-  staff_id: string | null;
-  status: DeviceCommand["status"];
-  payload_json: string | null;
-  requested_at: string;
-  acked_at: string | null;
-  expired_at: string | null;
-};
-
-type DeviceStateRow = {
-  device_id: string;
-  type: DeviceState["type"];
-  target_kind: DeviceState["targetKind"];
-  executor_kind: DeviceState["executorKind"];
-  label: string;
-  status: DeviceState["status"];
-  state: string;
-  metadata_json: string | null;
-  reported_at: string;
-  reported_by: string;
-};
-
-type MachineConnectionRow = {
-  machine_id: string;
-  status: MachineConnection["status"];
-  capabilities_json: string;
-  connected_at: string;
-  last_seen_at: string;
-  disconnected_at: string | null;
-};
-
 type RedeemCodeRow = {
   id: string;
   code: string;
@@ -2153,61 +1951,6 @@ function toAssetTransaction(row: AssetTransactionRow): AssetTransaction {
     metadata: row.metadata_json
       ? (JSON.parse(row.metadata_json) as Record<string, unknown>)
       : null,
-  };
-}
-
-function defaultTargetKindForAction(type: DeviceState["type"]): NonNullable<DeviceState["targetKind"]> {
-  return type === "coin" || type === "aime.scan" ? "game_machine" : "facility";
-}
-
-function defaultExecutorKindForAction(type: DeviceState["type"]): NonNullable<DeviceState["executorKind"]> {
-  return defaultTargetKindForAction(type) === "game_machine" ? "machine_ws" : "home_assistant";
-}
-
-function toDeviceCommand(row: DeviceCommandRow): DeviceCommand {
-  return {
-    id: row.id,
-    type: row.type,
-    deviceId: row.device_id,
-    targetKind: row.target_kind,
-    executorKind: row.executor_kind,
-    playerId: row.player_id ?? undefined,
-    staffId: row.staff_id ?? undefined,
-    status: row.status,
-    payload: row.payload_json
-      ? (JSON.parse(row.payload_json) as Record<string, unknown>)
-      : undefined,
-    requestedAt: new Date(row.requested_at),
-    ackedAt: row.acked_at ? new Date(row.acked_at) : undefined,
-    expiredAt: row.expired_at ? new Date(row.expired_at) : undefined,
-  };
-}
-
-function toDeviceState(row: DeviceStateRow): DeviceState {
-  return {
-    deviceId: row.device_id,
-    type: row.type,
-    targetKind: row.target_kind,
-    executorKind: row.executor_kind,
-    label: row.label,
-    status: row.status,
-    state: row.state,
-    metadata: row.metadata_json
-      ? (JSON.parse(row.metadata_json) as Record<string, unknown>)
-      : null,
-    reportedAt: new Date(row.reported_at),
-    reportedBy: row.reported_by,
-  };
-}
-
-function toMachineConnection(row: MachineConnectionRow): MachineConnection {
-  return {
-    machineId: row.machine_id,
-    status: row.status,
-    capabilities: JSON.parse(row.capabilities_json) as string[],
-    connectedAt: new Date(row.connected_at),
-    lastSeenAt: new Date(row.last_seen_at),
-    disconnectedAt: row.disconnected_at ? new Date(row.disconnected_at) : undefined,
   };
 }
 
@@ -2578,9 +2321,9 @@ async function readLiveBillingSnapshot(
   ] = await Promise.all([
     executor.all<SessionRow & { device_operated: number }>(
       `SELECT s.*, b.release_id AS pricing_release_id,
-         EXISTS(SELECT 1 FROM device_commands c WHERE c.shop_id=s.shop_id AND c.player_id=s.player_id
-           AND c.type!='door.open' AND c.status NOT IN ('expired','rejected')
-           AND c.requested_at>=s.started_at AND c.requested_at<=COALESCE(s.ended_at,?)) AS device_operated
+         EXISTS(SELECT 1 FROM device_operations o WHERE o.shop_id=s.shop_id AND o.player_id=s.player_id
+           AND o.counts_as_play=1 AND o.status!='failed'
+           AND o.requested_at>=s.started_at AND o.requested_at<=COALESCE(s.ended_at,?)) AS device_operated
        FROM sessions s LEFT JOIN session_pricing_releases b ON b.shop_id=s.shop_id AND b.session_id=s.id
        WHERE s.shop_id=${shop} AND s.player_id IN (SELECT value FROM json_each(?))
          AND (s.status='active' OR (s.status='closed' AND s.payment_status='unpaid')) ORDER BY s.started_at,s.id`,

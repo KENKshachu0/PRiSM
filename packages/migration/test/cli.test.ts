@@ -113,7 +113,7 @@ describe("migration CLI", () => {
     const player = await repositories.players.findById("legacy:user:7");
     const summary = await queries.playerQueries.getPlayerSummary("legacy:user:7");
     const detail = await queries.playerQueries.getPlayerSessionHistoryDetail?.("legacy:user:7", "legacy:session:51");
-    const commands = await repositories.deviceCommands.listByPlayerId("legacy:user:7");
+    const commands = await repositories.deviceEvents.listOperationsByPlayer("legacy:user:7");
 
     expect(player?.displayName).toBe("Player 7");
     expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: moneyFixture(500) }]);
@@ -234,7 +234,7 @@ describe("migration CLI", () => {
     const player = await repositories.players.findById("legacy:user:7");
     const summary = await queries.playerQueries.getPlayerSummary("legacy:user:7");
     const detail = await queries.playerQueries.getPlayerSessionHistoryDetail?.("legacy:user:7", "legacy:session:51");
-    const commands = await repositories.deviceCommands.listByPlayerId("legacy:user:7");
+    const commands = await repositories.deviceEvents.listOperationsByPlayer("legacy:user:7");
 
     expect(player?.displayName).toBe("Player 7");
     expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: moneyFixture(500) }]);

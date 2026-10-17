@@ -1,6 +1,12 @@
 import type { AssetDefinition, AssetHolding, AssetHoldingChanges, AssetLedgerEntry, AssetTransaction, PricingEffect } from "./assets";
 import type { BusinessItem, BusinessItemOrder } from "./business-items";
-import type { DeviceCommand, DeviceState } from "./device-command";
+import type {
+  DeviceEvent,
+  DeviceOperation,
+  DeviceOperationStatus,
+  DeviceStateAuthority,
+  DeviceStateValue,
+} from "./device-events";
 import type { PricingConfig } from "./pricing-config";
 import type { Present, RedeemCode, RedeemRecord } from "./redeem";
 import type { Session } from "./session";
@@ -218,17 +224,42 @@ export type RedeemRepository = {
   saveRedeemRecord(record: RedeemRecord): Promise<void>;
 };
 
-export type DeviceCommandRepository = {
-  enqueueDeviceCommand(command: DeviceCommand): Promise<void>;
-  getDeviceCommand(commandId: string): Promise<DeviceCommand | null>;
-  listByPlayerId(playerId: string): Promise<DeviceCommand[]>;
-  listPending(limit: number): Promise<DeviceCommand[]>;
+/** A state value to write only if it differs from what is stored. */
+export type DeviceStateWrite = {
+  deviceId: string;
+  capability: string;
+  key: string;
+  value: unknown;
+  authority: DeviceStateAuthority;
 };
 
-export type DeviceStateRepository = {
-  save(state: DeviceState): Promise<void>;
-  saveMany(states: readonly DeviceState[]): Promise<void>;
-  listAll(): Promise<DeviceState[]>;
+/**
+ * Everything one device occurrence changes, applied atomically: the events,
+ * any operation they create or settle, and any state they move. A state write
+ * whose value is unchanged is dropped together with its `change` event, so a
+ * repeated observation never grows the log.
+ */
+export type DeviceRecord = {
+  events: readonly DeviceEvent[];
+  operation?: DeviceOperation;
+  settle?: {
+    operationId: string;
+    status: DeviceOperationStatus;
+    failure: string | null;
+    settledAt: Date;
+  };
+  /** Only an operation aimed at `deviceId` can be confirmed by it. */
+  confirm?: { operationId: string; deviceId: string; confirmedAt: Date };
+  states?: readonly { write: DeviceStateWrite; event: DeviceEvent }[];
+};
+
+export type DeviceEventRepository = {
+  record(input: DeviceRecord): Promise<void>;
+  listEvents(input: { deviceId: string; limit: number }): Promise<DeviceEvent[]>;
+  getOperation(id: string): Promise<DeviceOperation | null>;
+  listOperationsByPlayer(playerId: string): Promise<DeviceOperation[]>;
+  listRecentOperations(limit: number): Promise<DeviceOperation[]>;
+  listState(deviceIds?: readonly string[]): Promise<DeviceStateValue[]>;
 };
 
 export type MachineConnectionStatus = "online" | "offline";
@@ -240,12 +271,6 @@ export type MachineConnection = {
   connectedAt: Date;
   lastSeenAt: Date;
   disconnectedAt?: Date;
-};
-
-export type MachineConnectionRepository = {
-  save(connection: MachineConnection): Promise<void>;
-  findByMachineId(machineId: string): Promise<MachineConnection | null>;
-  listAll(): Promise<MachineConnection[]>;
 };
 
 export type SettlementRepository = {

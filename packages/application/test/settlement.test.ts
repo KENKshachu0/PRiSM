@@ -7,8 +7,7 @@ import {
   AssetLedgerEntry,
   AssetRepository,
   AssetTransaction,
-  DeviceCommand,
-  DeviceCommandRepository,
+  DeviceOperation,
   PricingProvider,
   PlayerCheckout,
   Session,
@@ -141,24 +140,32 @@ class MemorySettlementRepository implements SettlementRepository {
   }
 }
 
-class MemoryDeviceCommandRepository implements DeviceCommandRepository {
-  constructor(private readonly commands: DeviceCommand[] = []) {}
+function operation(overrides: Partial<DeviceOperation>): DeviceOperation {
+  return {
+    id: "op",
+    deviceId: "device-1",
+    capability: "hinata_io",
+    action: "coin",
+    parentId: null,
+    playerId: "player-1",
+    staffId: null,
+    status: "succeeded",
+    countsAsPlay: true,
+    failure: null,
+    payload: {},
+    requestedAt: new Date("2026-07-09T00:00:00.000Z"),
+    settledAt: null,
+    confirmedAt: null,
+    ...overrides,
+  };
+}
 
-  async enqueueDeviceCommand(command: DeviceCommand): Promise<void> {
-    this.commands.push(command);
-  }
-
-  async getDeviceCommand(commandId: string): Promise<DeviceCommand | null> {
-    return this.commands.find((c) => c.id === commandId) ?? null;
-  }
-
-  async listByPlayerId(playerId: string): Promise<DeviceCommand[]> {
-    return this.commands.filter((c) => c.playerId === playerId);
-  }
-
-  async listPending(limit: number): Promise<DeviceCommand[]> {
-    return this.commands.filter((c) => c.status === "pending").slice(0, limit);
-  }
+function memoryOperations(operations: DeviceOperation[]) {
+  return {
+    async listOperationsByPlayer(playerId: string) {
+      return operations.filter((item) => item.playerId === playerId);
+    },
+  };
 }
 
 class MemoryPricingCapHistoryRepository {
@@ -1512,7 +1519,7 @@ describe("createSettlementService", () => {
     expect(yuanOf(result.settlementPreview.total)).toBe(10);
   });
 
-  it("detects machine/power command in deviceCommands repository and invalidates first grace", async () => {
+  it("treats a power operation as device use and invalidates first grace", async () => {
     const sessions = new MemorySessionRepository([
       {
         id: "session-power",
@@ -1524,17 +1531,8 @@ describe("createSettlementService", () => {
         paymentStatus: "unpaid",
       },
     ]);
-    const deviceCommands = new MemoryDeviceCommandRepository([
-      {
-        id: "cmd-power-1",
-        type: "power.on",
-        targetKind: "facility",
-        executorKind: "home_assistant",
-        deviceId: "switch.maimai",
-        playerId: "player-1",
-        status: "acked",
-        requestedAt: new Date("2026-07-09T02:01:00.000Z"),
-      },
+    const deviceOperations = memoryOperations([
+      operation({ id: "op-power-1", action: "power.on", capability: "power", countsAsPlay: true, requestedAt: new Date("2026-07-09T02:01:00.000Z") }),
     ]);
     const provider = createTimePricingProvider({
       id: "time.base",
@@ -1549,7 +1547,7 @@ describe("createSettlementService", () => {
       assets: new MemoryAssetRepository([]),
       settlements: new MemorySettlementRepository(),
       pricingProviders: [provider],
-      deviceCommands,
+      deviceOperations,
       assetEffectProviders: [],
       now: () => new Date("2026-07-09T02:03:00.000Z"),
     });
@@ -1558,7 +1556,7 @@ describe("createSettlementService", () => {
     expect(yuanOf(result.settlementPreview.total)).toBe(10);
   });
 
-  it("keeps free exit when only door.open command occurred during grace window", async () => {
+  it("keeps free exit when only a door operation occurred during grace window", async () => {
     const sessions = new MemorySessionRepository([
       {
         id: "session-door-only",
@@ -1570,17 +1568,8 @@ describe("createSettlementService", () => {
         paymentStatus: "unpaid",
       },
     ]);
-    const deviceCommands = new MemoryDeviceCommandRepository([
-      {
-        id: "cmd-door-1",
-        type: "door.open",
-        targetKind: "facility",
-        executorKind: "home_assistant",
-        deviceId: "lock.front_door",
-        playerId: "player-1",
-        status: "acked",
-        requestedAt: new Date("2026-07-09T02:00:10.000Z"),
-      },
+    const deviceOperations = memoryOperations([
+      operation({ id: "op-door-1", action: "door.open", capability: "door", countsAsPlay: false, requestedAt: new Date("2026-07-09T02:00:10.000Z") }),
     ]);
     const provider = createTimePricingProvider({
       id: "time.base",
@@ -1595,7 +1584,7 @@ describe("createSettlementService", () => {
       assets: new MemoryAssetRepository([]),
       settlements: new MemorySettlementRepository(),
       pricingProviders: [provider],
-      deviceCommands,
+      deviceOperations,
       assetEffectProviders: [],
       now: () => new Date("2026-07-09T02:03:00.000Z"),
     });

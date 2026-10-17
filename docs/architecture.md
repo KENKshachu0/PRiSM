@@ -31,16 +31,18 @@ PRiSM Next 是一款单店、可自托管的场馆运营核心系统。系统支
     - `platform/`：平台级路由（`auth.ts`, `passkeys.ts`, `user.ts`, `shops.ts`），处理平台登录、Passkey 凭据与店铺生命周期。
     - `system/`：系统探针路由（`health.ts`, `version.ts`）。
     - `web-assets.ts`：静态前端 SPA 资源代理与维护期拦截。
-    - `shops/`：多租户店铺级业务路由（`player.ts`, `staff.ts`, `integration.ts`, `devices.ts`, `pricing.ts`, `assets.ts`, `cashier.ts`, `redeem.ts`）。依托 `tenantMiddleware` 依赖注入直接调用应用层服务，彻底废除了旧版的虚拟 HTTP 请求转发（`createPrismApp().fetch()`）。
+    - `shops/`：多租户店铺级业务路由（`player.ts`, `staff.ts`, `integration.ts`, `pricing.ts`, `assets.ts`, `cashier.ts`, `redeem.ts`）。依托 `tenantMiddleware` 依赖注入直接调用应用层服务，彻底废除了旧版的虚拟 HTTP 请求转发（`createPrismApp().fetch()`）。
   - `src/legacy`：遗留单店 API 集中隔离与弃用管理模块。收拢旧版未携带 `:shopCode` 的单店 API（`/api/v1/player/*`, `/api/v1/staff/*`, `/api/v1/integration/*`, `/api/v1/setup/*`），自动附加 `X-API-Deprecated: true`、`X-API-Replacement`、`Link` 与 `Warning` 弃用标头，并提供回退租户解析与详细迁移指南，详见 [packages/server/src/legacy/README.md](../packages/server/src/legacy/README.md)。
-  - `src/hardware`：统一整合的硬件驱动与执行器模块。包含 Hinata E2EE 卡片/投币驱动与执行器（`hinata.ts`，统一 PBKDF2/AES-GCM 与重试回退语义）、TTLock 云开锁与临时密码执行器（`ttlock.ts`）、Home Assistant 设施实体动作与状态执行器（`home-assistant.ts`）以及街机机台 WebSocket 协议处理器（`machine-ws.ts`）。
+  - `src/devices`：设备模型。`capabilities.ts` 是能力目录（电源、HINATA IO、门锁、麻将：配置校验、动作、设备回报、状态权威），`device.ts` 读取设备及其能力，`configure.ts` 写能力，`bus.ts` 是记录动作、回报与状态的唯一入口，`runtime.ts` 把动作接到硬件驱动，`actions.ts` 实现 Bot／员工／integration 的设备动作，`legacy-registries.ts` 把旧版店铺设置里的设备注册表转成设备，`legacy-views.ts` 提供旧的设备状态与机台连接视图。详见 [集成与设备](integrations-and-machines.md)。
+  - `src/hardware`：硬件驱动，只负责与设备通信：HINATA IO 外部中继（`hinata.ts`，PBKDF2/AES-GCM）、直连中继协议（`aimeio-relay.ts`）、TTLock 云 API（`ttlock.ts`）、Home Assistant（`home-assistant.ts`）。
+  - `src/gateway` 与 `src/durable-objects/machine-relay.ts`：机台直连 `/io/ws`。网关在握手前按设备令牌鉴权并解析通道，`MachineRelay` Durable Object 持有机台连接并把回报交给设备 bus。
   - `src/app.ts` 与 `src/worker.ts`：顶层 Hono 应用装配工厂（`createApp()` / `app`）与 Cloudflare Worker 入口点。整合 CORS、响应耗时、静态资源兜底代理（`serveWebAssets`）、领域错误分发转换、多租户及遗留路由挂载；Worker 入口导出 `fetch`、`scheduled` 定时任务处理器与 `LiveBilling` Durable Object。
   - `src/durable-objects`：Apple Live Activity 实时活动与实时计费状态机。包含 `LiveBilling` Cloudflare Durable Object（支持闹钟定时唤醒与自适应指数退避重试）、实时账单增量计算（`live-activity-billing.ts`）以及 Apple APNs 推送协议与令牌校验实现（`live-activity-push.ts`）。
   - `src/deployment-gate.ts`：零停机部署栅栏门控。拦截 `/__prism_deploy` 部署动作与检查请求，执行维护窗口隔离、SQL schema 锁检查与 D1 状态围栏。
   - `src/tasks/cron-handlers.ts`：后台定时任务处理模块。实现 `purgeExpiredPlatformState`，按批次（每次最多 500 条）安全清理过期的临时验证凭据与已注销的平台状态。
   - `src/migrations/shop-time-zone-migration.ts`：店铺位置 IANA 时区幂等迁移脚本，基于经纬度地理编码解析缺失的时区配置并批量入库。
-  - `src/local-server.ts` 与 `src/serve.ts`：本地 Bun 原生运行入口与独立服务端运行时。实现 `createD1DatabaseFromSqlite` 将 `bun:sqlite` 封装为 `D1DatabaseLike` 适配器；实现 `initializeLocalDatabase` 自动初始化 `@prism/storage-sql` 与平台表结构并配置默认管理用户与店铺计费；通过 `createLocalServer` 启动 `Bun.serve`，支持离线单店开发调试、HTTP 请求处理与机台 WebSocket 协议升级（`/rpc/machine/ws`）。
-- `packages/application`：用例编排与跨适配器契约层。结合核心领域规则与仓储端口编排结算、员工现场操作、设备状态同步和统一资产效果；查询 DTO 与插件目录契约也定义在这里，避免内层依赖 Hono。`available-assets` 和 SQL 读模型都必须调用 core 的 `evaluateAssetHoldingAvailability`，不得重复实现可用性判断。
+  - `src/local-server.ts` 与 `src/serve.ts`：本地 Bun 原生运行入口与独立服务端运行时。实现 `createD1DatabaseFromSqlite` 将 `bun:sqlite` 封装为 `D1DatabaseLike` 适配器；实现 `initializeLocalDatabase` 自动初始化 `@prism/storage-sql` 与平台表结构并配置默认管理用户与店铺计费；通过 `createLocalServer` 启动 `Bun.serve`，支持离线单店开发调试与 HTTP 请求处理（机台直连 `/io/ws` 依赖 Durable Object，只在 Worker／`wrangler dev` 下可用）。
+- `packages/application`：用例编排与跨适配器契约层。结合核心领域规则与仓储端口编排结算、员工现场操作和统一资产效果（设备动作的端口定义在这里，实现在 `packages/server/src/devices`）；查询 DTO 与插件目录契约也定义在这里，避免内层依赖 Hono。`available-assets` 和 SQL 读模型都必须调用 core 的 `evaluateAssetHoldingAvailability`，不得重复实现可用性判断。
 - 架构统一注记：原 `packages/server-hono`、`packages/runtime` 与 `packages/platform` 已在 2026-10-08 架构重构中彻底合并为单一的 `packages/server`；原虚拟 HTTP 请求转发（`createPrismApp().fetch()`）已完全消除，由 `tenantMiddleware` 直接提供原生依赖注入。
 - `packages/prism-web`：唯一的 React 管理与玩家客户端。管理入口为 `/merchant/:shopCode`，负责现场运营、计费、资产、报表、设备、成员和设置；玩家入口负责设备扫码与店铺账单。
 - React 时间显示使用店铺位置识别出的 IANA 时区，通过 `Intl`、`ui/bill-time.ts` 和计费时钟转换处理 UTC 时间戳及规则。报表查询把店铺日期范围转换为 UTC，不依赖浏览器自身时区。
@@ -52,7 +54,7 @@ PRiSM Next 是一款单店、可自托管的场馆运营核心系统。系统支
 当前持久化 API Token 只分为两类：
 
 - `integration`：机器人、Koishi/AstrBot 或店内自有入口服务使用。它代表受信任的店内入口，后续通过结构化外部身份（如 `provider=onebot, subject=123456`）发起玩家相关动作。
-- `machine`：游戏机软件或可控制游戏机的小主机使用。它代表机器软件接入，只通过 `/rpc/machine/ws` 接收实时命令、确认执行结果并发送心跳。
+- `machine`：旧版机器软件令牌。原来用于本地服务端的 `/rpc/machine/ws`，该通道已移除，此类令牌不再有用途；HINATA IO 机台改用设备看板签发的设备令牌连接 `/io/ws`。
 
 员工后台不再创建 `player`、`bot` 或 `agent` API Token。玩家 Web 入口使用绑定到单个玩家的 player session；机器侧也使用 `machine` 语言，避免把 Home Assistant 设施控制和游戏机软件能力混在一个「Agent」概念里。
 
@@ -130,10 +132,10 @@ APNs 实时活动推送由 `@prism/server` 的 `durable-objects` 模块协调。
 
 - 场次启动/结束生命周期。同一玩家可同时拥有多个平级 active session；这些 session 不区分主次，现场页按玩家聚合展示，最终由玩家级统一结算处理未结 session。Integration 创建的 session 会带有来源 metadata，该 metadata 仅用于审计：停止 session 的授权边界是玩家归属，而非开启渠道，因此 Integration 可以停止当前外部身份玩家名下的任意一条 session（停止后仍保持未结算状态），但停不了别人的。
 - 新玩家注册统一经过 Staff Player 应用服务；当 `player.registration.defaultPresentId` 指向有效礼物时，按礼物中当前有效的 grants 生成一次 `player.register.present` 资产交易。默认礼物未配置、已归档、过期或不存在时只跳过发放，不阻断玩家注册。
-- 优先级计费引擎：支持星期、指定日期、绝对日期范围、跨天区间（按开始日匹配）、时间舍入单位、宽限期、方案内封顶、跨场次历史计费封顶，以及用于叠加抵扣 session 的负数单价规则。支持设备操作与首次宽限联动（操作设备即产生费用）：若玩家在计费场次内触发了除门禁 `door.open` 外的有效设备动作（如 `coin` 投币、`aime.scan` 刷卡、`power.on`/`power.off` 电源开关、空调等），该场次自动标记为已操作设备（`metadata.deviceOperated: true`，结算时亦可通过命令流水回溯补齐），并立即使首次进店免单宽限失效，收取至少 1 个计费单位基础费用（即使即时登出或游玩不足 1 分钟；后续尾数取整宽限保留不受影响）；未操作任何设备的玩家在宽限期内离场依然享受免费离场。每个 session 保留原始正负计费贡献，只在玩家级统一结账完成全部 session 汇总后将最终应付金额限制为不低于 `0`。每次统一结账会写入一条 `player_checkouts`，并以 `settlements.checkout_id` 关联其中全部 session；营业报表直接汇总这个持久化批次，不再用相同时间戳猜测哪些 session 属于同一单。全局封顶时间轴使用同一套时间匹配规则，但不产生费用项；它在资产和手动改单等后置优惠之前，对选中的按时计费方案合计做二次封顶，并把历史写入 `pricing_cap_history_entries`。员工展示按该规则锚定的封顶窗口聚合历史和本次参与金额；达到上限时显示封顶后的最终金额，而不是本次封顶调整的差额。
+- 优先级计费引擎：支持星期、指定日期、绝对日期范围、跨天区间（按开始日匹配）、时间舍入单位、宽限期、方案内封顶、跨场次历史计费封顶，以及用于叠加抵扣 session 的负数单价规则。支持设备操作与首次宽限联动（操作设备即产生费用）：若玩家在计费场次时间窗内有未失败、且能力目录标记为「算作玩过」的设备操作（`device_operations.counts_as_play`，如 `coin` 投币、`aime.scan` 刷卡、`power.on`/`power.off`；门禁 `door.open` 不算），即视为已操作设备（结算时把它写成 `metadata.deviceOperated: true`，历史场次已有的该标记继续有效），并立即使首次进店免单宽限失效，收取至少 1 个计费单位基础费用（即使即时登出或游玩不足 1 分钟；后续尾数取整宽限保留不受影响）；未操作任何设备的玩家在宽限期内离场依然享受免费离场。每个 session 保留原始正负计费贡献，只在玩家级统一结账完成全部 session 汇总后将最终应付金额限制为不低于 `0`。每次统一结账会写入一条 `player_checkouts`，并以 `settlements.checkout_id` 关联其中全部 session；营业报表直接汇总这个持久化批次，不再用相同时间戳猜测哪些 session 属于同一单。全局封顶时间轴使用同一套时间匹配规则，但不产生费用项；它在资产和手动改单等后置优惠之前，对选中的按时计费方案合计做二次封顶，并把历史写入 `pricing_cap_history_entries`。员工展示按该规则锚定的封顶窗口聚合历史和本次参与金额；达到上限时显示封顶后的最终金额，而不是本次封顶调整的差额。
 - `0013_player_checkouts.sql` 是报表读模型的必需迁移：它为历史 settlements 建立统一 checkout 并补齐 `checkout_id`，因此运行时报表不保留旧的按玩家和相同结算时间猜测批次的分支。
 - 礼物兑换校验及资产堆叠/延期/替换授予逻辑。兑换码过期或礼物过期会拒绝兑换；兑换码和礼物都有效时，礼物中未生效或已过期的内容会被跳过，不会到账。
-- 设备动作授权、投币冷却、执行与审计状态流转。设施动作使用 `facility/home_assistant` 或 `facility/ttlock`；游戏机动作使用 `game_machine/machine_ws` 或 `game_machine/hinata_io`。前者由 PRiSM 机器客户端接收并 ACK，Hinata IO 按加密 HTTP relay 协议直接执行，TTLock 的 `door.open` 按 Cloud API 创建随机临时密码。Home Assistant、TTLock 和 Hinata IO 配置保存在 `app_settings`，由设备看板维护，运行时动态读取而不依赖部署环境变量；TTLock access token 过期时自动刷新并持久化新 token。玩家触发 `coin`、`aime.scan`、`power.on` 或 `power.off` 必须处于活跃计费 session；刷卡身份由后端从玩家绑定身份中解析。玩家发起除 `door.open` 门禁外的有效设备操作（如投币、刷卡、开关电源）入队或执行成功后，会自动将名下活跃计费场次标记为已操作设备（`deviceOperated: true`），作为计费引擎失效首次宽限期的判定依据。执行失败信息写入命令 payload 供员工后台审计；TTLock 临时密码仅通过本次成功响应返回，不写入审计记录。
+- 设备动作授权、投币冷却、执行与审计。设备能做什么由绑定的能力决定（`device_capabilities`），每次动作是一条 `device_operations`，请求、结果、设备回报和状态变化都是 `device_events`，当前状态在 `device_state`；电源每次实时读取 Home Assistant。TTLock 账号在 `app_settings.devices.ttlock_connection`，access token 过期时自动刷新并持久化。玩家触发 `coin`、`aime.scan`、`power.on` 或 `power.off` 必须处于活跃计费 session；网页刷卡卡号来自账号的 `cards`，Bot 刷卡来自玩家绑定身份，卡号都不落库。失败原因写入结果事件；TTLock 临时密码仅通过本次成功响应返回。详见 [集成与设备](integrations-and-machines.md)。
 - 统一的持久化仓储接口及其 SQLite 与 D1 双适配器实现。
 - 可热启用的计费配置仓储（支持后台启用/禁用/归档/还原），在结账时动态解析。
 - 运行时插件系统：支持注册业务线特定的计费规则与资产效果。插件计费逻辑在结算时叠加生效。

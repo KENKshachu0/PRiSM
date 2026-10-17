@@ -7,7 +7,7 @@ import type { BillingShop } from "./compat.js";
 import { decryptSecret } from "../../../crypto.js";
 import { jsonError } from "../../../http.js";
 import { owner } from "./shop-data.js";
-import { schemas, v2TablesFor, type FullTable } from "./shop-data-v2-format.js";
+import { schemas, v3TablesFor, type FullTable } from "./shop-data-v2-format.js";
 import type { AppBindings } from "./compat.js";
 
 type C = Context<AppBindings, any, any>;
@@ -36,18 +36,7 @@ const initialPageRows = 256;
 const accountPageRows = 512;
 const pageTables = 8;
 const rowEncoder = new TextEncoder();
-export const sourceColumns = (table: FullTable) =>
-  schemas[table].columns.map((c) =>
-    table === "machines"
-      ? ((
-          {
-            hinata_url: "hinata_url_encrypted",
-            hinata_password: "hinata_password_encrypted",
-            ha_binding_json: "ha_binding_encrypted",
-          } as Record<string, string>
-        )[c.name] ?? c.name)
-      : c.name,
-  );
+export const sourceColumns = (table: FullTable) => schemas[table].columns.map((c) => c.name);
 const objectSql = (table: FullTable, alias = "") =>
   `json_object(${schemas[table].columns.map((c, i) => `'${c.name}',${alias}${sourceColumns(table)[i]}`).join(",")})`;
 export function exportMonth(zone: string, date = new Date()) {
@@ -224,10 +213,10 @@ const accountBindings = (shopId: string) => Array(5).fill(shopId) as string[];
 const validJobSql =
   "SELECT 1 AS valid FROM shop_data_exports WHERE id=? AND status='active' AND expires_at>? AND cursor=?";
 async function metadata(c: C, shop: BillingShop, job: ExportJob) {
-  const tables = v2TablesFor(job.scope);
+  const tables = v3TablesFor(job.scope);
   const result = await (c.env.DB as LegacyD1Database).batch<Record<string, string | number>>([
     (c.env.DB as LegacyD1Database).prepare(
-      `SELECT json_object('format','prism-shop-data','version',2,'scope',?,'exportedAt',?,
+      `SELECT json_object('format','prism-shop-data','version',3,'scope',?,'exportedAt',?,
       'source',json_object('publicId',s.public_id,'name',s.name,'timeZone',?,'origin',?,'location',json_object('latitude',s.latitude,'longitude',s.longitude,'radiusMeters',s.radius_meters)),
       'storage',json_object('timeZone','UTC','money','minor-units'),
       'shopProfile',json_object('name',s.name,'latitude',s.latitude,'longitude',s.longitude,'radiusMeters',s.radius_meters,'heroData',s.hero_data),
@@ -326,7 +315,7 @@ async function page(c: C, job: ExportJob, after: number) {
   }
 }
 async function readPage(c: C, job: ExportJob, after: number) {
-  const tables = v2TablesFor(job.scope),
+  const tables = v3TablesFor(job.scope),
     rows: { seq: number; table_name: FullTable; payload_json: string }[] = [];
   const counts = JSON.parse(job.counts_json) as Record<string, number>;
   let rowCursor = job.row_cursor,
@@ -427,14 +416,15 @@ async function readPage(c: C, job: ExportJob, after: number) {
       tableBytes = 0;
     for (const raw of data!.results) {
       let payload = String(raw.payload_json);
-      if (table === "machines") {
+      // Secrets travel in the clear inside the file and are re-encrypted with
+      // the destination's key on import.
+      if (table === "device_capabilities") {
         const value = JSON.parse(payload) as Record<string, unknown>;
-        for (const key of ["hinata_url", "hinata_password", "ha_binding_json"])
-          if (value[key])
-            value[key] = await decryptSecret(
-              String(value[key]),
-              c.env.URL_ENCRYPTION_KEY!,
-            );
+        const secrets = JSON.parse(String(value.secret_json)) as Record<string, unknown>;
+        for (const [name, sealed] of Object.entries(secrets))
+          if (typeof sealed === "string" && sealed)
+            secrets[name] = await decryptSecret(sealed, c.env.URL_ENCRYPTION_KEY!);
+        value.secret_json = JSON.stringify(secrets);
         payload = JSON.stringify(value);
       }
       const size = rowEncoder.encode(payload).length;

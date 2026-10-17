@@ -107,7 +107,9 @@ curl -X POST http://localhost:8787/rpc/player/device-commands \
 设备动作的目标分两类：
 
 - `facility`：门禁、电源、空调等设施动作，执行器可以是 `home_assistant`、`ttlock` 或设施网关。
-- `game_machine`：投币、Aime 扫描等游戏机器软件动作，执行器为 `machine_ws`，由对应机器的在线 WebSocket 连接实时接收。
+- `game_machine`：投币、Aime 扫描等游戏机动作，由设备的 HINATA IO 能力执行（外部中继或机台直连）。
+
+`target` 只用于找到设备（ID、`public_id`、名称或别名）；设备能否执行某个动作由它绑定的能力决定，见 [集成与设备](integrations-and-machines.md)。
 
 玩家发起的 `coin`、`aime.scan`、`power.on` 和 `power.off` 必须已有活跃计费 session；`coin` 还会检查投币冷却时间。受信任的 Bot 集成可为 `power.on/off` 请求附加 `staffOverride: true`，该请求会记录为员工动作并不受玩家 session 限制。Koishi 的 `powerCommandsAdminOnly` 配置只限制 `/off`；`/on` 仍要求玩家已入场。
 
@@ -347,14 +349,14 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/devic
   "action": {
     "id": "command-1",
     "type": "coin",
-    "status": "pending",
+    "status": "acked",
     "target": {"kind":"game_machine","id":"maimai-dx-1"},
-    "executorKind": "machine_ws"
+    "executorKind": "hinata_io"
   }
 }
 ```
 
-`coin`、`aime.scan`、`power.on` 和 `power.off` 必须对应玩家已有至少一条 active session；没有入场会返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。Integration 的游戏机目标使用 `target.ref`，只接受后端 Hinata IO 配置中的设备 `name` 或 `aliases`，不会把用户输入直接当内部机器 ID。`aime.scan` 的 payload 只需提供 `provider`（默认 `aime`），后端会读取该玩家已绑定的对应身份；没有绑定时返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。身份不存在且未显式允许注册时仍返回 `PLAYER_IDENTITY_NOT_FOUND`。受信任集成可为开关机请求附加 `staffOverride: true`，后端会将其记录为员工动作；其他动作使用该字段会返回 `INTEGRATION_STAFF_OVERRIDE_ACTION_NOT_ALLOWED`。
+`coin`、`aime.scan`、`power.on` 和 `power.off` 必须对应玩家已有至少一条 active session；没有入场会返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。Integration 的游戏机目标使用 `target.ref`，按设备 ID、`public_id`、名称或别名匹配，设备必须绑定可用的 HINATA IO 能力，否则返回 `DEVICE_ACTION_UNSUPPORTED`。`status` 为 `acked`（已执行）、`pending`（结果未知，例如网络超时）或 `expired`（执行失败，原因在 `payload.executorFailure.message`）。`aime.scan` 的 payload 只需提供 `provider`（默认 `aime`），后端会读取该玩家已绑定的对应身份；没有绑定时返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。身份不存在且未显式允许注册时仍返回 `PLAYER_IDENTITY_NOT_FOUND`。受信任集成可为开关机请求附加 `staffOverride: true`，后端会将其记录为员工动作；其他动作使用该字段会返回 `INTEGRATION_STAFF_OVERRIDE_ACTION_NOT_ALLOWED`。
 
 ## 实时活动推送 (Live Activity)
 
@@ -381,64 +383,11 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/devic
 
 未配置 `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_PRIVATE_KEY` 时推送整体退化为 no-op，但注册接口仍正常受理。
 
-## 机器软件接口 (Machine RPC / WebSocket)
+## 机台直连 (`/io/ws`)
 
-本地 Bun 部署支持机器软件 WebSocket：`GET /rpc/machine/ws`，Header 使用 `Authorization: Bearer <machine-token>`。原生机器软件通过该通道接收投币、刷卡等动作并返回 ACK；后台配置的 Hinata IO 设备则由后端通过加密 relay HTTP 协议直接执行。
+HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`。令牌在设备看板把 HINATA IO 设为直连后签发、只显示一次；令牌无效或设备停用返回 401。平台通过这条连接下发 `SET_CARD`、`KEY_PRESS`，机台回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`。协议、能力模型和设备日志见 [集成与设备](integrations-and-machines.md)。
 
-机器连接后先发送 hello：
-
-```json
-{
-  "type": "hello",
-  "machineId": "maimai-dx-1",
-  "capabilities": ["coin", "aime.scan"]
-}
-```
-
-服务端会记录机器在线状态、能力列表和最后心跳时间，并回复：
-
-```json
-{
-  "type": "hello.ack",
-  "machineId": "maimai-dx-1",
-  "status": "online"
-}
-```
-
-如果该机器有待执行命令，服务端会立即发送：
-
-```json
-{
-  "type": "command",
-  "commandId": "command-1",
-  "action": "coin",
-  "payload": {"count":1},
-  "expiresAt": "2026-07-07T13:30:00.000Z"
-}
-```
-
-机器执行成功后回复：
-
-```json
-{
-  "type": "ack",
-  "commandId": "command-1",
-  "status": "success"
-}
-```
-
-执行失败时回复：
-
-```json
-{
-  "type": "ack",
-  "commandId": "command-1",
-  "status": "failed",
-  "message": "coin controller timeout"
-}
-```
-
-成功 ACK 会把命令标记为 `acked`；失败 ACK 会把命令标记为 `expired`，并把失败信息写入命令 payload 的 `machineAck` 字段，供员工后台审计。机器可以定期发送 `{"type":"ping"}` 刷新心跳，服务端会回复 `{"type":"pong","machineId":"..."}` 并顺带推送当前可投递命令。
+原先只在本地 Bun 服务端提供的 `GET /rpc/machine/ws`（`hello`/`ack`/`ping` 协议、`machine_ws` 执行器）已移除。
 
 ### 店家手动绑定玩家账号
 
@@ -481,7 +430,7 @@ React `/admin` 账号管理页提供删除入口。`DELETE /api/v1/admin/users/:
 
 ### 店铺 JSON 数据备份与迁移
 
-店主可以使用 `/api/v1/shops/:shopCode/data/export` 下载原始 JSON 文件，大文件通过 `data/exports` 任务分页下载，通过 `data/imports` 分片上传、预检并原子恢复到空店铺。新版后台支持 v1／v2 文件，旧整文件接口仅为兼容保留。此附件保留数据库原始 UTC 时间、整数货币和历史计费版本，不进行展示时区转换。范围、权限、格式、限制及跨环境迁移注意事项见 [店铺数据导入导出](shop-data-transfer.md)。
+店主可以使用 `/api/v1/shops/:shopCode/data/export` 下载原始 JSON 文件，大文件通过 `data/exports` 任务分页下载，通过 `data/imports` 分片上传、预检并原子恢复到空店铺。新版后台导出 v3 文件，导入支持 v1／v2／v3，旧整文件接口仅为兼容保留。此附件保留数据库原始 UTC 时间、整数货币和历史计费版本，不进行展示时区转换。范围、权限、格式、限制及跨环境迁移注意事项见 [店铺数据导入导出](shop-data-transfer.md)。
 
 ### 店铺只读导出及月度额度
 

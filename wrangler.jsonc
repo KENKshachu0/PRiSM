@@ -7,6 +7,10 @@
       {
         "name": "LIVE_BILLING",
         "class_name": "LiveBilling"
+      },
+      {
+        "name": "MACHINE_RELAY",
+        "class_name": "MachineRelay"
       }
     ]
   },
@@ -15,6 +19,12 @@
       "tag": "live-billing-v1",
       "new_sqlite_classes": [
         "LiveBilling"
+      ]
+    },
+    {
+      "tag": "machine-relay-v1",
+      "new_sqlite_classes": [
+        "MachineRelay"
       ]
     }
   ],
@@ -29,7 +39,8 @@
       "/api/*",
       "/t/*/*",
       "/.well-known/*",
-      "/callback*"
+      "/callback*",
+      "/io/*"
     ],
     "binding": "ASSETS"
   },

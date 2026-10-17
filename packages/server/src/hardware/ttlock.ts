@@ -1,110 +1,10 @@
-import type {
-  DeviceActionExecutionInput,
-  DeviceActionExecutionResult,
-  DeviceActionExecutor,
-  TTLockConnectionConfig,
-  TTLockDeviceConfig,
-} from "@prism/application";
+import type { TTLockConnectionConfig } from "@prism/application";
 
 export type TTLockFetch = (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
-
-export type TTLockExecutorInput = {
-  connection: TTLockConnectionConfig;
-  devices: readonly TTLockDeviceConfig[];
-  fetch?: TTLockFetch;
-  now?: () => Date;
-  onConnectionUpdated?: (connection: TTLockConnectionConfig) => Promise<void> | void;
-};
 
 export type TTLockOpenState = {
   state: number;
 };
-
-export function createTtlockExecutor(input: TTLockExecutorInput): DeviceActionExecutor {
-  const fetcher = input.fetch ?? ((url: string | URL | Request, init?: RequestInit) => fetch(url, init));
-  const client = new TTLockClient({
-    connection: input.connection,
-    fetcher,
-    now: input.now,
-    onConnectionUpdated: input.onConnectionUpdated,
-  });
-  const devicesById = new Map(input.devices.map((device) => [device.id, device]));
-
-  return {
-    async execute(executionInput: DeviceActionExecutionInput): Promise<DeviceActionExecutionResult> {
-      const command = executionInput.command;
-      if (command.executorKind !== "ttlock" || command.targetKind !== "facility" || !command.deviceId) {
-        return failed(`TTLock cannot execute ${command.type}.`);
-      }
-      if (command.type !== "door.open") {
-        return failed(`TTLock cannot execute ${command.type}.`);
-      }
-
-      const device = devicesById.get(command.deviceId);
-      if (!device) return failed("TTLock 门锁配置不存在。");
-
-      try {
-        const temporaryPassword = await client.createRandomTemporaryPassword(
-          device.lockId,
-          `uid:${command.playerId ?? command.staffId ?? "unknown"}_random`,
-        );
-        return {
-          status: "success",
-          payload: {
-            temporaryPassword: temporaryPassword.password,
-            keyboardPwdId: temporaryPassword.id,
-            temporaryPasswordExpiresAt: temporaryPassword.expiresAt,
-          },
-        };
-      } catch (error) {
-        return failed(error instanceof Error ? error.message : "TTLock request failed.");
-      }
-    },
-  };
-}
-
-export const createTTLockExecutor = createTtlockExecutor;
-
-export async function unlockTtlockDoor(input: {
-  connection: TTLockConnectionConfig;
-  lockId: number;
-  fetch?: TTLockFetch;
-  now?: () => Date;
-  onConnectionUpdated?: (connection: TTLockConnectionConfig) => Promise<void> | void;
-}): Promise<Record<string, unknown>> {
-  const client = new TTLockClient({
-    connection: input.connection,
-    fetcher: input.fetch,
-    now: input.now,
-    onConnectionUpdated: input.onConnectionUpdated,
-  });
-  return client.unlock(input.lockId);
-}
-
-export function resolveTTLockDeviceRef(
-  deviceRef: string,
-  devices: readonly TTLockDeviceConfig[],
-): TTLockDeviceConfig | null {
-  const target = deviceRef.trim().toLowerCase();
-  if (!target) return null;
-  return (
-    devices.find((device) => {
-      if (device.name.trim().toLowerCase() === target) return true;
-      return device.aliases.some((alias) => alias.trim().toLowerCase() === target);
-    }) ?? null
-  );
-}
-
-export const resolveTtlockDeviceRef = resolveTTLockDeviceRef;
-
-export async function queryTTLockDeviceState(
-  client: TTLockClient,
-  device: TTLockDeviceConfig,
-): Promise<TTLockOpenState> {
-  return client.queryOpenState(device.lockId);
-}
-
-export const queryTtlockDeviceState = queryTTLockDeviceState;
 
 export class TTLockClient {
   private readonly connection: TTLockConnectionConfig;
@@ -309,9 +209,6 @@ function formatApiError(response: Record<string, unknown>): string {
   return `${code !== undefined ? `（${String(code)}）` : ""}${message ? `：${message}` : ""}`;
 }
 
-function failed(message: string): DeviceActionExecutionResult {
-  return { status: "failed", message };
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -4,7 +4,7 @@ import type {
   AssetDefinition,
   AssetHolding,
   AssetLedgerEntry,
-  DeviceCommand,
+  DeviceOperation,
   Player,
   PlayerIdentity,
   PricingConfig,
@@ -202,7 +202,7 @@ export type MigratedAssetLedgerEntry = AssetLedgerEntry & {
   createdAt: Date;
 };
 
-export type MigratedDeviceCommand = DeviceCommand & {
+export type MigratedDeviceOperation = DeviceOperation & {
   playerId: string;
 };
 
@@ -219,7 +219,7 @@ export type PrismNeoMigrationPlan = {
   presents: Present[];
   redeemCodes: RedeemCode[];
   redeemRecords: RedeemRecord[];
-  deviceCommands: MigratedDeviceCommand[];
+  deviceOperations: MigratedDeviceOperation[];
 };
 
 export type ImportPrismNeoMigrationPlanInput = {
@@ -525,36 +525,42 @@ export async function importPrismNeoMigrationPlan(input: ImportPrismNeoMigration
          redeemed_at = excluded.redeemed_at`,
   );
 
+  // A coin record is a settled operation: its request and its result.
   await runSqlValuesInBatches(
     executor,
-    plan.deviceCommands.map((command) => [
-      command.id,
-      command.type,
-      command.deviceId,
-      command.targetKind,
-      command.executorKind,
-      command.playerId,
-      command.staffId ?? null,
-      command.status,
-      command.payload ? JSON.stringify(command.payload) : null,
-      command.requestedAt.toISOString(),
-      command.ackedAt?.toISOString() ?? null,
-      command.expiredAt?.toISOString() ?? null,
+    plan.deviceOperations.map((operation) => [
+      operation.id,
+      operation.deviceId,
+      operation.capability,
+      operation.action,
+      operation.playerId,
+      operation.status,
+      operation.countsAsPlay ? 1 : 0,
+      JSON.stringify(operation.payload),
+      operation.requestedAt.toISOString(),
+      operation.settledAt?.toISOString() ?? null,
     ]),
-    (values) => `INSERT INTO device_commands (shop_id, id, type, device_id, target_kind, executor_kind, player_id, staff_id, status, payload_json, requested_at, acked_at, expired_at)
+    (values) => `INSERT INTO device_operations (shop_id, id, device_id, capability, action, player_id, status, counts_as_play, payload_json, requested_at, settled_at)
        VALUES ${shopValues(executor, values)}
        ON CONFLICT(shop_id, id) DO UPDATE SET
-         type = excluded.type,
          device_id = excluded.device_id,
-         target_kind = excluded.target_kind,
-         executor_kind = excluded.executor_kind,
          player_id = excluded.player_id,
-         staff_id = excluded.staff_id,
          status = excluded.status,
          payload_json = excluded.payload_json,
          requested_at = excluded.requested_at,
-         acked_at = excluded.acked_at,
-         expired_at = excluded.expired_at`,
+         settled_at = excluded.settled_at`,
+  );
+  await runSqlValuesInBatches(
+    executor,
+    plan.deviceOperations.flatMap((operation) => [
+      [`${operation.id}.request`, operation.deviceId, operation.capability, "request", operation.action, operation.id,
+        operation.playerId, JSON.stringify(operation.payload), operation.requestedAt.toISOString(), "platform"],
+      [`${operation.id}.result`, operation.deviceId, operation.capability, "result", operation.action, operation.id,
+        operation.playerId, JSON.stringify({ outcome: "ok" }), (operation.settledAt ?? operation.requestedAt).toISOString(), "platform"],
+    ]),
+    (values) => `INSERT INTO device_events (shop_id, id, device_id, capability, kind, name, operation_id, player_id, payload_json, occurred_at, origin)
+       VALUES ${shopValues(executor, values)}
+       ON CONFLICT(shop_id, id) DO NOTHING`,
   );
 }
 
@@ -581,7 +587,7 @@ export function createPrismNeoMigrationPlan(input: CreatePrismNeoMigrationPlanIn
     presents: (input.presents ?? []).map((present) => toPresent(present, assetDefinitionsByLegacyId)),
     redeemCodes: (input.redeems ?? []).map(toRedeemCode),
     redeemRecords: (input.redeemRecords ?? []).map(toRedeemRecord),
-    deviceCommands: (input.coinRecords ?? []).map(toCoinDeviceCommand),
+    deviceOperations: (input.coinRecords ?? []).map(toCoinDeviceOperation),
   };
 }
 
@@ -1115,18 +1121,22 @@ function toRedeemRecord(record: PrismNeoRedeemRecord): RedeemRecord {
   };
 }
 
-function toCoinDeviceCommand(record: PrismNeoCoinRecord): MigratedDeviceCommand {
+function toCoinDeviceOperation(record: PrismNeoCoinRecord): MigratedDeviceOperation {
   return {
     id: `legacy:coin-record:${record.id}`,
-    type: "coin",
     deviceId: record.machineName,
-    targetKind: "game_machine",
-    executorKind: "machine_ws",
+    capability: "hinata_io",
+    action: "coin",
+    parentId: null,
     playerId: legacyUserId(record.userId),
-    status: "acked",
+    staffId: null,
+    status: "succeeded",
+    countsAsPlay: true,
+    failure: null,
     payload: { count: record.count, legacyCoinRecordId: record.id },
     requestedAt: record.createAt,
-    ackedAt: record.createAt,
+    settledAt: record.createAt,
+    confirmedAt: null,
   };
 }
 

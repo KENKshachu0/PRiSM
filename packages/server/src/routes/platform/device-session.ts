@@ -4,9 +4,10 @@ import type { AppBindings } from "../../bindings.js";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { isEntry } from "../../middleware/tenant.js";
-import { machinePower, getShopForMachine } from "./machine-login.js";
+import { getShopForMachine } from "./machine-login.js";
 import { resolveMachineSession, type Machine } from "./machine-session.js";
-import { executeDeviceAction, actionSchema } from "./device-actions.js";
+import { executeDeviceAction, actionSchema, devicePowerState } from "./device-actions.js";
+import { has, loadDevice } from "../../devices/device.js";
 import { mahjongState, operateMahjong } from "./mahjong.js";
 
 export const deviceSessionRouter=new Hono<AppBindings>();
@@ -17,9 +18,11 @@ deviceSessionRouter.get("/session/state", async c=>{
   const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
   const shop=await getShopForMachine(c,machine.shop_public_id);
   let gate:"ready"|"binding"|"entry"="ready";
+  const device=await loadDevice(c.env.DB,shop.id,machine.id);
+  const bound=(id:Parameters<typeof has>[1])=>!!device&&has(device,id);
   const needsEntry=
-    (shop.billing_enabled&&(!!machine.hinata_url_encrypted||!!machine.ha_binding_encrypted||!!machine.mahjong_config_json))
-    ||!!machine.ttlock_lock_id||!!machine.mahjong_config_json;
+    (shop.billing_enabled&&(bound("hinata_io")||bound("power")||bound("mahjong")))
+    ||bound("door")||bound("mahjong");
   if(needsEntry){
     const player=await c.env.DB.prepare(
       `SELECT a.player_id AS playerId,p.status,
@@ -40,15 +43,15 @@ deviceSessionRouter.get("/session/state", async c=>{
   return c.json({
     gate,coinUsed:false,
     mahjong:gate==="ready"?await mahjongState(c,machine):null,
-    power:gate==="ready"&&!!machine.ha_binding_encrypted&&c.req.query("includePower")!=="0"
-      ?await machinePower(c,machine):"unmanaged",
+    power:gate==="ready"&&bound("power")&&c.req.query("includePower")!=="0"
+      ?await devicePowerState(c,machine):"unmanaged",
   });
 });
 
 deviceSessionRouter.get("/session/power",async c=>{
   requireUser(c);
   const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
-  return c.json({power:await machinePower(c,machine)});
+  return c.json({power:await devicePowerState(c,machine)});
 });
 
 deviceSessionRouter.post("/session/actions",async c=>{
@@ -88,7 +91,7 @@ async function merchantMachine(c:import("hono").Context<AppBindings, any, any>,w
 
 merchantMachineActionRouter.get("/machines/:id/state",async c=>{
   const machine=await merchantMachine(c);
-  return c.json({power:await machinePower(c,machine)});
+  return c.json({power:await devicePowerState(c,machine)});
 });
 
 merchantMachineActionRouter.post("/machines/:id/actions",async c=>{

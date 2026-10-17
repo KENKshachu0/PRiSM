@@ -599,20 +599,6 @@ describe("createD1Repositories", () => {
       },
       assetLedgerEntries: [],
     });
-    await repositories.deviceCommands.enqueueDeviceCommand({
-      id: "command-1",
-      type: "coin",
-      deviceId: "machine-1",
-      targetKind: "game_machine",
-      executorKind: "machine_ws",
-      playerId: "player-1",
-      status: "pending",
-      payload: {
-        count: 1,
-      },
-      requestedAt: new Date("2026-06-07T10:05:00.000Z"),
-    });
-
     const activeSessions =
       await repositories.sessions.findActiveByPlayerId("player-1");
     expect(activeSessions).toHaveLength(1);
@@ -633,69 +619,6 @@ describe("createD1Repositories", () => {
         quantity: centsOf(100),
         activeAt: null,
         expiresAt: null,
-      },
-    ]);
-    await expect(
-      repositories.deviceCommands.getDeviceCommand("command-1"),
-    ).resolves.toMatchObject({
-      id: "command-1",
-      type: "coin",
-      targetKind: "game_machine",
-      executorKind: "machine_ws",
-      playerId: "player-1",
-      payload: {
-        count: 1,
-      },
-    });
-    await expect(
-      repositories.deviceCommands.listPending(10),
-    ).resolves.toHaveLength(1);
-    await repositories.deviceCommands.enqueueDeviceCommand({
-      id: "command-all",
-      type: "power.off",
-      deviceId: null,
-      targetKind: "facility",
-      executorKind: "home_assistant",
-      staffId: "staff-1",
-      status: "pending",
-      payload: { deviceLabel: "所有设备" },
-      requestedAt: new Date("2026-06-07T10:06:00.000Z"),
-    });
-    await expect(
-      repositories.deviceCommands.getDeviceCommand("command-all"),
-    ).resolves.toMatchObject({
-      deviceId: null,
-      targetKind: "facility",
-      payload: { deviceLabel: "所有设备" },
-    });
-    await repositories.deviceStates.save({
-      deviceId: "machine-1",
-      type: "power.on",
-      targetKind: "facility",
-      executorKind: "home_assistant",
-      label: "Cabinet 1",
-      status: "online",
-      state: "on",
-      metadata: {
-        voltage: 220,
-      },
-      reportedAt: new Date("2026-06-07T10:06:00.000Z"),
-      reportedBy: "agent-1",
-    });
-    await expect(repositories.deviceStates.listAll()).resolves.toEqual([
-      {
-        deviceId: "machine-1",
-        type: "power.on",
-        targetKind: "facility",
-        executorKind: "home_assistant",
-        label: "Cabinet 1",
-        status: "online",
-        state: "on",
-        metadata: {
-          voltage: 220,
-        },
-        reportedAt: new Date("2026-06-07T10:06:00.000Z"),
-        reportedBy: "agent-1",
       },
     ]);
 
@@ -894,30 +817,5 @@ describe("createD1Repositories", () => {
     await expect(repositories.assets.listAssetHoldings("player-1")).resolves.toEqual([]);
     await expect(repositories.assets.listTransactionsByPlayerId("player-1")).resolves.toEqual([]);
     await expect(repositories.assets.listLedgerEntriesByPlayerId("player-1")).resolves.toEqual([]);
-  });
-
-  it("persists machine websocket connection status through D1", async () => {
-    const repositories = createD1Repositories({
-      db: createDb(),
-      id: () => "unused",
-      now: () => new Date("2026-07-07T10:00:00.000Z"),
-    });
-
-    await repositories.machineConnections.save({
-      machineId: "maimai-dx-1",
-      status: "online",
-      capabilities: ["coin", "aime.scan"],
-      connectedAt: new Date("2026-07-07T10:00:00.000Z"),
-      lastSeenAt: new Date("2026-07-07T10:01:00.000Z"),
-    });
-
-    await expect(repositories.machineConnections.findByMachineId("maimai-dx-1")).resolves.toEqual({
-      machineId: "maimai-dx-1",
-      status: "online",
-      capabilities: ["coin", "aime.scan"],
-      connectedAt: new Date("2026-07-07T10:00:00.000Z"),
-      lastSeenAt: new Date("2026-07-07T10:01:00.000Z"),
-      disconnectedAt: undefined,
-    });
   });
 });

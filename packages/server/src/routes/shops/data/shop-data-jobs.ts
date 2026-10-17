@@ -15,7 +15,7 @@ import { owner, targetState, snapshotSql, snapshotBindings, snapshotKey } from "
 import {
   fullHeaderSchema,
   fullTables,
-  schemas,
+  schemasFor,
   uploadBytes,
   validateRows,
   type FullHeader,
@@ -113,7 +113,7 @@ async function stage(
     return;
   }
   if (job.status !== "uploading") jsonError(409, "任务已经完成预检，不能继续修改文件", "TRANSFER_LOCKED");
-  const errors = validateRows(table, input.rows);
+  const errors = validateRows(table, input.rows, header.version);
   if (
     header.version === 1 &&
     table === "player_identities" &&
@@ -137,16 +137,25 @@ async function stage(
       }
     }
   if (errors.length) jsonError(400, "分片数据校验失败", "INVALID_BACKUP", { errors });
-  // Store portable connections under the destination key before writing any real machine record.
-  if (table === "machines")
+  // Store portable connections under the destination key before writing any real device record.
+  const seal = (value: unknown) => {
+    if (!c.env.URL_ENCRYPTION_KEY) jsonError(503, "设备密钥未配置", "DEVICE_ENCRYPTION_UNAVAILABLE");
+    return encryptSecret(String(value), c.env.URL_ENCRYPTION_KEY);
+  };
+  if (table === "machines" && header.version === 2)
     for (const row of input.rows)
       for (const key of ["hinata_url", "hinata_password", "ha_binding_json"])
-        if (row[key]) {
-          if (!c.env.URL_ENCRYPTION_KEY) jsonError(503, "设备密钥未配置", "DEVICE_ENCRYPTION_UNAVAILABLE");
-          row[key] = await encryptSecret(String(row[key]), c.env.URL_ENCRYPTION_KEY);
-        }
+        if (row[key]) row[key] = await seal(row[key]);
+  if (table === "device_capabilities")
+    for (const row of input.rows) {
+      const secrets = JSON.parse(String(row.secret_json)) as Record<string, unknown>;
+      for (const [name, value] of Object.entries(secrets))
+        if (typeof value === "string" && value) secrets[name] = await seal(value);
+        else delete secrets[name];
+      row.secret_json = JSON.stringify(secrets);
+    }
   const json = JSON.stringify(input.rows),
-    schema = schemas[table],
+    schema = schemasFor(header.version)[table],
     seq = input.part * 100000;
   const statements = [
     (c.env.DB as LegacyD1Database).prepare(
@@ -208,6 +217,7 @@ async function previewJob(
   // Indexed staged keys validate relationships without loading the backup into Worker memory.
   const checks: string[] = [],
     messages: string[] = [];
+  const schemas = schemasFor(header.version);
   for (const table of tables)
     for (const fk of schemas[table].foreignKeys) {
       if (!tables.includes(fk.table as FullTable)) {
@@ -442,7 +452,7 @@ async function previewJob(
       header.scope === "business"
         ? "业务备份将替换目标店铺现有玩家、余额、账单和计费配置；此操作不能撤销，请先保留原店铺备份。"
         : "仅配置导入会覆盖同编号配置并新增文件中的配置和设备，保留玩家、余额、账单及其他配置。",
-      header.version === 2
+      header.version >= 2
         ? header.scope === "business"
           ? "将恢复完整店铺资料、设置、设备连接及业务记录。目标店铺编号和当前管理员保留。"
           : "将恢复店铺资料和设置，并覆盖或新增配置及设备；目标店铺编号和当前管理员保留。"
@@ -451,6 +461,76 @@ async function previewJob(
       "账号按同一账号 ID 或已验证登录身份恢复关联；无法匹配的关联保留，需重新绑定。",
     ],
   };
+}
+
+/**
+ * A v2 file keeps connections as machine columns and history in the retired
+ * command/state tables. Turn them into capabilities, operations and events the
+ * same way migration 0037 did for live data, after the machines exist.
+ */
+function v2DeviceStatements(db: D1Database, shopId: string, jobId: string, merge: boolean) {
+  const machine = (column: string) => `json_extract(r.payload_json,'$.${column}')`;
+  const rows = `FROM shop_data_rows r JOIN shop_data_device_ids d ON d.job_id=r.job_id AND d.source_id=${machine("id")}
+    WHERE r.job_id=? AND r.table_name='machines'`;
+  const upsert = merge
+    ? " ON CONFLICT(shop_id,device_id,capability) DO UPDATE SET config_json=excluded.config_json,secret_json=excluded.secret_json,updated_at=excluded.updated_at"
+    : "";
+  const capability = (name: string, config: string, secrets: string, where: string) =>
+    db.prepare(
+      `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+       SELECT ?,d.id,'${name}',${config},${secrets},${machine("created_at")},${machine("updated_at")} ${rows} AND ${where}${upsert}`,
+    ).bind(shopId, jobId);
+  const mapped = (column: string) =>
+    `COALESCE((SELECT id FROM shop_data_device_ids d WHERE d.job_id=r.job_id AND d.source_id=json_extract(r.payload_json,'$.${column}')),json_extract(r.payload_json,'$.${column}'))`;
+  const command = (column: string) => `json_extract(r.payload_json,'$.${column}')`;
+  const payload = `CASE WHEN json_valid(${command("payload_json")}) THEN ${command("payload_json")} ELSE '{}' END`;
+  const type = command("type");
+  const capabilities = [
+    capability("power", "'{}'", `json_object('binding',${machine("ha_binding_json")})`,
+      `COALESCE(${machine("ha_binding_json")},'')!=''`),
+    capability("hinata_io",
+      `json_object('transport','external','coinKey',${machine("coin_key")},'coinAfterSwipe',json(CASE WHEN ${machine("coin_after_swipe")}=1 THEN 'true' ELSE 'false' END))`,
+      `json_patch('{}',json_object('url',${machine("hinata_url")},'password',${machine("hinata_password")}))`,
+      `COALESCE(${machine("hinata_url")},'')!=''`),
+    capability("door", `json_object('lockId',${machine("ttlock_lock_id")})`, "'{}'", `${machine("ttlock_lock_id")} IS NOT NULL`),
+    capability("mahjong", machine("mahjong_config_json"), "'{}'", `json_valid(${machine("mahjong_config_json")})`),
+  ];
+  const history = [
+    // A historic pending stays pending: billing has always counted it as use.
+    db.prepare(
+      `INSERT INTO device_operations(shop_id,id,device_id,capability,action,parent_id,player_id,staff_id,
+        status,counts_as_play,failure,payload_json,requested_at,settled_at)
+       SELECT ?,${command("id")},${mapped("device_id")},
+        CASE WHEN ${type}='door.open' THEN 'door' WHEN ${type} IN ('power.on','power.off','ac.set_temperature') THEN 'power' ELSE 'hinata_io' END,
+        ${type},json_extract(${payload},'$.parentOperationId'),${command("player_id")},${command("staff_id")},
+        CASE ${command("status")} WHEN 'acked' THEN 'succeeded' WHEN 'pending' THEN 'pending' ELSE 'failed' END,
+        CASE WHEN ${type}='door.open' THEN 0 ELSE 1 END,
+        json_extract(${payload},'$.executorFailure.message'),
+        json_set(${payload},'$.legacyExecutor',${command("executor_kind")},'$.legacyTargetKind',${command("target_kind")}),
+        ${command("requested_at")},COALESCE(${command("acked_at")},${command("expired_at")})
+       FROM shop_data_rows r WHERE r.job_id=? AND r.table_name='device_commands'`,
+    ).bind(shopId, jobId),
+    db.prepare(
+      `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,operation_id,parent_operation_id,origin,player_id,staff_id,payload_json,occurred_at)
+       SELECT o.shop_id,o.id||'.request',o.device_id,o.capability,'request',o.action,o.id,o.parent_id,'platform',o.player_id,o.staff_id,o.payload_json,o.requested_at
+       FROM device_operations o JOIN shop_data_rows r ON r.job_id=? AND r.table_name='device_commands' AND ${command("id")}=o.id
+       WHERE o.shop_id=?`,
+    ).bind(jobId, shopId),
+    db.prepare(
+      `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,operation_id,parent_operation_id,origin,player_id,staff_id,payload_json,occurred_at)
+       SELECT o.shop_id,o.id||'.result',o.device_id,o.capability,'result',o.action,o.id,o.parent_id,'platform',o.player_id,o.staff_id,
+         json_object('outcome',CASE WHEN o.status='succeeded' THEN 'ok' ELSE 'failed' END,'message',o.failure),COALESCE(o.settled_at,o.requested_at)
+       FROM device_operations o JOIN shop_data_rows r ON r.job_id=? AND r.table_name='device_commands' AND ${command("id")}=o.id
+       WHERE o.shop_id=? AND o.status!='pending'`,
+    ).bind(jobId, shopId),
+    db.prepare(
+      `INSERT OR IGNORE INTO device_state(shop_id,device_id,capability,key,value_json,authority,changed_at)
+       SELECT ?,c.device_id,'power','power',json_quote(${command("state")}),'observed',${command("reported_at")}
+       FROM shop_data_rows r JOIN device_capabilities c ON c.shop_id=? AND c.capability='power' AND c.device_id=${mapped("device_id")}
+       WHERE r.job_id=? AND r.table_name='device_states' AND ${command("state")} IN ('on','off')`,
+    ).bind(shopId, shopId, jobId),
+  ];
+  return { capabilities, history };
 }
 
 async function applyJob(
@@ -520,29 +600,37 @@ async function applyJob(
   if (header.scope === "business" && triggers.length !== restoreTriggerNames.length)
     jsonError(409, "计费数据库结构不完整，无法恢复历史版本", "IMPORT_SCHEMA_MISMATCH");
   statements.push(...triggers.map((t) => db.prepare(`DROP TRIGGER ${t.name}`)));
-  if (header.scope === "business") statements.push(...replaceBusinessStatements(db, shop.id, requireUser(c).id, header.version === 2));
+  if (header.scope === "business") statements.push(...replaceBusinessStatements(db, shop.id, requireUser(c).id, header.version >= 2));
   // Machines have global IDs. The preflight stores collision mappings in D1, not Worker memory.
   if (rowsCount.machines) {
     const cols = sourceColumns("machines"),
-      expressions = schemas.machines.columns.map((col) =>
-        col.name === "id"
+      expressions = cols.map((col) =>
+        col === "id"
           ? "d.id"
-          : col.name === "public_id"
+          : col === "public_id"
             ? "d.public_id"
-            : `json_extract(r.payload_json,'$.${col.name}')`,
+            : `json_extract(r.payload_json,'$.${col}')`,
       );
     statements.push(
       db
         .prepare(
-          `INSERT INTO machines(shop_id,${cols.join(",")}) SELECT ?,${expressions.join(",")}
+          `INSERT INTO machines(shop_id,${cols.join(",")},hinata_url_encrypted) SELECT ?,${expressions.join(",")},''
       FROM shop_data_rows r JOIN shop_data_device_ids d ON d.job_id=r.job_id AND d.source_id=json_extract(r.payload_json,'$.id')
       WHERE r.job_id=? AND r.table_name='machines'${header.scope === "configuration" ? configurationConflict("machines", cols) : ""}`,
         )
         .bind(shop.id, job.id),
     );
   }
+  // Converted v2 history references players, so it is written after every table.
+  const v2Devices = header.version === 2 && rowsCount.machines
+    ? v2DeviceStatements(db, shop.id, job.id, header.scope === "configuration")
+    : null;
+  if (v2Devices) statements.push(...v2Devices.capabilities);
+  const schemas = schemasFor(header.version);
   for (const table of tables) {
     if (table === "machines" || table === "account_links" || !rowsCount[table]) continue;
+    // v2 history tables are converted with the machines above; their devices must exist first.
+    if (table === "device_commands" || table === "device_states" || table === "machine_connections") continue;
     const cols = schemas[table].columns.map((c) => c.name),
       expressions = cols.map((col) => `json_extract(payload_json,'$.${col}')`);
     let filter = "";
@@ -553,9 +641,9 @@ async function applyJob(
     if (table === "app_settings")
       filter += " AND json_extract(payload_json,'$.key')!='backup.importedAccounts'";
     const deviceCol =
-      table === "mahjong_seats" || table === "machine_connections"
+      table === "mahjong_seats"
         ? "machine_id"
-        : table === "device_states" || table === "device_commands"
+        : table === "device_capabilities" || table === "device_operations" || table === "device_events" || table === "device_state"
           ? "device_id"
           : null;
     if (deviceCol)
@@ -567,14 +655,23 @@ async function applyJob(
         `CASE WHEN EXISTS(SELECT 1 FROM shop_data_device_ids d WHERE d.job_id=shop_data_rows.job_id AND d.source_id=json_extract(json_extract(payload_json,'$.metadata_json'),'$.mahjongDeviceId'))
       THEN json_set(json_extract(payload_json,'$.metadata_json'),'$.mahjongDeviceId',(SELECT id FROM shop_data_device_ids d WHERE d.job_id=shop_data_rows.job_id AND d.source_id=json_extract(json_extract(payload_json,'$.metadata_json'),'$.mahjongDeviceId')))
       ELSE json_extract(payload_json,'$.metadata_json') END`;
-    if (table === "device_commands") {
-      expressions[cols.indexOf("status")] =
-        `CASE WHEN json_extract(payload_json,'$.status')='pending' THEN 'expired' ELSE json_extract(payload_json,'$.status') END`;
-      expressions[cols.indexOf("expired_at")] =
-        `CASE WHEN json_extract(payload_json,'$.status')='pending' THEN '${now}' ELSE json_extract(payload_json,'$.expired_at') END`;
+    if (table === "device_capabilities") {
+      // A relay channel names a Durable Object shared by every shop. Keep it for
+      // a restore, but never adopt one another shop's device already uses.
+      expressions[cols.indexOf("config_json")] =
+        `CASE WHEN json_extract(json_extract(payload_json,'$.config_json'),'$.channel') IS NOT NULL AND EXISTS(SELECT 1 FROM device_capabilities x
+          WHERE x.shop_id!=? AND json_extract(x.config_json,'$.channel')=json_extract(json_extract(payload_json,'$.config_json'),'$.channel'))
+        THEN json_set(json_extract(payload_json,'$.config_json'),'$.channel','m_'||lower(hex(randomblob(16))))
+        ELSE json_extract(payload_json,'$.config_json') END`;
+      // Likewise a device token: a copy into another shop must be issued its own.
+      expressions[cols.indexOf("credential_hash")] =
+        `CASE WHEN EXISTS(SELECT 1 FROM device_capabilities x WHERE x.shop_id!=? AND x.credential_hash=json_extract(payload_json,'$.credential_hash'))
+        THEN NULL ELSE json_extract(payload_json,'$.credential_hash') END`;
     }
-    if (table === "device_states" || table === "machine_connections")
-      expressions[cols.indexOf("status")] = "'offline'";
+    // The relay link of a restored device is whatever it is now, not what it was.
+    if (table === "device_state")
+      expressions[cols.indexOf("value_json")] =
+        `CASE WHEN json_extract(payload_json,'$.key')='link' THEN '"offline"' ELSE json_extract(payload_json,'$.value_json') END`;
     let conflict = header.scope === "configuration" ? configurationConflict(table) : "";
     if (table === "app_settings")
       conflict =
@@ -582,7 +679,7 @@ async function applyJob(
     if (table === "shop_billing_settings")
       conflict =
         " ON CONFLICT(shop_id) DO UPDATE SET " + cols.map((col) => `${col}=excluded.${col}`).join(",");
-    const params: (string | number)[] = [shop.id, job.id, table];
+    const params: (string | number)[] = table === "device_capabilities" ? [shop.id, shop.id, shop.id, job.id, table] : [shop.id, job.id, table];
     if (table === "staff_users") params.push(shop.id);
     statements.push(
       db
@@ -593,6 +690,7 @@ async function applyJob(
         .bind(...params),
     );
   }
+  if (v2Devices) statements.push(...v2Devices.history);
   const profile = header.shopProfile;
   const timeZone = profile ? resolveLocationTimeZone(profile.latitude, profile.longitude) : shop.time_zone;
   if (profile)

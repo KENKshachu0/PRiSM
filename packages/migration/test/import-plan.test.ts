@@ -215,18 +215,22 @@ describe("importPrismNeoMigrationPlan", () => {
           redeemedAt: new Date("2026-01-04T00:00:00.000Z"),
         },
       ],
-      deviceCommands: [
+      deviceOperations: [
         {
           id: "legacy:coin-record:91",
-          type: "coin",
           deviceId: "mai-1",
-          targetKind: "game_machine",
-          executorKind: "machine_ws",
+          capability: "hinata_io",
+          action: "coin",
+          parentId: null,
           playerId: "legacy:user:7",
-          status: "acked",
+          staffId: null,
+          status: "succeeded",
+          countsAsPlay: true,
+          failure: null,
           payload: { count: 2, legacyCoinRecordId: 91 },
           requestedAt: new Date("2026-01-05T00:00:00.000Z"),
-          ackedAt: new Date("2026-01-05T00:00:00.000Z"),
+          settledAt: new Date("2026-01-05T00:00:00.000Z"),
+          confirmedAt: null,
         },
       ],
     };
@@ -249,7 +253,7 @@ describe("importPrismNeoMigrationPlan", () => {
         repositories.redeems.listRedeemCodes(),
         repositories.redeems.findPresentById("legacy:present:61"),
         repositories.redeems.listRedeemRecords(),
-        repositories.deviceCommands.listByPlayerId("legacy:user:7"),
+        repositories.deviceEvents.listOperationsByPlayer("legacy:user:7"),
       ]);
 
     expect(player?.displayName).toBe("Player 7");
@@ -304,6 +308,9 @@ describe("importPrismNeoMigrationPlan", () => {
       },
     ]);
     expect(commands[0]?.payload).toEqual({ count: 2, legacyCoinRecordId: 91 });
+    expect(commands[0]).toMatchObject({ action: "coin", status: "succeeded", countsAsPlay: true });
+    const events = await repositories.deviceEvents.listEvents({ deviceId: "mai-1", limit: 10 });
+    expect(events.map((event) => event.kind).sort()).toEqual(["request", "result"]);
 
     const summary = await queries.playerQueries.getPlayerSummary("legacy:user:7");
     expect(summary.wallet).toEqual([{ assetCode: "paid", quantity: centsOf(500) }]);

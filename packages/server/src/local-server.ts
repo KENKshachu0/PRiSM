@@ -10,17 +10,7 @@ import {
   sqliteSchema,
 } from "@prism/storage-sql";
 import type { AppBindings, Env, TenantShop } from "./bindings.js";
-import { sha256Hex } from "./crypto.js";
 import app from "./app.js";
-import { getOrCreateShopDependencies } from "./middleware/tenant.js";
-import { normalizeShop } from "./legacy/tenant-resolver.js";
-import {
-  authenticateMachineWebSocketRequest,
-  handleMachineWebSocketClose,
-  handleMachineWebSocketMessage,
-  type MachineWebSocketData,
-  type MachineWebSocketDependencies,
-} from "./hardware/machine-ws.js";
 
 export const SHOP_QUERY = `SELECT s.id, s.public_id, s.name, s.latitude, s.longitude, s.radius_meters,
   COALESCE(b.billing_enabled, 0) AS billing_enabled,
@@ -157,6 +147,8 @@ export const platformSchema = [
     name TEXT NOT NULL,
     hinata_url_encrypted TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    kind TEXT NOT NULL DEFAULT 'machine',
+    aliases_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     hinata_password_encrypted TEXT
@@ -441,10 +433,6 @@ export function initializeLocalDatabase(
 
 export const initializeSqliteSchema = initializeLocalDatabase;
 
-export type MachineWebSocketClientData = MachineWebSocketData & {
-  wsDeps?: MachineWebSocketDependencies;
-};
-
 export type CreateLocalServerOptions = {
   db?: Database;
   databasePath?: string;
@@ -454,9 +442,7 @@ export type CreateLocalServerOptions = {
   env?: Partial<Env>;
 };
 
-export type LocalServer = ReturnType<
-  typeof Bun.serve<MachineWebSocketClientData>
-> & {
+export type LocalServer = ReturnType<typeof Bun.serve<undefined>> & {
   db: Database;
   env: Env;
 };
@@ -485,140 +471,13 @@ export function createLocalServer(
     ...options.env,
   };
 
-  let server: any;
-  server = Bun.serve<MachineWebSocketClientData>({
+  // Device software connects through the embedded relay on the Worker; this
+  // local runtime only serves the HTTP API.
+  const server = Bun.serve({
     port,
     hostname: options.hostname,
-    async fetch(request, s) {
-      const url = new URL(request.url);
-      if (url.pathname === "/rpc/machine/ws") {
-        const upgradeServer = s ?? server;
-        const requestedShopCode =
-          request.headers.get("X-PRiSM-Shop-Code")?.trim() ||
-          request.headers.get("X-PRiSM-Shop")?.trim() ||
-          request.headers.get("X-Shop-Id")?.trim() ||
-          url.searchParams.get("shopCode")?.trim();
-        const shopCode = requestedShopCode || defaultShopCode;
-
-        let shopRow = await d1
-          .prepare(`${SHOP_QUERY} WHERE s.public_id = ? OR s.id = ?`)
-          .bind(shopCode, shopCode)
-          .first<TenantShop>();
-
-        // An explicitly selected tenant must never silently fall back to another shop.
-        if (!shopRow && !requestedShopCode) {
-          shopRow = await d1
-            .prepare(
-              `${SHOP_QUERY} ORDER BY CASE WHEN s.public_id = 'default' OR s.id = 'default' THEN 0 ELSE 1 END, s.created_at ASC LIMIT 1`,
-            )
-            .bind()
-            .first<TenantShop>();
-        }
-
-        if (!shopRow) {
-          return new Response(
-            JSON.stringify({
-              error: {
-                code: "SHOP_NOT_FOUND",
-                message: "No shop configured for machine WebSocket.",
-              },
-            }),
-            {
-              status: 404,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-
-        const shop = normalizeShop(shopRow);
-        const deps = getOrCreateShopDependencies(d1, shop);
-
-        const wsDeps: MachineWebSocketDependencies = {
-          machineConnectionCommands: deps.machineConnectionCommands,
-          apiTokenAuth: {
-            async authenticateApiToken(token: string) {
-              const tokenHash = await sha256Hex(token);
-              const row = await d1
-                .prepare(
-                  "SELECT id,role,label FROM api_tokens WHERE shop_id = ? AND token_hash = ? AND status = 'active' LIMIT 1",
-                )
-                .bind(shop.id, tokenHash)
-                .first<{ id: string; role: string; label: string }>();
-              // Legacy generic machine tokens are deliberately not accepted:
-              // machine:<id> labels are set only when issuing a machine-bound token.
-              if (!row || row.role !== "machine" || !row.label.startsWith("machine:")) return null;
-              const machineId = row.label.slice("machine:".length);
-              if (!machineId) return null;
-              const machine = await d1.prepare("SELECT 1 FROM machines WHERE id=? AND shop_id=? AND enabled=1")
-                .bind(machineId, shop.id).first();
-              if (!machine) return null;
-              await d1.prepare("UPDATE api_tokens SET last_used_at=? WHERE shop_id=? AND id=?")
-                .bind(new Date().toISOString(), shop.id, row.id).run();
-              return { role: "machine", machineId };
-            },
-          },
-        };
-
-        const auth = await authenticateMachineWebSocketRequest(request, wsDeps);
-        if (auth instanceof Response) {
-          return auth;
-        }
-
-        if (upgradeServer && typeof upgradeServer.upgrade === "function") {
-          const upgraded = upgradeServer.upgrade(request, {
-            data: {
-              ...auth.data,
-              wsDeps,
-            },
-          });
-          return upgraded
-            ? undefined
-            : new Response("WebSocket upgrade failed.", { status: 400 });
-        }
-        return new Response("WebSocket upgrade requires server instance.", {
-          status: 426,
-        });
-      }
-
+    fetch(request) {
       return app.fetch(request, env);
-    },
-    websocket: {
-      async message(socket, message) {
-        const wsDeps = socket.data?.wsDeps;
-        if (!wsDeps) {
-          socket.send(
-            JSON.stringify({
-              type: "error",
-              code: "MACHINE_WS_NOT_CONFIGURED",
-              message: "WebSocket dependencies not found.",
-            }),
-          );
-          return;
-        }
-        try {
-          await handleMachineWebSocketMessage(socket, message, wsDeps);
-        } catch (error) {
-          socket.send(
-            JSON.stringify({
-              type: "error",
-              code:
-                error instanceof Error && "code" in error
-                  ? String((error as any).code)
-                  : "MACHINE_WS_ERROR",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Machine WebSocket error.",
-            }),
-          );
-        }
-      },
-      close(socket) {
-        const wsDeps = socket.data?.wsDeps;
-        if (wsDeps) {
-          void handleMachineWebSocketClose(socket, wsDeps);
-        }
-      },
     },
   });
 

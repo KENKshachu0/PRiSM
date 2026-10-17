@@ -48,7 +48,11 @@ describe("sqliteSchema", () => {
       "cashier_profiles",
       "checkout_report_states",
       "checkout_timelines",
+      "device_capabilities",
       "device_commands",
+      "device_events",
+      "device_operations",
+      "device_state",
       "device_states",
       "machine_connections",
       "operation_locks",
@@ -172,6 +176,18 @@ describe("sqliteSchema", () => {
     expect(db.query<{ name: string }, []>(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'device_states'",
     ).all().map((row) => row.name)).toContain("idx_device_states_reported_at");
+
+    // The device event tables are read by code and inferred by the backup format
+    // from sqliteSchema, so their columns must match the D1 migration exactly.
+    const runtime = new Database(":memory:");
+    for (const statement of sqliteSchema) runtime.run(statement);
+    const runtimeColumns = (table: string) =>
+      runtime.query<{ name: string }, [string]>("SELECT name FROM pragma_table_info(?) ORDER BY cid")
+        .all(table).map((row) => row.name);
+    for (const table of ["device_capabilities", "device_events", "device_operations", "device_state"]) {
+      expect(runtimeColumns(table)).toEqual(columns(table));
+    }
+    runtime.close();
   });
 
   it("backfills legacy settlements into explicit player checkouts", () => {
