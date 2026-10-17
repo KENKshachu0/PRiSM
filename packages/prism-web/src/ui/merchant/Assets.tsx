@@ -92,12 +92,7 @@ export function AssetsPage() {
   return (
     <div className="grid gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{t("资产与兑换")}</h2>
-          <p className="mt-1 text-sm text-ink/55">
-            {t("资产是玩家持有的余额或权益，优惠定义折扣，礼物和兑换码负责发放。")}
-          </p>
-        </div>
+        <h2 className="text-xl font-semibold">{t("资产与兑换")}</h2>
         {canWrite && (
           <button
             className={primary}
@@ -173,10 +168,7 @@ export function AssetsPage() {
         (!assets.data ? (
           <State error={assets.error} />
         ) : !visibleAssets.length ? (
-          <Empty
-            title="还没有资产"
-            hint="资产代表玩家持有的余额或权益，例如储值余额和免费券。"
-          />
+          <Empty title="还没有资产" />
         ) : (
           <Table
             headers={["名称", "类型", "关联优惠", "有效期", "状态", "操作"]}
@@ -254,10 +246,7 @@ export function AssetsPage() {
         (!effects.data ? (
           <State error={effects.error} />
         ) : !visibleEffects.length ? (
-          <Empty
-            title="还没有优惠"
-            hint="优惠定义折扣或加收，创建资产时可以关联。"
-          />
+          <Empty title="还没有优惠" />
         ) : (
           <Table headers={["名称", "优惠方式", "使用限制", "状态", "操作"]}>
             {visibleEffects.map((e) => (
@@ -319,10 +308,7 @@ export function AssetsPage() {
         (!presents.data ? (
           <State error={presents.error} />
         ) : !visiblePresents.length ? (
-          <Empty
-            title="还没有礼物"
-            hint="礼物把若干资产打包，用于新玩家礼包或活动发放。"
-          />
+          <Empty title="还没有礼物" />
         ) : (
           <Table headers={["礼物", "内容", "领取限制", "状态", "操作"]}>
             {visiblePresents.map((p) => (
@@ -374,10 +360,7 @@ export function AssetsPage() {
         (!codes.data ? (
           <State error={codes.error} />
         ) : !visibleCodes.length ? (
-          <Empty
-            title="还没有兑换码"
-            hint="兑换码一次生成一批，玩家输入后领取对应礼物。"
-          />
+          <Empty title="还没有兑换码" />
         ) : (
           <Table headers={["兑换码", "礼物", "使用次数", "到期", "操作"]}>
             {visibleCodes.map((c) => (
@@ -526,9 +509,6 @@ export function AssetsPage() {
                 </Field>
                 {/* The code is an internal identifier used by grants and API
                     paths; it is generated and shown read-only in the details. */}
-                <p className="text-xs leading-relaxed text-ink/50">
-                  {t("资产编号由系统生成，可在资产详情中查看。")}
-                </p>
               </>
             )}
             <Field label="优惠">
@@ -751,12 +731,11 @@ export function AssetsPage() {
     </div>
   );
 }
-function Empty({ title, hint }: { title: string; hint: string }) {
+function Empty({ title }: { title: string }) {
   const { t } = useI18n();
   return (
     <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
       <p className="font-medium">{t(title)}</p>
-      <p className="mx-auto mt-2 max-w-sm text-sm text-ink/55">{t(hint)}</p>
     </div>
   );
 }

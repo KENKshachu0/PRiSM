@@ -93,12 +93,7 @@ export function PricingPage() {
   return (
     <div className="grid gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{t("计费规则")}</h2>
-          <p className="mt-1 text-sm text-ink/55">
-            {t("按时间计费或收取固定费用；玩家入场时按匹配到的规则结算。")}
-          </p>
-        </div>
+        <h2 className="text-xl font-semibold">{t("计费规则")}</h2>
         {canWrite && (
           <button
             className={primary}

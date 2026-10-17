@@ -81,16 +81,10 @@ export function DevicesPage() {
     if (filter === "unconfigured") return !Object.values(caps).some(Boolean);
     return caps[filter];
   });
-  const unconfigured = counts.unconfigured ?? 0;
   return (
     <div className="grid gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{t("店内设备")}</h2>
-          <p className="mt-1 text-sm text-ink/55">
-            {t("为每台机台、门锁和麻将桌配置对应的能力，再把二维码贴到设备上。")}
-          </p>
-        </div>
+        <h2 className="text-xl font-semibold">{t("店内设备")}</h2>
         {canWrite && (
           <button className={primary} onClick={() => setEditing("new")}>
             <Plus size={17} />
@@ -136,9 +130,6 @@ export function DevicesPage() {
           <p className="font-medium">
             {t(filter === "all" ? "还没有任何设备" : "这个分类下没有设备")}
           </p>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-ink/55">
-            {t("先添加设备，再为它勾选能力：电源、刷卡、门锁或麻将桌。")}
-          </p>
           {canWrite && (
             <button
               className={`${primary} mt-5`}
@@ -163,13 +154,6 @@ export function DevicesPage() {
             />
           ))}
         </div>
-      )}
-      {unconfigured > 0 && filter === "all" && (
-        <p className="text-sm text-ink/55">
-          {t("有 {count} 台设备还没配置能力，点击卡片上的「配置」开始。", {
-            count: unconfigured,
-          })}
-        </p>
       )}
       {acting && (
         <Modal
@@ -219,7 +203,6 @@ export function DevicesPage() {
               />
             </div>
             <h3 className="text-lg font-semibold">{qr.name}</h3>
-            <p className="text-sm text-ink/60">{t("扫码打开设备")}</p>
             <a
               className={button}
               href={`/t/${qr.shopPublicId}/${qr.publicId}`}
@@ -496,28 +479,19 @@ function DeviceActions({
   const actions = deviceActions(device);
   return (
     <div className="grid gap-5">
-      <p className="text-sm text-ink/60">
-        {t("操作会立即下发给设备，并记录在操作记录中。")}
-      </p>
-      {actions.length ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {actions.map((key) => (
-            <button
-              key={key}
-              type="button"
-              className={`${button} min-h-11 justify-center`}
-              disabled={!device.enabled}
-              onClick={() => setAction(key)}
-            >
-              {t(actionLabels[key]!)}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-ink/55">
-          {t("这台设备还没有可执行的操作。")}
-        </p>
-      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {actions.map((key) => (
+          <button
+            key={key}
+            type="button"
+            className={`${button} min-h-11 justify-center`}
+            disabled={!device.enabled}
+            onClick={() => setAction(key)}
+          >
+            {t(actionLabels[key]!)}
+          </button>
+        ))}
+      </div>
       {!device.enabled && (
         <p className="text-sm text-coral">
           {t("设备已停用，操作不可用。")}
@@ -572,9 +546,6 @@ function DeviceHistory({ device }: { device: Machine }) {
   }, [load]);
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-ink/60">
-        {t("平台下发、机台回报和检测到的状态变化。")}
-      </p>
       {!events ? (
         <State error={error} />
       ) : !events.length ? (

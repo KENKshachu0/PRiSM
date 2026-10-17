@@ -325,7 +325,6 @@ export function DeviceEditor({
                   className={input}
                   value={alias}
                   aria-label={`${t("设备别名")} ${index + 1}`}
-                  placeholder={draft ? t("继续填写会自动增加一行") : ""}
                   maxLength={80}
                   autoComplete="off"
                   onChange={(e) => {
@@ -375,12 +374,7 @@ export function DeviceEditor({
       </section>
 
       <section className="grid gap-3">
-        <div className="flex items-baseline justify-between gap-3">
-          <h3 className="text-sm font-semibold">{t("设备能力")}</h3>
-          <p className="text-xs text-ink/50">
-            {t("点击一项展开配置；开启即生效。")}
-          </p>
-        </div>
+        <h3 className="text-sm font-semibold">{t("设备能力")}</h3>
 
         <CapabilityCard
           id="power"
@@ -427,9 +421,6 @@ export function DeviceEditor({
                 />
               </Field>
             </div>
-            <Hint>
-              {t("电源状态每次都从 Home Assistant 实时读取，不缓存。")}
-            </Hint>
           </div>
         </CapabilityCard>
 
@@ -780,11 +771,6 @@ function DirectConnectPanel({
       {live?.relayUrl && (
         <p className="break-all text-xs text-ink/60">{`serverUrl=${live.relayUrl}`}</p>
       )}
-      <p className="text-sm leading-relaxed text-ink/70">
-        {hasRelayToken
-          ? t("已配置设备令牌，继续保存不会改变它。")
-          : t("直连模式由设备令牌认证，签发后会显示一次并写入机台 INI。")}
-      </p>
       <button
         type="submit"
         name="intent"
