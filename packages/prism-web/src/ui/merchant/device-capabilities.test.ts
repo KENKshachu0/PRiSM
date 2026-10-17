@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canOperateCoin,
+  deviceActionGroups,
   deviceActions,
   deviceCapabilities,
   deviceSummaryKey,
@@ -95,7 +96,11 @@ describe("device capability view", () => {
 
   it("prefers the action list the server derived from the capability catalog", () => {
     const serverDriven = machine({
-      actions: ["power.on", "aime.scan", "mahjong.seat"],
+      actions: [
+        { name: "power.on", capability: "power" },
+        { name: "aime.scan", capability: "hinata_io" },
+        { name: "mahjong.seat", capability: "mahjong" },
+      ],
       hasHinata: true,
       hasPassword: true,
       coinKey: 32,
@@ -104,6 +109,11 @@ describe("device capability view", () => {
       "power.on",
       "aime.scan",
       "mahjong.seat",
+    ]);
+    expect(deviceActionGroups(serverDriven)).toEqual([
+      { capability: "power", actions: ["power.on"] },
+      { capability: "hinata_io", actions: ["aime.scan"] },
+      { capability: "mahjong", actions: ["mahjong.seat"] },
     ]);
   });
 

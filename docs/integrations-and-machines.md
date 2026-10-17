@@ -173,7 +173,8 @@ await client.requestScanByIdentity(
 
 ### 「操作」面板
 
-- `GET /api/v1/merchant/machines` 的每台设备带 `actions`：能力目录里当前可用的动作（电源 `power.on/off`、刷卡 `aime.scan`、投币 `coin`、门锁 `door.open`）。后台「操作」面板直接渲染这个列表，**新增能力不需要改前端**；前端只在接口没有 `actions` 时退回本地推导。
+- `GET /api/v1/merchant/machines` 的每台设备带 `actions`：能力目录里当前可用的动作，形如 `{ name: "power.on", capability: "power" }`。后台「操作」面板按 `capability` 分组渲染（电源控制 / 刷卡·HINATA IO / 开门密码 / 麻将桌），**新增能力不需要改前端**；前端只在接口没有 `actions` 时退回本地推导。
+- 每个分组标题右侧显示与该组操作相关的状态：电源为实时 `power`（已开机/已关机/未知），直连刷卡为链路在线状态（外部中继则显示连接方式），门锁显示 `lockId`，麻将桌显示 `已入座 / 容量`。
 - 刷卡由店员直接输入 **20 位卡号**（`cardNumber`）发送；也兼容传 `playerId`，平台读取该玩家绑定的卡号（优先 `aime` provider）。卡号只作为临时参数交给执行器，不落库；卡号格式不合法返回 400，玩家没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
 - `mahjong.seat` / `mahjong.unseat` 接受 `playerId`，让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
 - `GET /api/v1/merchant/machines/:id/state` 返回 `{ power, mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。

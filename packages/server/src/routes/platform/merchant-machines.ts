@@ -52,15 +52,16 @@ async function readHaBinding(c: C, device: Device): Promise<HaBinding | null> {
 }
 
 /**
- * Every action this device can perform right now, straight from the capability
- * catalog. The store UI renders whatever comes back, so a capability added to
- * the catalog appears on the device board without a frontend change.
+ * Every action this device can perform right now, tagged with the capability
+ * that owns it. The store UI groups the action panel by capability, so a
+ * capability added to the catalog appears there without a frontend change.
  */
-function availableActions(device: Device): string[] {
-  const actions: string[] = [];
+function availableActions(device: Device): { name: string; capability: string }[] {
+  const actions: { name: string; capability: string }[] = [];
   for (const [id] of device.capabilities) {
     for (const action of Object.keys(capabilities[id].actions)) {
-      if (can(device, action as Parameters<typeof can>[1])) actions.push(action);
+      if (can(device, action as Parameters<typeof can>[1]))
+        actions.push({ name: action, capability: id });
     }
   }
   return actions;

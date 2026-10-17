@@ -29,6 +29,7 @@ import {
 import {
   canOperateCoin,
   capabilityOrder,
+  deviceActionGroups,
   deviceActions,
   deviceCapabilities,
   deviceSummaryKey,
@@ -468,13 +469,23 @@ const actionLabels: Record<string, string> = {
 type MahjongSeat = { playerId: string; name: string; playing: boolean };
 type MahjongTable = { capacity: number; seats: MahjongSeat[] };
 
+const capabilityMeta: Record<
+  CapabilityId,
+  { icon: typeof Power; title: string }
+> = {
+  power: { icon: Power, title: "电源控制" },
+  hinata_io: { icon: CreditCard, title: "刷卡 · HINATA IO" },
+  door: { icon: DoorOpen, title: "开门密码" },
+  mahjong: { icon: Ungroup, title: "麻将桌" },
+};
+
 /**
  * Sending commands is a separate surface from reading the log: one is an
  * action with consequences, the other is history. Keeping them in one modal
  * made the destructive buttons look like part of the record.
  *
- * The button list comes from the server's capability catalog, and card scans
- * and mahjong seats name the player they act on.
+ * Actions are grouped by the capability that owns them, and each group shows
+ * the state that decides what those actions will do.
  */
 function DeviceActions({
   device,
@@ -485,33 +496,30 @@ function DeviceActions({
 }) {
   const { t } = useI18n();
   const caps = deviceCapabilities(device);
-  const allActions = deviceActions(device);
-  const actions = allActions.filter(
-    // Card scans, coin presses and mahjong seats take an input, so they get
-    // their own controls below instead of a plain button.
-    (name) =>
-      !name.startsWith("mahjong.") && name !== "aime.scan" && name !== "coin",
-  );
+  const groups = deviceActionGroups(device);
   const players = useResource<{ players: Player[] }>(
     caps.mahjong ? "players" : null,
   );
   const [selectedPlayer, setSelectedPlayer] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [coinKey, setCoinKey] = useState("");
+  const [power, setPower] = useState<string | null>(null);
   const [table, setTable] = useState<MahjongTable | null>(null);
   const [confirming, setConfirming] = useState("");
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
-  const refreshTable = useCallback(() => {
-    if (!caps.mahjong) return;
-    api<{ mahjong: MahjongTable | null }>(
+  const refreshState = useCallback(() => {
+    api<{ power: string; mahjong: MahjongTable | null }>(
       `/api/v1/merchant/machines/${device.id}/state`,
     )
-      .then((r) => setTable(r.mahjong))
+      .then((r) => {
+        setPower(r.power);
+        setTable(r.mahjong);
+      })
       .catch(() => {});
-  }, [caps.mahjong, device.id]);
-  useEffect(refreshTable, [refreshTable]);
+  }, [device.id]);
+  useEffect(refreshState, [refreshState]);
   async function send(action: string, extra?: Record<string, unknown>) {
     if (busy) return;
     setBusy(action);
@@ -532,6 +540,7 @@ function DeviceActions({
       );
       if (r?.mahjong) setTable(r.mahjong);
       setConfirming("");
+      refreshState();
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("操作失败"));
@@ -542,129 +551,180 @@ function DeviceActions({
   const playerOptions = players.data?.players ?? [];
   const seated = new Set(table?.seats.map((seat) => seat.playerId));
   const full = !!table && table.seats.length >= table.capacity;
+  /** The state each capability's actions act on, shown in its header. */
+  const stateLabel = (id: CapabilityId): string => {
+    if (id === "power")
+      return power === "on"
+        ? t("已开机")
+        : power === "off"
+          ? t("已关机")
+          : t("未知");
+    if (id === "hinata_io")
+      return device.relayOnline === true
+        ? t("已连接")
+        : device.relayOnline === false
+          ? t("未连接")
+          : isDirectConnect(device)
+            ? t("未知")
+            : t("外部中继");
+    if (id === "door")
+      return device.ttlockLockId ? `TTLock · ${device.ttlockLockId}` : "";
+    return table ? `${table.seats.length} / ${table.capacity}` : "";
+  };
+  const sections = capabilityOrder.filter(
+    (id) =>
+      groups.some((group) => group.capability === id) ||
+      (id === "mahjong" && caps.mahjong),
+  );
   return (
-    <div className="grid gap-5">
-      {actions.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {actions.map((key) => (
-            <button
-              key={key}
-              type="button"
-              className={`${button} min-h-11 justify-center`}
-              disabled={!device.enabled || !!busy}
-              onClick={() => setConfirming(key)}
-            >
-              {t(actionLabels[key] ?? key)}
-            </button>
-          ))}
-        </div>
-      )}
-      {caps.hinata_io && (
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className={`${input} min-h-9 w-56 font-mono`}
-            inputMode="numeric"
-            maxLength={20}
-            placeholder={t("输入 20 位卡号")}
-            aria-label={t("卡号")}
-            value={cardNumber}
-            disabled={!device.enabled}
-            onChange={(e) =>
-              setCardNumber(e.target.value.replace(/\D/g, "").slice(0, 20))
-            }
-          />
-          <button
-            type="button"
-            className={button}
-            disabled={
-              !device.enabled || cardNumber.length !== 20 || !!busy
-            }
-            onClick={() => void send("aime.scan", { cardNumber })}
-          >
-            {t("刷卡")}
-          </button>
-        </div>
-      )}
-      {allActions.includes("coin") && (
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className={`${input} min-h-9 w-40`}
-            placeholder={t("按键")}
-            aria-label={t("投币按键")}
-            value={coinKey}
-            disabled={!device.enabled}
-            onChange={(e) => setCoinKey(e.target.value)}
-          />
-          <button
-            type="button"
-            className={button}
-            disabled={!device.enabled || !!busy}
-            onClick={() =>
-              void send("coin", coinKey.trim() ? { key: coinKey } : undefined)
-            }
-          >
-            {t("投币")}
-          </button>
-        </div>
-      )}
-      {caps.mahjong && (
-        <div className="grid gap-2">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-sm font-medium">{t("麻将桌")}</span>
-            <span className="text-xs text-ink/55">
-              {table
-                ? `${table.seats.length} / ${table.capacity}`
-                : t("加载中...")}
-            </span>
-          </div>
-          <div className="grid gap-1">
-            {table?.seats.map((seat) => (
-              <div
-                key={seat.playerId}
-                className="flex items-center justify-between gap-2 rounded-lg bg-ink/5 px-3 py-2 text-sm"
-              >
-                <span>{seat.name}</span>
-                <button
-                  type="button"
-                  className={`${buttonQuiet} min-h-8 px-2 text-xs`}
-                  disabled={!device.enabled || !!busy}
-                  onClick={() => void send("mahjong.unseat", { playerId: seat.playerId })}
-                >
-                  {t("下桌")}
-                </button>
-              </div>
-            ))}
-            {table && !table.seats.length && (
-              <p className="text-sm text-ink/55">{t("空位")}</p>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              className={`${input} min-h-9 max-w-56`}
-              aria-label={t("选择玩家")}
-              value={selectedPlayer}
-              onChange={(e) => setSelectedPlayer(e.target.value)}
-            >
-              <option value="">{t("选择玩家")}</option>
-              {playerOptions
-                .filter((player) => !seated.has(player.id))
-                .map((player) => (
-                  <option key={player.id} value={player.id}>
-                    {player.displayName}
-                  </option>
-                ))}
-            </select>
-            <button
-              type="button"
-              className={button}
-              disabled={!device.enabled || full || !selectedPlayer || !!busy}
-              onClick={() => void send("mahjong.seat", { playerId: selectedPlayer })}
-            >
-              {t("上桌")}
-            </button>
-          </div>
-        </div>
-      )}
+    <div className="grid gap-4">
+      {sections.map((id) => {
+        const meta = capabilityMeta[id];
+        const Icon = meta.icon;
+        const actionNames =
+          groups.find((group) => group.capability === id)?.actions ?? [];
+        return (
+          <section key={id} className="rounded-xl border border-ink/10 p-4">
+            <header className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <Icon size={16} className="text-ink/45" />
+                {t(meta.title)}
+              </span>
+              <span className="text-xs text-ink/55">{stateLabel(id)}</span>
+            </header>
+            <div className="mt-3 grid gap-3">
+              {(id === "power" || id === "door") && (
+                <div className="flex flex-wrap gap-2">
+                  {actionNames.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      className={`${button} min-h-11 justify-center`}
+                      disabled={!device.enabled || !!busy}
+                      onClick={() => setConfirming(name)}
+                    >
+                      {t(actionLabels[name] ?? name)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {id === "hinata_io" && actionNames.includes("aime.scan") && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    className={`${input} min-h-9 w-56 font-mono`}
+                    inputMode="numeric"
+                    maxLength={20}
+                    placeholder={t("输入 20 位卡号")}
+                    aria-label={t("卡号")}
+                    value={cardNumber}
+                    disabled={!device.enabled}
+                    onChange={(e) =>
+                      setCardNumber(
+                        e.target.value.replace(/\D/g, "").slice(0, 20),
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={
+                      !device.enabled || cardNumber.length !== 20 || !!busy
+                    }
+                    onClick={() => void send("aime.scan", { cardNumber })}
+                  >
+                    {t("刷卡")}
+                  </button>
+                </div>
+              )}
+              {id === "hinata_io" && actionNames.includes("coin") && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    className={`${input} min-h-9 w-40`}
+                    placeholder={t("按键")}
+                    aria-label={t("投币按键")}
+                    value={coinKey}
+                    disabled={!device.enabled}
+                    onChange={(e) => setCoinKey(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={!device.enabled || !!busy}
+                    onClick={() =>
+                      void send(
+                        "coin",
+                        coinKey.trim() ? { key: coinKey } : undefined,
+                      )
+                    }
+                  >
+                    {t("投币")}
+                  </button>
+                </div>
+              )}
+              {id === "mahjong" && (
+                <>
+                  <div className="grid gap-1">
+                    {table?.seats.map((seat) => (
+                      <div
+                        key={seat.playerId}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-ink/5 px-3 py-2 text-sm"
+                      >
+                        <span>{seat.name}</span>
+                        <button
+                          type="button"
+                          className={`${buttonQuiet} min-h-8 px-2 text-xs`}
+                          disabled={!device.enabled || !!busy}
+                          onClick={() =>
+                            void send("mahjong.unseat", {
+                              playerId: seat.playerId,
+                            })
+                          }
+                        >
+                          {t("下桌")}
+                        </button>
+                      </div>
+                    ))}
+                    {table && !table.seats.length && (
+                      <p className="text-sm text-ink/55">{t("空位")}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      className={`${input} min-h-9 max-w-56`}
+                      aria-label={t("选择玩家")}
+                      value={selectedPlayer}
+                      onChange={(e) => setSelectedPlayer(e.target.value)}
+                    >
+                      <option value="">{t("选择玩家")}</option>
+                      {playerOptions
+                        .filter((player) => !seated.has(player.id))
+                        .map((player) => (
+                          <option key={player.id} value={player.id}>
+                            {player.displayName}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      className={button}
+                      disabled={
+                        !device.enabled || full || !selectedPlayer || !!busy
+                      }
+                      onClick={() =>
+                        void send("mahjong.seat", {
+                          playerId: selectedPlayer,
+                        })
+                      }
+                    >
+                      {t("上桌")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        );
+      })}
       {!device.enabled && (
         <p className="text-sm text-coral">
           {t("设备已停用，操作不可用。")}

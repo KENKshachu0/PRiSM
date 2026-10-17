@@ -67,14 +67,23 @@ export function canOperateCoin(
   return isDirectConnect(machine) || !!machine.hasPassword;
 }
 
+export type MachineAction = { name: string; capability: string };
+
 /**
- * Staff actions offered for a device.
- *
- * The server answers with the capability catalog's own list, so a capability
- * added there shows up here without a frontend change. The derived list is
- * only a fallback for an older response that predates `actions`.
+ * Which capability owns an action. The server states this for every action it
+ * reports; this mapping only covers the built-in catalog and is used when an
+ * older response has no capability tag.
  */
-export function deviceActions(
+export function actionCapability(action: string): CapabilityId | null {
+  if (action === "power.on" || action === "power.off") return "power";
+  if (action === "aime.scan" || action === "coin") return "hinata_io";
+  if (action === "door.open") return "door";
+  if (action.startsWith("mahjong.")) return "mahjong";
+  return null;
+}
+
+/** Staff actions grouped by the capability that owns them. */
+export function deviceActionGroups(
   machine: Pick<
     Machine,
     | "homeAssistant"
@@ -84,16 +93,46 @@ export function deviceActions(
     | "relayConnection"
     | "coinKey"
     | "hasPassword"
-  > & { actions?: string[] },
+  > & { actions?: MachineAction[] },
+): { capability: CapabilityId; actions: string[] }[] {
+  const groups = new Map<CapabilityId, string[]>();
+  const add = (capability: CapabilityId | null, action: string) => {
+    if (!capability) return;
+    groups.set(capability, [...(groups.get(capability) ?? []), action]);
+  };
+  if (machine.actions?.length) {
+    for (const action of machine.actions) {
+      add(
+        capabilityOrder.includes(action.capability as CapabilityId)
+          ? (action.capability as CapabilityId)
+          : actionCapability(action.name),
+        action.name,
+      );
+    }
+  } else {
+    // Fallback for a response written before actions carried capabilities.
+    const caps = deviceCapabilities(machine);
+    if (caps.power) {
+      add("power", "power.on");
+      add("power", "power.off");
+    }
+    if (caps.hinata_io) add("hinata_io", "aime.scan");
+    if (canOperateCoin(machine)) add("hinata_io", "coin");
+    if (caps.door) add("door", "door.open");
+  }
+  return capabilityOrder
+    .filter((capability) => groups.has(capability))
+    .map((capability) => ({
+      capability,
+      actions: groups.get(capability)!,
+    }));
+}
+
+/** Flat list of the actions the device offers, in capability order. */
+export function deviceActions(
+  machine: Parameters<typeof deviceActionGroups>[0],
 ): string[] {
-  if (machine.actions?.length) return machine.actions;
-  const caps = deviceCapabilities(machine);
-  return [
-    ...(caps.power ? (["power.on", "power.off"] as const) : []),
-    ...(caps.hinata_io ? (["aime.scan"] as const) : []),
-    ...(canOperateCoin(machine) ? (["coin"] as const) : []),
-    ...(caps.door ? (["door.open"] as const) : []),
-  ];
+  return deviceActionGroups(machine).flatMap((group) => group.actions);
 }
 
 /** One short line naming what this device is for, used by the device card. */
