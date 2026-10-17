@@ -575,7 +575,7 @@
   "账号密码（MD5）": "Account password (MD5)",
   "已发送": "Sent",
   "手动填写": "Enter manually",
-  "操作记录": "Controls and history",
+  "操作记录": "History",
   "最近操作": "Recent activity",
   "配置入场规则": "Set admission rules",
   "配置基础资产": "Set up balances",
@@ -1253,5 +1253,9 @@
   "直连模式由设备令牌认证，签发后会显示一次并写入机台 INI。": "Direct mode authenticates with a device token. It is shown once when issued and belongs in the machine INI.",
   "已配置设备令牌，继续保存不会改变它。": "A device token is already configured; saving does not change it.",
   "轮换后机台上的旧令牌立即失效，需要把新令牌重新写入 INI。": "Rotating invalidates the token on the machine immediately; the new one has to be written to its INI.",
-  "签发设备令牌": "Issue device token"
+  "签发设备令牌": "Issue device token",
+  "操作会立即下发给设备，并记录在操作记录中。": "Commands are sent to the device immediately and appear in the history.",
+  "这台设备还没有可执行的操作。": "This device has no actions available.",
+  "设备已停用，操作不可用。": "The device is disabled, so actions are unavailable.",
+  "平台下发、机台回报和检测到的状态变化。": "Commands sent, reports from the machine, and observed state changes."
 }

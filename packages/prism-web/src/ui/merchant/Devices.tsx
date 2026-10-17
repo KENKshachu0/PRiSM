@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   ChevronRight,
   CreditCard,
   DoorOpen,
   Gamepad2,
-  MoreHorizontal,
+  Pencil,
   Plus,
   Power,
   QrCode,
@@ -54,7 +54,8 @@ export function DevicesPage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Machine | "new" | null>(null);
   const [qr, setQR] = useState<Machine | null>(null);
-  const [operating, setOperating] = useState<Machine | null>(null);
+  const [acting, setActing] = useState<Machine | null>(null);
+  const [history, setHistory] = useState<Machine | null>(null);
   const [editorLocked, setEditorLocked] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const load = useCallback(
@@ -155,8 +156,9 @@ export function DevicesPage() {
               key={device.id}
               device={device}
               canWrite={canWrite}
+              onAct={() => setActing(device)}
               onQR={() => setQR(device)}
-              onHistory={() => setOperating(device)}
+              onHistory={() => setHistory(device)}
               onEdit={() => setEditing(device)}
             />
           ))}
@@ -169,9 +171,24 @@ export function DevicesPage() {
           })}
         </p>
       )}
-      {operating && (
-        <Modal title={operating.name} close={() => setOperating(null)} wide>
-          <DeviceOperations device={operating} />
+      {acting && (
+        <Modal
+          title={`${acting.name} · ${t("操作")}`}
+          close={() => setActing(null)}
+        >
+          <DeviceActions
+            device={acting}
+            onChanged={() => void load()}
+          />
+        </Modal>
+      )}
+      {history && (
+        <Modal
+          title={`${history.name} · ${t("操作记录")}`}
+          close={() => setHistory(null)}
+          wide
+        >
+          <DeviceHistory device={history} />
         </Modal>
       )}
       {editing && (
@@ -240,12 +257,14 @@ export function DevicesPage() {
 function DeviceCard({
   device,
   canWrite,
+  onAct,
   onQR,
   onHistory,
   onEdit,
 }: {
   device: Machine;
   canWrite: boolean;
+  onAct: () => void;
   onQR: () => void;
   onHistory: () => void;
   onEdit: () => void;
@@ -254,7 +273,7 @@ function DeviceCard({
   const caps = deviceCapabilities(device);
   const enabled = !!device.enabled;
   const configured = Object.values(caps).some(Boolean);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const actions = deviceActions(device);
   return (
     <article
       className={`group relative flex flex-col overflow-hidden rounded-xl border border-ink/10 bg-panel transition-colors ${
@@ -278,15 +297,6 @@ function DeviceCard({
             {!enabled && ` · ${t("已停用")}`}
           </p>
         </div>
-        <DeviceMenu
-          open={menuOpen}
-          setOpen={setMenuOpen}
-          canWrite={canWrite}
-          onQR={onQR}
-          onHistory={onHistory}
-          onEdit={onEdit}
-          name={device.name}
-        />
       </div>
       <div className="flex flex-wrap gap-1.5 px-5">
         {capabilityOrder
@@ -353,15 +363,27 @@ function DeviceCard({
           )}
         </div>
       )}
-      <footer className="mt-auto flex items-center justify-between gap-2 border-t border-ink/10 px-3 py-1.5">
-        <button
-          type="button"
-          className={`${buttonQuiet} min-h-9 px-2 text-xs`}
-          onClick={onQR}
-        >
-          <QrCode size={15} />
-          {t("二维码")}
-        </button>
+      <footer className="mt-auto flex items-center gap-2 border-t border-ink/10 px-3 py-2">
+        {canWrite && actions.length > 0 && (
+          <button
+            type="button"
+            className={`${primary} min-h-9 flex-1 px-3 py-1 text-xs`}
+            disabled={!enabled}
+            onClick={onAct}
+          >
+            {t("操作")}
+          </button>
+        )}
+        {canWrite && (
+          <button
+            type="button"
+            className={`${button} min-h-9 ${actions.length ? "" : "flex-1"} px-3 py-1 text-xs`}
+            onClick={onEdit}
+          >
+            <Pencil size={14} />
+            {t("编辑")}
+          </button>
+        )}
         <button
           type="button"
           className={`${buttonQuiet} min-h-9 px-2 text-xs`}
@@ -370,110 +392,16 @@ function DeviceCard({
           {t("操作记录")}
           <ChevronRight size={15} className="text-ink/35" />
         </button>
+        <button
+          type="button"
+          className={`${buttonQuiet} grid size-9 shrink-0 place-items-center px-0`}
+          aria-label={`${t("设备二维码")} ${device.name}`}
+          onClick={onQR}
+        >
+          <QrCode size={16} />
+        </button>
       </footer>
     </article>
-  );
-}
-
-function DeviceMenu({
-  open,
-  setOpen,
-  canWrite,
-  onQR,
-  onHistory,
-  onEdit,
-  name,
-}: {
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  canWrite: boolean;
-  onQR: () => void;
-  onHistory: () => void;
-  onEdit: () => void;
-  name: string;
-}) {
-  const { t } = useI18n();
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest("[data-device-menu]")) setOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open, setOpen]);
-  return (
-    <div className="relative shrink-0" data-device-menu>
-      <button
-        type="button"
-        className={`${buttonQuiet} grid size-9 place-items-center px-0`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`${t("更多操作")} ${name}`}
-        onClick={() => setOpen(!open)}
-      >
-        <MoreHorizontal size={18} />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-ink/10 bg-panel py-1 shadow-soft"
-        >
-          <MenuItem
-            onClick={() => {
-              setOpen(false);
-              onQR();
-            }}
-          >
-            {t("设备二维码")}
-          </MenuItem>
-          <MenuItem
-            onClick={() => {
-              setOpen(false);
-              onHistory();
-            }}
-          >
-            {t("操作记录")}
-          </MenuItem>
-          {canWrite && (
-            <MenuItem
-              onClick={() => {
-                setOpen(false);
-                onEdit();
-              }}
-            >
-              {t("编辑")}
-            </MenuItem>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MenuItem({
-  children,
-  onClick,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      className="block w-full px-3 py-2 text-left text-sm hover:bg-ink/5 focus-ring"
-      onClick={onClick}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -537,59 +465,69 @@ function changeLabel(event: DeviceEvent): string {
   return event.name;
 }
 
-function DeviceOperations({ device }: { device: Machine }) {
+const actionLabels: Record<string, string> = {
+  "power.on": "开机",
+  "power.off": "关机",
+  coin: "投币",
+  "door.open": "获取开门密码",
+  "aime.scan": "刷卡",
+  "card.state": "读卡状态变化",
+  "card.consumed": "卡片已送入游戏",
+  "led.set": "灯光",
+};
+
+/**
+ * Sending commands is a separate surface from reading the log: one is an
+ * action with consequences, the other is history. Keeping them in one modal
+ * made the destructive buttons look like part of the record.
+ */
+function DeviceActions({
+  device,
+  onChanged,
+}: {
+  device: Machine;
+  onChanged: () => void;
+}) {
   const { t } = useI18n();
-  const { canWrite } = useMerchant();
-  const [events, setEvents] = useState<DeviceEvent[]>([]);
   const [action, setAction] = useState("");
   const [result, setResult] = useState("");
-  const load = useCallback(
-    () =>
-      api<{ events: DeviceEvent[] }>(
-        `/api/v1/merchant/machines/${device.id}/events`,
-      ).then((r) => setEvents(r.events)),
-    [device.id],
-  );
-  useEffect(() => {
-    load().catch((e) => setResult(e.message));
-  }, [load]);
-  const labels: Record<string, string> = {
-    "power.on": "开机",
-    "power.off": "关机",
-    coin: "投币",
-    "door.open": "获取开门密码",
-    "aime.scan": "刷卡",
-    "card.state": "读卡状态变化",
-    "card.consumed": "卡片已送入游戏",
-    "led.set": "灯光",
-  };
   // Actions come from the shared capability adapter, so this panel, the card
   // and the editor cannot disagree about what the device can do.
   const actions = deviceActions(device);
   return (
     <div className="grid gap-5">
-      {canWrite && actions.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+      <p className="text-sm text-ink/60">
+        {t("操作会立即下发给设备，并记录在操作记录中。")}
+      </p>
+      {actions.length ? (
+        <div className="grid gap-2 sm:grid-cols-2">
           {actions.map((key) => (
             <button
               key={key}
               type="button"
-              className={button}
+              className={`${button} min-h-11 justify-center`}
               disabled={!device.enabled}
               onClick={() => setAction(key)}
             >
-              {t(labels[key]!)}
+              {t(actionLabels[key]!)}
             </button>
           ))}
         </div>
+      ) : (
+        <p className="text-sm text-ink/55">
+          {t("这台设备还没有可执行的操作。")}
+        </p>
+      )}
+      {!device.enabled && (
+        <p className="text-sm text-coral">
+          {t("设备已停用，操作不可用。")}
+        </p>
       )}
       {action && (
         <ActionForm
+          sticky
           label="确认操作"
-          done={() => {
-            setAction("");
-            void load();
-          }}
+          done={() => setAction("")}
           submit={async () => {
             const r = await playerOperation<{ temporaryPassword?: string }>(
               `/api/v1/merchant/machines/${device.id}/actions`,
@@ -600,10 +538,11 @@ function DeviceOperations({ device }: { device: Machine }) {
                 ? `${t("开门密码")} ${r.temporaryPassword}`
                 : t("已发送"),
             );
+            onChanged();
           }}
         >
           <p className="text-sm">
-            {device.name} · {t(labels[action]!)}
+            {device.name} · {t(actionLabels[action]!)}
           </p>
         </ActionForm>
       )}
@@ -612,46 +551,81 @@ function DeviceOperations({ device }: { device: Machine }) {
           {result}
         </p>
       )}
-      <h3 className="text-sm font-semibold">{t("设备事件")}</h3>
-      {!events.length && <State empty />}
-      <div className="divide-y divide-ink/10">
-        {timeline(events).map(({ event: e, result }) => {
-          const inbound = e.kind === "signal";
-          const outcome = result ? String(result.payload.outcome) : null;
-          return (
-            <div className="flex justify-between gap-3 py-3 text-sm" key={e.id}>
-              <div>
-                <span className="flex items-center gap-1.5">
-                  {/* Direction is the difference between "we asked" and "the
-                      machine reported", which is what makes a card event worth
-                      logging at all. */}
-                  {e.kind !== "change" && (
-                    <span
-                      className={inbound ? "text-mint" : "text-ink/45"}
-                      title={inbound ? t("机台回报") : t("平台下发")}
-                    >
-                      {inbound ? "←" : "→"}
-                    </span>
-                  )}
-                  {t(e.kind === "change" ? changeLabel(e) : labels[e.name] ?? e.name)}
+    </div>
+  );
+}
+
+/** Read-only history: what the platform asked for and what the device reported. */
+function DeviceHistory({ device }: { device: Machine }) {
+  const { t } = useI18n();
+  const [events, setEvents] = useState<DeviceEvent[] | null>(null);
+  const [error, setError] = useState("");
+  const load = useCallback(
+    () =>
+      api<{ events: DeviceEvent[] }>(
+        `/api/v1/merchant/machines/${device.id}/events`,
+      ).then((r) => setEvents(r.events)),
+    [device.id],
+  );
+  useEffect(() => {
+    load().catch((e) => setError(e.message));
+  }, [load]);
+  return (
+    <div className="grid gap-4">
+      <p className="text-sm text-ink/60">
+        {t("平台下发、机台回报和检测到的状态变化。")}
+      </p>
+      {!events ? (
+        <State error={error} />
+      ) : !events.length ? (
+        <State empty />
+      ) : (
+        <div className="divide-y divide-ink/10">
+          {timeline(events).map(({ event: e, result }) => {
+            const inbound = e.kind === "signal";
+            const outcome = result ? String(result.payload.outcome) : null;
+            return (
+              <div
+                className="flex justify-between gap-3 py-3 text-sm"
+                key={e.id}
+              >
+                <div>
+                  <span className="flex items-center gap-1.5">
+                    {/* Direction is the difference between "we asked" and
+                        "the machine reported", which is what makes a card event
+                        worth logging at all. */}
+                    {e.kind !== "change" && (
+                      <span
+                        className={inbound ? "text-mint" : "text-ink/45"}
+                        title={inbound ? t("机台回报") : t("平台下发")}
+                      >
+                        {inbound ? "←" : "→"}
+                      </span>
+                    )}
+                    {t(
+                      e.kind === "change"
+                        ? changeLabel(e)
+                        : (actionLabels[e.name] ?? e.name),
+                    )}
+                  </span>
+                  <p className="mt-1 text-xs text-ink/50">{date(e.at)}</p>
+                </div>
+                <span className="text-xs text-ink/55">
+                  {e.kind === "signal"
+                    ? t("机台回报")
+                    : e.kind === "change"
+                      ? t(e.origin === "observer" ? "检测到" : "机台回报")
+                      : outcome === "ok"
+                        ? t("已完成")
+                        : outcome === "failed"
+                          ? t("失败")
+                          : t("结果待确认")}
                 </span>
-                <p className="mt-1 text-xs text-ink/50">{date(e.at)}</p>
               </div>
-              <span className="text-xs text-ink/55">
-                {e.kind === "signal"
-                  ? t("机台回报")
-                  : e.kind === "change"
-                    ? t(e.origin === "observer" ? "检测到" : "机台回报")
-                    : outcome === "ok"
-                      ? t("已完成")
-                      : outcome === "failed"
-                        ? t("失败")
-                        : t("结果待确认")}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
