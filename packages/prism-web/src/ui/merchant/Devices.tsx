@@ -155,7 +155,7 @@ export function DevicesPage() {
           )}
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
           {shown.map((device) => (
             <DeviceCard
               key={device.id}
@@ -279,11 +279,11 @@ function DeviceCard({
   const chips = capabilityOrder.filter((id) => caps[id]);
   return (
     <article
-      className={`group relative flex flex-col overflow-hidden rounded-xl border border-ink/10 bg-panel transition-colors ${
+      className={`flex flex-col rounded-xl border border-ink/10 bg-panel ${
         enabled ? "" : "opacity-60"
       }`}
     >
-      <div className="flex items-start gap-3 p-5 pb-4">
+      <div className="flex items-start gap-3 p-5">
         <span
           className={`grid size-11 shrink-0 place-items-center rounded-xl ${
             caps.door && !configured
@@ -301,7 +301,7 @@ function DeviceCard({
         </div>
       </div>
       {chips.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 px-5 pb-4">
+        <div className="mb-5 flex flex-wrap gap-2 px-5 text-xs text-ink/70">
           {chips.map((id) => {
             const chip = capabilityChips[id];
             const Icon = chip.icon;
@@ -343,7 +343,7 @@ function DeviceCard({
         </div>
       )}
       {(caps.power || isDirectConnect(device)) && (
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 px-5 pb-4 text-xs">
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 px-5 text-xs">
           {caps.power && <PowerStatus device={device} />}
           {isDirectConnect(device) && (
             <span className="flex items-center gap-1.5 text-ink/60">
@@ -370,7 +370,7 @@ function DeviceCard({
           )}
         </div>
       )}
-      <footer className="mt-auto flex items-center gap-2 border-t border-ink/10 px-3 py-2">
+      <footer className="mt-auto flex items-center justify-between gap-2 border-t border-ink/10 px-4 py-2">
         {canWrite && hasControls && (
           <button
             type="button"
