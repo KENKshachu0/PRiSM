@@ -218,7 +218,7 @@ export function PricingPage() {
         <Modal
           title={edit.id ? "编辑规则" : "添加规则"}
           close={() => setEdit(null)}
-          wide
+          xl
         >
           <PricingEditor
             value={edit}
@@ -310,7 +310,6 @@ function PricingEditor({
   // Periods start collapsed: a rule with four periods used to be a 2000px
   // form. Opening one at a time keeps the current period in view.
   const [openRule, setOpenRule] = useState<number | null>(null);
-  const [showRing, setShowRing] = useState(true);
   const rules = draft.provider.rules ?? [];
   const changeDay = (nextDay: string) => {
     setDraft(
@@ -471,10 +470,24 @@ function PricingEditor({
           </div>
         </section>
       ) : (
-        <section className="grid gap-3">
-          <h3 className="text-sm font-semibold">
-            {t(draft.kind === "time.cap" ? "封顶设置" : "计费时段")}
-          </h3>
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:items-start">
+          {/* The ring stays on screen while the periods are edited: it is how
+              the store sees the day, and clicking a segment opens its period. */}
+          <div className="lg:sticky lg:top-0">
+            <PricingRing
+              value={draft}
+              localDate={day}
+              onDateChange={changeDay}
+              onSelect={(id) => {
+                const index = rules.findIndex((r) => r.id === id);
+                if (index >= 0) openPeriod(index);
+              }}
+            />
+          </div>
+          <section className="grid gap-3">
+            <h3 className="text-sm font-semibold">
+              {t(draft.kind === "time.cap" ? "封顶设置" : "计费时段")}
+            </h3>
           {draft.kind === "time.cap" && (
             <fieldset className="grid gap-2 rounded-xl border border-ink/10 p-4">
               <legend className="px-1 text-sm font-medium">
@@ -558,38 +571,8 @@ function PricingEditor({
               {t("添加时段")}
             </button>
           </div>
-
-          {/* Expanded by default: the ring is how a store checks that the
-              periods it just typed actually tile the day. */}
-          <div className="rounded-xl border border-ink/10">
-            <button
-              type="button"
-              className="focus-ring flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium"
-              aria-expanded={showRing}
-              onClick={() => setShowRing((value) => !value)}
-            >
-              {t("24 小时计费预览")}
-              <ChevronDown
-                size={16}
-                className={`text-ink/35 transition-transform ${showRing ? "rotate-180" : ""}`}
-                aria-hidden="true"
-              />
-            </button>
-            {showRing && (
-              <div className="border-t border-ink/10 p-4">
-                <PricingRing
-                  value={draft}
-                  localDate={day}
-                  onDateChange={changeDay}
-                  onSelect={(id) => {
-                    const index = rules.findIndex((r) => r.id === id);
-                    if (index >= 0) openPeriod(index);
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </section>
+          </section>
+        </div>
       )}
     </ActionForm>
   );

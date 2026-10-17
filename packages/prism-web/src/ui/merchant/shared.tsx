@@ -145,6 +145,7 @@ export function Modal({
   close,
   dismissDisabled = false,
   wide = false,
+  xl = false,
 }: {
   title: string;
   children: ReactNode;
@@ -152,6 +153,8 @@ export function Modal({
   dismissDisabled?: boolean;
   /** Room for a multi-section form rather than a single short confirmation. */
   wide?: boolean;
+  /** A two-column layout: side content plus the form it controls. */
+  xl?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const { t } = useI18n();
@@ -164,7 +167,7 @@ export function Modal({
     <dialog
       ref={ref}
       onCancel={event => { if (dismissDisabled) event.preventDefault(); else close(); }}
-      className={`m-auto max-h-[90dvh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl bg-panel p-0 text-ink backdrop:bg-black/35 ${wide ? "max-w-2xl" : "max-w-xl"}`}
+      className={`m-auto max-h-[90dvh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl bg-panel p-0 text-ink backdrop:bg-black/35 ${xl ? "max-w-5xl" : wide ? "max-w-2xl" : "max-w-xl"}`}
       aria-label={t(title)}
     >
       <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-ink/10 bg-panel px-5 py-4">
