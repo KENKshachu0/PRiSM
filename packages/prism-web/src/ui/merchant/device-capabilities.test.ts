@@ -80,6 +80,7 @@ describe("device capability view", () => {
         }),
       ),
     ).toEqual(["power.on", "power.off", "door.open"]);
+    // A card can always be sent once the IO binding exists; coin still needs a key.
     expect(
       deviceActions(
         machine({
@@ -89,7 +90,21 @@ describe("device capability view", () => {
           coinEnabled: true,
         }),
       ),
-    ).toEqual(["coin"]);
+    ).toEqual(["aime.scan", "coin"]);
+  });
+
+  it("prefers the action list the server derived from the capability catalog", () => {
+    const serverDriven = machine({
+      actions: ["power.on", "aime.scan", "mahjong.seat"],
+      hasHinata: true,
+      hasPassword: true,
+      coinKey: 32,
+    });
+    expect(deviceActions(serverDriven)).toEqual([
+      "power.on",
+      "aime.scan",
+      "mahjong.seat",
+    ]);
   });
 
   it("names the device by its strongest capability", () => {

@@ -19,7 +19,12 @@ type C = Context<AppBindings, any, any>;
 export const actionSchema=z.object({
   ticket:z.string().min(1),
   operationId:z.string().uuid(),
-  action:z.enum(["power.on","power.off","coin","door.open","mahjong.join","mahjong.leave"]),
+  action:z.enum([
+    "power.on","power.off","aime.scan","coin","door.open",
+    "mahjong.join","mahjong.leave","mahjong.seat","mahjong.unseat",
+  ]),
+  /** Staff act on behalf of a chosen player for card scans and mahjong seats. */
+  playerId:z.string().min(1).optional(),
   consent:z.boolean().optional(),
   location:z.unknown().optional(),
 });
@@ -71,6 +76,22 @@ export async function executeDeviceAction(
       jsonError(409, "请先开机", "DEVICE_POWER_OFF");
   }
   const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY, c.env);
+  // A card scan sends a card to the machine, so staff have to name the player
+  // whose bound card is used. The card number is looked up at the last moment
+  // and handed to the runner only; it is never stored.
+  let accessCode: string | null = null;
+  if (staff && action === "aime.scan") {
+    if (!body.playerId) jsonError(400, "请选择玩家", "PLAYER_REQUIRED");
+    const identity = await c.env.DB.prepare(
+      `SELECT subject FROM player_identities
+       WHERE shop_id=? AND player_id=?
+       ORDER BY CASE WHEN provider='aime' THEN 0 ELSE 1 END, created_at
+       LIMIT 1`,
+    ).bind(shop.id, body.playerId).first<{ subject: string }>();
+    if (!identity)
+      jsonError(409, "该玩家没有绑定的卡片", "SCAN_IDENTITY_NOT_BOUND_TO_PLAYER");
+    accessCode = identity.subject;
+  }
   return runPlayerOperation(
     c,
     shop.id,
@@ -111,6 +132,7 @@ export async function executeDeviceAction(
         actor: player ? { type: "player", playerId: player.id } : { type: "staff", staffId: `user:${user.id}` },
         operationId: body.operationId,
         payload: { holder: player?.id ?? user.id },
+        ...(accessCode ? { transient: { accessCode } } : {}),
       });
       if (done.operation.status !== "succeeded") {
         return c.json(

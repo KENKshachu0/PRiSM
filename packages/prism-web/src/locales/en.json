@@ -1238,5 +1238,6 @@
   "请先签发设备令牌，或改为外部中继。": "Issue a device token first, or switch to an external relay.",
   "轮换后机台上的旧令牌立即失效，需要把新令牌重新写入 INI。": "Rotating invalidates the token on the machine immediately; the new one has to be written to its INI.",
   "签发设备令牌": "Issue device token",
-  "设备已停用，操作不可用。": "The device is disabled, so actions are unavailable."
+  "设备已停用，操作不可用。": "The device is disabled, so actions are unavailable.",
+  "选择玩家": "Choose player"
 }

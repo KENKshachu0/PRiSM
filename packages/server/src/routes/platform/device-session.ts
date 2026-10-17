@@ -91,14 +91,17 @@ async function merchantMachine(c:import("hono").Context<AppBindings, any, any>,w
 
 merchantMachineActionRouter.get("/machines/:id/state",async c=>{
   const machine=await merchantMachine(c);
-  return c.json({power:await devicePowerState(c,machine)});
+  return c.json({
+    power:await devicePowerState(c,machine),
+    // Seats let staff see who is at the table before seating someone else.
+    mahjong:await mahjongState(c,machine),
+  });
 });
 
 merchantMachineActionRouter.post("/machines/:id/actions",async c=>{
   const machine=await merchantMachine(c,true);
   const raw=await c.req.json();
   const body=actionSchema.parse({...(raw as object),ticket:`staff:${machine.id}`});
-  if(body.action.startsWith("mahjong."))
-    jsonError(409,"麻将加入与退出必须使用玩家会话","DEVICE_ACTION_UNSUPPORTED");
+  if(body.action.startsWith("mahjong."))return operateMahjong(c,machine,body,{staff:true});
   return executeDeviceAction(c,machine,body,true);
 });

@@ -91,6 +91,8 @@ export type DeviceEvent = {
 
 export type Machine = {
   mahjong?: { capacity: number; pricingConfigIds: string[] } | null;
+  /** Actions this device can perform now, as reported by the capability catalog. */
+  actions?: string[];
   coinAfterSwipe: boolean;
   hasHinata: boolean;
   kind: "machine" | "door";

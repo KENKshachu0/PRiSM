@@ -6,9 +6,9 @@ import { decryptSecret, encryptSecret, randomToken, sha256Hex } from "../../cryp
 import { normalizeHinataUrl } from "../../hardware/hinata.js";
 import { machineRelayPath } from "../../gateway/relay-path.js";
 import { machineRelayNamespace } from "../../gateway/machine-relay-gateway.js";
-import { loadDevice, loadDevices, hinataConfigOf, doorConfigOf, mahjongConfigOf, readSecret, type Device } from "../../devices/device.js";
+import { loadDevice, loadDevices, can, hinataConfigOf, doorConfigOf, mahjongConfigOf, readSecret, type Device } from "../../devices/device.js";
 import { capabilityWrites, storedCapabilities, type StoredCapability } from "../../devices/configure.js";
-import type { CapabilityId, HinataConfig } from "../../devices/capabilities.js";
+import { capabilities, type CapabilityId, type HinataConfig } from "../../devices/capabilities.js";
 import { z } from "zod";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
@@ -51,6 +51,21 @@ async function readHaBinding(c: C, device: Device): Promise<HaBinding | null> {
   try { return JSON.parse(raw) as HaBinding; } catch { return null; }
 }
 
+/**
+ * Every action this device can perform right now, straight from the capability
+ * catalog. The store UI renders whatever comes back, so a capability added to
+ * the catalog appears on the device board without a frontend change.
+ */
+function availableActions(device: Device): string[] {
+  const actions: string[] = [];
+  for (const [id] of device.capabilities) {
+    for (const action of Object.keys(capabilities[id].actions)) {
+      if (can(device, action as Parameters<typeof can>[1])) actions.push(action);
+    }
+  }
+  return actions;
+}
+
 async function presentMachine(c: C, device: Device, shopPublicId: string, canConfigure: boolean) {
   const hinata = hinataConfigOf(device);
   const io = device.capabilities.get("hinata_io");
@@ -66,6 +81,8 @@ async function presentMachine(c: C, device: Device, shopPublicId: string, canCon
     aliases: device.aliases,
     enabled: device.enabled,
     kind: device.kind,
+    /** Actions the store may send now; the UI is driven by this list. */
+    actions: availableActions(device),
     hasHinata: !!io?.secretNames.has("url"),
     hinataUrl: canConfigure && io?.secretNames.has("url")
       ? await readSecret(c.env.DB, device, "hinata_io", "url", encryptionKey(c))

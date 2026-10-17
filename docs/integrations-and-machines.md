@@ -171,6 +171,14 @@ await client.requestScanByIdentity(
 - 能力判定集中在前端适配层 `packages/prism-web/src/ui/merchant/device-capabilities.ts`（`deviceCapabilities`、`canOperateCoin`、`deviceActions`、`deviceSummaryKey`）。卡片徽章、操作记录里的可用动作、编辑器里的开关都读这一处，不再各自从 `ttlockLockId`/`homeAssistant`/`hasHinata` 推导。
 - 提交仍使用商户 API 的扁平字段（`homeAssistant`、`ttlockLockId`、`mahjong`、`hinataUrl`/`hinataPassword`、`relayConnection`、`coinKey`、`coinAfterSwipe`）；关闭某项能力时发送 `null`（刷卡为 `relayConnection: "external"` + `hinataUrl: null`）让服务端删除对应能力行。适配层只是视图模型，不改变接口契约。
 
+### 「操作」面板
+
+- `GET /api/v1/merchant/machines` 的每台设备带 `actions`：能力目录里当前可用的动作（电源 `power.on/off`、刷卡 `aime.scan`、投币 `coin`、门锁 `door.open`）。后台「操作」面板直接渲染这个列表，**新增能力不需要改前端**；前端只在接口没有 `actions` 时退回本地推导。
+- 需要指定玩家的动作由店员选人：`POST /api/v1/merchant/machines/:id/actions` 接受 `playerId`。
+  - `aime.scan` 读取该玩家绑定的卡号（优先 `aime` provider），仅作为临时参数交给执行器，不落库；没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
+  - `mahjong.seat` / `mahjong.unseat` 让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
+- `GET /api/v1/merchant/machines/:id/state` 返回 `{ power, mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。
+
 ### 引用设备与 Bot 动作
 
 Bot、员工和 integration API 用 `target.ref` 引用设备，匹配设备 ID、`public_id`、名称或任一别名（不区分大小写、去首尾空白）；多台同名返回 `DEVICE_REFERENCE_AMBIGUOUS`。`all` 只用于 `power.on/off`，作用于所有已启用且绑定电源的设备，每台一条操作，共用同一个父操作 ID。玩家发起 `coin`、`aime.scan`、`power.*` 需要处于活跃计费场次；投币受店铺 `venue.operations.coinCooldownMs` 冷却限制。返回体保持旧的 `DeviceCommand` 形状（`status` 为 `acked`/`pending`/`expired`，`executorKind`、`payload.deviceLabel`、`payload.executorFailure`、门锁的 `temporaryPassword`），Bot 与员工视图无需改动。

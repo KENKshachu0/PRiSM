@@ -67,9 +67,13 @@ export function canOperateCoin(
   return isDirectConnect(machine) || !!machine.hasPassword;
 }
 
-export type DeviceAction = "power.on" | "power.off" | "coin" | "door.open";
-
-/** Staff actions offered for a device, in the order the server accepts them. */
+/**
+ * Staff actions offered for a device.
+ *
+ * The server answers with the capability catalog's own list, so a capability
+ * added there shows up here without a frontend change. The derived list is
+ * only a fallback for an older response that predates `actions`.
+ */
 export function deviceActions(
   machine: Pick<
     Machine,
@@ -80,11 +84,13 @@ export function deviceActions(
     | "relayConnection"
     | "coinKey"
     | "hasPassword"
-  >,
-): DeviceAction[] {
+  > & { actions?: string[] },
+): string[] {
+  if (machine.actions?.length) return machine.actions;
   const caps = deviceCapabilities(machine);
   return [
     ...(caps.power ? (["power.on", "power.off"] as const) : []),
+    ...(caps.hinata_io ? (["aime.scan"] as const) : []),
     ...(canOperateCoin(machine) ? (["coin"] as const) : []),
     ...(caps.door ? (["door.open"] as const) : []),
   ];
