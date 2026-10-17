@@ -23,7 +23,7 @@ import {
   primary,
   useMerchant,
   useResource,
-  type Player,
+  type LivePlayer,
 } from "./shared";
 import {
   canOperateCoin,
@@ -50,10 +50,18 @@ const capabilityChips: Record<
   mahjong: { icon: Ungroup, label: "麻将桌" },
 };
 
+/**
+ * The device list is cached per shop so returning to the tab shows the last
+ * known cards instead of a loading line. Every mount still refetches.
+ */
+const machineCache = new Map<string, Machine[]>();
+
 export function DevicesPage() {
   const { shopId, canWrite } = useMerchant();
   const { t } = useI18n();
-  const [devices, setDevices] = useState<Machine[] | null>(null);
+  const [devices, setDevices] = useState<Machine[] | null>(
+    () => machineCache.get(shopId) ?? null,
+  );
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Machine | "new" | null>(null);
   const [qr, setQR] = useState<Machine | null>(null);
@@ -62,7 +70,11 @@ export function DevicesPage() {
   const [editorLocked, setEditorLocked] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const load = useCallback(
-    () => Api.machines(shopId).then((r) => setDevices(r.machines)),
+    () =>
+      Api.machines(shopId).then((r) => {
+        machineCache.set(shopId, r.machines);
+        setDevices(r.machines);
+      }),
     [shopId],
   );
   useEffect(() => {
@@ -263,6 +275,15 @@ function DeviceCard({
   // Seating a player is a mahjong operation even though the catalog lists no
   // device action for that capability.
   const hasControls = actions.length > 0 || !!caps.mahjong;
+  // A mahjong table is described by its seat count, so it is part of the
+  // summary instead of repeating as a chip below it.
+  const summary =
+    caps.mahjong && device.mahjong
+      ? `${t("麻将桌")} · ${t("{count} 人", { count: device.mahjong.capacity })}`
+      : t(deviceSummaryKey(device));
+  const chips = capabilityOrder.filter(
+    (id) => caps[id] && id !== "mahjong",
+  );
   return (
     <article
       className={`group relative flex flex-col overflow-hidden rounded-xl border border-ink/10 bg-panel transition-colors ${
@@ -282,15 +303,14 @@ function DeviceCard({
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold">{device.name}</h3>
           <p className="mt-1 text-xs text-ink/50">
-            {t(deviceSummaryKey(device))}
+            {summary}
             {!enabled && ` · ${t("已停用")}`}
           </p>
         </div>
       </div>
-      <div className="flex flex-wrap gap-1.5 px-5">
-        {capabilityOrder
-          .filter((id) => caps[id])
-          .map((id) => {
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-5 pb-4">
+          {chips.map((id) => {
             const chip = capabilityChips[id];
             const Icon = chip.icon;
             return (
@@ -306,17 +326,18 @@ function DeviceCard({
               </span>
             );
           })}
-        {caps.hinata_io && canOperateCoin(device) && device.coinAfterSwipe && (
-          <span className="inline-flex items-center rounded-md bg-ink/5 px-2 py-1 text-xs text-ink/60">
-            {t("刷卡后投币")}
-          </span>
-        )}
-        {caps.door && device.ttlockLockId && (
-          <span className="inline-flex items-center rounded-md bg-ink/5 px-2 py-1 text-xs text-ink/60">
-            TTLock · {device.ttlockLockId}
-          </span>
-        )}
-      </div>
+          {caps.hinata_io && canOperateCoin(device) && device.coinAfterSwipe && (
+            <span className="inline-flex items-center rounded-md bg-ink/5 px-2 py-1 text-xs text-ink/60">
+              {t("刷卡后投币")}
+            </span>
+          )}
+          {caps.door && device.ttlockLockId && (
+            <span className="inline-flex items-center rounded-md bg-ink/5 px-2 py-1 text-xs text-ink/60">
+              TTLock · {device.ttlockLockId}
+            </span>
+          )}
+        </div>
+      )}
       {!configured && canWrite && (
         <div className="px-5 pt-3">
           <button type="button" className={`${primary} min-h-9 px-3 py-1`} onClick={onEdit}>
@@ -496,8 +517,8 @@ function DeviceActions({
   const { t } = useI18n();
   const caps = deviceCapabilities(device);
   const groups = deviceActionGroups(device);
-  const players = useResource<{ players: Player[] }>(
-    caps.mahjong ? "players" : null,
+  const players = useResource<{ players: LivePlayer[] }>(
+    caps.mahjong ? "live-players" : null,
   );
   const [selectedPlayer, setSelectedPlayer] = useState("");
   const [cardNumber, setCardNumber] = useState("");
@@ -545,7 +566,11 @@ function DeviceActions({
       setBusy("");
     }
   }
-  const playerOptions = players.data?.players ?? [];
+  // Seating needs an entry, so only players who are in the shop are offered.
+  const playerOptions = (players.data?.players ?? []).map((player) => ({
+    id: player.playerId,
+    name: player.displayName,
+  }));
   const seated = new Set(table?.seats.map((seat) => seat.playerId));
   const full = !!table && table.seats.length >= table.capacity;
   /** The state each capability's actions act on, shown in its header. */
@@ -699,7 +724,7 @@ function DeviceActions({
                         .filter((player) => !seated.has(player.id))
                         .map((player) => (
                           <option key={player.id} value={player.id}>
-                            {player.displayName}
+                            {player.name}
                           </option>
                         ))}
                     </select>

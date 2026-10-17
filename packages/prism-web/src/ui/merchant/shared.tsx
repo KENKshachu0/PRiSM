@@ -45,31 +45,55 @@ export const segment = (value: string) => encodeURIComponent(value);
 export function useStaffApi() {
   const { shopCode } = useMerchant();
   return useCallback(
-    <T,>(path: string, method = "GET", body?: unknown): Promise<T> =>
-      method === "POST" && !path.endsWith("/preview")
-        ? playerOperation<T>(
-            shopApi(shopCode, `staff/${path}`),
-            (body ?? {}) as Record<string, unknown>,
-          )
-        : api<T>(shopApi(shopCode, `staff/${path}`), {
-            method,
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-          }),
+    <T,>(path: string, method = "GET", body?: unknown): Promise<T> => {
+      const write = method !== "GET";
+      const result =
+        method === "POST" && !path.endsWith("/preview")
+          ? playerOperation<T>(
+              shopApi(shopCode, `staff/${path}`),
+              (body ?? {}) as Record<string, unknown>,
+            )
+          : api<T>(shopApi(shopCode, `staff/${path}`), {
+              method,
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            });
+      // A write invalidates every cached read for this merchant session; the
+      // pages reload what they need right after a successful mutation.
+      return write ? result.finally(() => resourceCache.clear()) : result;
+    },
     [shopCode],
   );
 }
+
+/**
+ * Reads are cached per shop and path so switching tabs shows the last known
+ * data instead of blanking the panel behind a "loading" line while the request
+ * runs. Every mount still refetches, so the cache only removes the flash.
+ */
+const resourceCache = new Map<string, unknown>();
+
 export function useResource<T>(path: string | null) {
   const request = useStaffApi();
-  const [data, setData] = useState<T | null>(null);
+  const { shopCode } = useMerchant();
+  const key = path === null ? null : `${shopCode}:${path}`;
+  const [data, setData] = useState<T | null>(() =>
+    key ? ((resourceCache.get(key) as T | undefined) ?? null) : null,
+  );
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const reload = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
     let current = true;
     setError("");
-    if (path === null) { setData(null); return; }
+    if (path === null || key === null) {
+      setData(null);
+      return;
+    }
+    const cached = resourceCache.get(key) as T | undefined;
+    if (cached !== undefined) setData(cached);
     request<T>(path)
       .then((result) => {
+        resourceCache.set(key, result);
         if (current) setData(result);
       })
       .catch((error) => {
@@ -78,7 +102,9 @@ export function useResource<T>(path: string | null) {
     return () => {
       current = false;
     };
-  }, [request, path, revision]);
+    // `key` covers path and shop; depending on the request itself would refetch
+    // whenever the merchant context re-renders.
+  }, [request, path, key, revision]);
   return { data, error, reload };
 }
 export function Field({
