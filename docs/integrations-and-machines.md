@@ -174,10 +174,11 @@ await client.requestScanByIdentity(
 ### 「操作」面板
 
 - `GET /api/v1/merchant/machines` 的每台设备带 `actions`：能力目录里当前可用的动作（电源 `power.on/off`、刷卡 `aime.scan`、投币 `coin`、门锁 `door.open`）。后台「操作」面板直接渲染这个列表，**新增能力不需要改前端**；前端只在接口没有 `actions` 时退回本地推导。
-- 需要指定玩家的动作由店员选人：`POST /api/v1/merchant/machines/:id/actions` 接受 `playerId`。
-  - `aime.scan` 读取该玩家绑定的卡号（优先 `aime` provider），仅作为临时参数交给执行器，不落库；没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
-  - `mahjong.seat` / `mahjong.unseat` 让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
+- 刷卡由店员直接输入 **20 位卡号**（`cardNumber`）发送；也兼容传 `playerId`，平台读取该玩家绑定的卡号（优先 `aime` provider）。卡号只作为临时参数交给执行器，不落库；卡号格式不合法返回 400，玩家没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
+- `mahjong.seat` / `mahjong.unseat` 接受 `playerId`，让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
 - `GET /api/v1/merchant/machines/:id/state` 返回 `{ power, mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。
+
+投币按键按**字符**填写（字母、数字、空格、Enter、常用未加 Shift 的符号），前端映射成 Windows Virtual-Key 码后写入 `coinKey`；协议本身只传数字键码，带 Shift 的符号（如 `!`）无法表示。已有数字键码会反向显示成可读的键名（如 32 → `Space`）。
 
 ### 引用设备与 Bot 动作
 

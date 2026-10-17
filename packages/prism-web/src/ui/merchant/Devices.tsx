@@ -491,9 +491,10 @@ function DeviceActions({
     (name) => !name.startsWith("mahjong.") && name !== "aime.scan",
   );
   const players = useResource<{ players: Player[] }>(
-    caps.hinata_io || caps.mahjong ? "players" : null,
+    caps.mahjong ? "players" : null,
   );
   const [selectedPlayer, setSelectedPlayer] = useState("");
+  const [cardNumber, setCardNumber] = useState("");
   const [table, setTable] = useState<MahjongTable | null>(null);
   const [confirming, setConfirming] = useState("");
   const [busy, setBusy] = useState("");
@@ -508,7 +509,7 @@ function DeviceActions({
       .catch(() => {});
   }, [caps.mahjong, device.id]);
   useEffect(refreshTable, [refreshTable]);
-  async function send(action: string, playerId?: string) {
+  async function send(action: string, extra?: Record<string, unknown>) {
     if (busy) return;
     setBusy(action);
     setError("");
@@ -519,7 +520,7 @@ function DeviceActions({
         mahjong?: MahjongTable;
       }>(`/api/v1/merchant/machines/${device.id}/actions`, {
         action,
-        ...(playerId ? { playerId } : {}),
+        ...extra,
       });
       setResult(
         r?.temporaryPassword
@@ -557,24 +558,25 @@ function DeviceActions({
       )}
       {caps.hinata_io && (
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            className={`${input} min-h-9 max-w-56`}
-            aria-label={t("选择玩家")}
-            value={selectedPlayer}
-            onChange={(e) => setSelectedPlayer(e.target.value)}
-          >
-            <option value="">{t("选择玩家")}</option>
-            {playerOptions.map((player) => (
-              <option key={player.id} value={player.id}>
-                {player.displayName}
-              </option>
-            ))}
-          </select>
+          <input
+            className={`${input} min-h-9 w-56 font-mono`}
+            inputMode="numeric"
+            maxLength={20}
+            placeholder={t("输入 20 位卡号")}
+            aria-label={t("卡号")}
+            value={cardNumber}
+            disabled={!device.enabled}
+            onChange={(e) =>
+              setCardNumber(e.target.value.replace(/\D/g, "").slice(0, 20))
+            }
+          />
           <button
             type="button"
             className={button}
-            disabled={!device.enabled || !selectedPlayer || !!busy}
-            onClick={() => void send("aime.scan", selectedPlayer)}
+            disabled={
+              !device.enabled || cardNumber.length !== 20 || !!busy
+            }
+            onClick={() => void send("aime.scan", { cardNumber })}
           >
             {t("刷卡")}
           </button>
@@ -601,7 +603,7 @@ function DeviceActions({
                   type="button"
                   className={`${buttonQuiet} min-h-8 px-2 text-xs`}
                   disabled={!device.enabled || !!busy}
-                  onClick={() => void send("mahjong.unseat", seat.playerId)}
+                  onClick={() => void send("mahjong.unseat", { playerId: seat.playerId })}
                 >
                   {t("下桌")}
                 </button>
@@ -631,7 +633,7 @@ function DeviceActions({
               type="button"
               className={button}
               disabled={!device.enabled || full || !selectedPlayer || !!busy}
-              onClick={() => void send("mahjong.seat", selectedPlayer)}
+              onClick={() => void send("mahjong.seat", { playerId: selectedPlayer })}
             >
               {t("上桌")}
             </button>

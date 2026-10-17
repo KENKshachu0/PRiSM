@@ -23,8 +23,10 @@ export const actionSchema=z.object({
     "power.on","power.off","aime.scan","coin","door.open",
     "mahjong.join","mahjong.leave","mahjong.seat","mahjong.unseat",
   ]),
-  /** Staff act on behalf of a chosen player for card scans and mahjong seats. */
+  /** Staff act on behalf of a chosen player for mahjong seats, or send a raw card. */
   playerId:z.string().min(1).optional(),
+  /** A card number staff typed in: 20 digits, sent to the machine as-is. */
+  cardNumber:z.string().regex(/^\d{20}$/).optional(),
   consent:z.boolean().optional(),
   location:z.unknown().optional(),
 });
@@ -76,21 +78,26 @@ export async function executeDeviceAction(
       jsonError(409, "请先开机", "DEVICE_POWER_OFF");
   }
   const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY, c.env);
-  // A card scan sends a card to the machine, so staff have to name the player
-  // whose bound card is used. The card number is looked up at the last moment
-  // and handed to the runner only; it is never stored.
+  // A card scan sends a card to the machine. Staff either type the 20-digit
+  // card number or name a player whose bound card is used. The number is
+  // handed to the runner only; it is never stored.
   let accessCode: string | null = null;
   if (staff && action === "aime.scan") {
-    if (!body.playerId) jsonError(400, "请选择玩家", "PLAYER_REQUIRED");
-    const identity = await c.env.DB.prepare(
-      `SELECT subject FROM player_identities
-       WHERE shop_id=? AND player_id=?
-       ORDER BY CASE WHEN provider='aime' THEN 0 ELSE 1 END, created_at
-       LIMIT 1`,
-    ).bind(shop.id, body.playerId).first<{ subject: string }>();
-    if (!identity)
-      jsonError(409, "该玩家没有绑定的卡片", "SCAN_IDENTITY_NOT_BOUND_TO_PLAYER");
-    accessCode = identity.subject;
+    if (body.cardNumber) {
+      accessCode = body.cardNumber;
+    } else if (body.playerId) {
+      const identity = await c.env.DB.prepare(
+        `SELECT subject FROM player_identities
+         WHERE shop_id=? AND player_id=?
+         ORDER BY CASE WHEN provider='aime' THEN 0 ELSE 1 END, created_at
+         LIMIT 1`,
+      ).bind(shop.id, body.playerId).first<{ subject: string }>();
+      if (!identity)
+        jsonError(409, "该玩家没有绑定的卡片", "SCAN_IDENTITY_NOT_BOUND_TO_PLAYER");
+      accessCode = identity.subject;
+    } else {
+      jsonError(400, "请输入卡号或选择玩家", "CARD_REQUIRED");
+    }
   }
   return runPlayerOperation(
     c,

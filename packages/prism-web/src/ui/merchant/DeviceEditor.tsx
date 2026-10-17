@@ -11,6 +11,7 @@ import {
 import { api, type Machine } from "../../api";
 import { useI18n } from "../../i18n";
 import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant } from "./shared";
+import { keyTextFromVk, vkFromKeyText } from "./coin-key";
 import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
 
 /**
@@ -64,6 +65,10 @@ export function DeviceEditor({
   const [password, setPassword] = useState("");
   const [coinKey, setCoinKey] = useState(
     value?.coinKey ? String(value.coinKey) : "",
+  );
+  // The coin action is a simulated key press, so the store types a key.
+  const [coinKeyText, setCoinKeyText] = useState(
+    keyTextFromVk(value?.coinKey),
   );
   const [coinAfterSwipe, setCoinAfterSwipe] = useState(
     value?.coinAfterSwipe ?? false,
@@ -487,16 +492,18 @@ export function DeviceEditor({
             )}
             <div className="grid gap-3 border-t border-ink/10 pt-4">
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="投币按键码">
+                <Field label="投币按键">
                   <input
                     className={input}
-                    type="number"
-                    min="1"
-                    max="65535"
                     placeholder={t("留空关闭投币")}
                     disabled={!canCoin}
-                    value={coinKey}
-                    onChange={(e) => setCoinKey(e.target.value)}
+                    value={coinKeyText}
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      setCoinKeyText(text);
+                      const code = vkFromKeyText(text);
+                      setCoinKey(code ? String(code) : "");
+                    }}
                   />
                 </Field>
                 <label className="flex items-end gap-2 pb-3 text-sm">
@@ -510,7 +517,7 @@ export function DeviceEditor({
                 </label>
               </div>
               <Hint>
-                {t("按键码使用 Windows Virtual-Key Codes，例如 32 是空格键。")}
+                {t("模拟按下这个键：字母、数字、空格或 Enter 都可以。")}
               </Hint>
             </div>
           </div>
