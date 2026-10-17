@@ -310,7 +310,7 @@ function PricingEditor({
   // Periods start collapsed: a rule with four periods used to be a 2000px
   // form. Opening one at a time keeps the current period in view.
   const [openRule, setOpenRule] = useState<number | null>(null);
-  const [showRing, setShowRing] = useState(false);
+  const [showRing, setShowRing] = useState(true);
   const rules = draft.provider.rules ?? [];
   const changeDay = (nextDay: string) => {
     setDraft(
@@ -559,6 +559,8 @@ function PricingEditor({
             </button>
           </div>
 
+          {/* Expanded by default: the ring is how a store checks that the
+              periods it just typed actually tile the day. */}
           <div className="rounded-xl border border-ink/10">
             <button
               type="button"
