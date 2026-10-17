@@ -283,7 +283,7 @@ function DeviceCard({
         enabled ? "" : "opacity-60"
       }`}
     >
-      <div className="flex items-start gap-3 p-5">
+      <div className="flex items-center gap-3 px-5 py-4">
         <span
           className={`grid size-11 shrink-0 place-items-center rounded-xl ${
             caps.door && !configured
@@ -301,7 +301,7 @@ function DeviceCard({
         </div>
       </div>
       {chips.length > 0 && (
-        <div className="mb-5 flex flex-wrap gap-2 px-5 text-xs text-ink/70">
+        <div className="mb-4 flex flex-wrap gap-2 px-5 text-xs text-ink/70">
           {chips.map((id) => {
             const chip = capabilityChips[id];
             const Icon = chip.icon;
