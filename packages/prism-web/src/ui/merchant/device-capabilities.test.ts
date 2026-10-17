@@ -4,7 +4,6 @@ import {
   deviceActionGroups,
   deviceActions,
   deviceCapabilities,
-  deviceSummaryKey,
   isDirectConnect,
   isUnconfigured,
 } from "./device-capabilities";
@@ -115,23 +114,6 @@ describe("device capability view", () => {
       { capability: "hinata_io", actions: ["aime.scan"] },
       { capability: "mahjong", actions: ["mahjong.seat"] },
     ]);
-  });
-
-  it("names the device by its strongest capability", () => {
-    expect(deviceSummaryKey(machine())).toBe("未绑定能力");
-    expect(deviceSummaryKey(machine({ ttlockLockId: 1 }))).toBe("获取开门密码");
-    expect(
-      deviceSummaryKey(machine({ mahjong: { capacity: 4, pricingConfigIds: [] } })),
-    ).toBe("麻将桌");
-    expect(deviceSummaryKey(machine({ hasHinata: true }))).toBe("刷卡机台");
-    expect(
-      deviceSummaryKey(
-        machine({
-          hasHinata: true,
-          homeAssistant: { url: "https://ha", entityId: "switch.a" },
-        }),
-      ),
-    ).toBe("开机与刷卡");
   });
 
   it("flags a device with no binding as unconfigured", () => {

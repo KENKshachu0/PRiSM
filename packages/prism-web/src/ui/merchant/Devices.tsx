@@ -31,7 +31,6 @@ import {
   deviceActionGroups,
   deviceActions,
   deviceCapabilities,
-  deviceSummaryKey,
   isDirectConnect,
   type CapabilityId,
 } from "./device-capabilities";
@@ -275,15 +274,9 @@ function DeviceCard({
   // Seating a player is a mahjong operation even though the catalog lists no
   // device action for that capability.
   const hasControls = actions.length > 0 || !!caps.mahjong;
-  // A mahjong table is described by its seat count, so it is part of the
-  // summary instead of repeating as a chip below it.
-  const summary =
-    caps.mahjong && device.mahjong
-      ? `${t("麻将桌")} · ${t("{count} 人", { count: device.mahjong.capacity })}`
-      : t(deviceSummaryKey(device));
-  const chips = capabilityOrder.filter(
-    (id) => caps[id] && id !== "mahjong",
-  );
+  // The capability chips carry the device's purpose, so the card has no
+  // separate subtitle saying the same thing again.
+  const chips = capabilityOrder.filter((id) => caps[id]);
   return (
     <article
       className={`group relative flex flex-col overflow-hidden rounded-xl border border-ink/10 bg-panel transition-colors ${
@@ -302,10 +295,9 @@ function DeviceCard({
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold">{device.name}</h3>
-          <p className="mt-1 text-xs text-ink/50">
-            {summary}
-            {!enabled && ` · ${t("已停用")}`}
-          </p>
+          {!enabled && (
+            <p className="mt-1 text-xs text-ink/50">{t("已停用")}</p>
+          )}
         </div>
       </div>
       {chips.length > 0 && (
@@ -320,6 +312,11 @@ function DeviceCard({
               >
                 <Icon size={13} />
                 {t(chip.label)}
+                {id === "mahjong" && device.mahjong && (
+                  <span className="text-ink/50">
+                    {t("{count} 人", { count: device.mahjong.capacity })}
+                  </span>
+                )}
                 {id === "hinata_io" && isDirectConnect(device) && (
                   <span className="text-mint">{t("直连")}</span>
                 )}

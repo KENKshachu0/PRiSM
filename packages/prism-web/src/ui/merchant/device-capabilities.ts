@@ -135,27 +135,6 @@ export function deviceActions(
   return deviceActionGroups(machine).flatMap((group) => group.actions);
 }
 
-/** One short line naming what this device is for, used by the device card. */
-export function deviceSummaryKey(
-  machine: Pick<
-    Machine,
-    | "kind"
-    | "homeAssistant"
-    | "ttlockLockId"
-    | "mahjong"
-    | "hasHinata"
-    | "relayConnection"
-  >,
-): string {
-  const caps = deviceCapabilities(machine);
-  if (caps.mahjong) return "麻将桌";
-  if (caps.door) return "获取开门密码";
-  if (caps.power && caps.hinata_io) return "开机与刷卡";
-  if (caps.hinata_io) return "刷卡机台";
-  if (caps.power) return "电源控制";
-  return "未绑定能力";
-}
-
 /** A device with no capability has nothing a staff member can do with it. */
 export function isUnconfigured(
   machine: Parameters<typeof deviceCapabilities>[0],

@@ -33,6 +33,15 @@ const SettingsPage = lazy(() =>
 );
 const ShopPage = lazy(() => import("./ShopPage"));
 
+/**
+ * The coarse route identity used to reset the error boundary. A merchant tab
+ * switch stays inside the same shop and must keep the page mounted.
+ */
+function routeArea(pathname: string): string {
+  const [first, second] = pathname.split("/").filter(Boolean);
+  return first === "merchant" && second ? `/${first}/${second}` : pathname;
+}
+
 export function App() {
   return (
     <AuthProvider>
@@ -104,7 +113,9 @@ function Shell() {
         </div>
       )}
       <main className={machineSession ? "session-main" : "site-main"}>
-        <PageErrorBoundary key={pathname}>
+        {/* Keyed by area, not by full path: switching a merchant tab must not
+            remount the page, or it drops its data and flashes a loading state. */}
+        <PageErrorBoundary key={routeArea(pathname)}>
         <Suspense
           fallback={
             <div className="rounded border border-ink/10 bg-panel p-6">
