@@ -3,7 +3,7 @@ import { BillingSimulator } from "./BillingSimulator";
 import { pricingInZone } from "./pricing-clock";
 import { billTime } from "../bill-time";
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 import {
   ActionForm,
@@ -12,6 +12,7 @@ import {
   State,
   Table,
   button,
+  buttonQuiet,
   cell,
   input,
   money,
@@ -74,6 +75,7 @@ const newRule = (): Rule => ({
   },
   priceCap: 0,
 });
+
 export function PricingPage() {
   const { t } = useI18n();
   const { canWrite } = useMerchant();
@@ -90,8 +92,13 @@ export function PricingPage() {
   );
   return (
     <div className="grid gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">{t("计费规则")}</h2>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold">{t("计费规则")}</h2>
+          <p className="mt-1 text-sm text-ink/55">
+            {t("按时间计费或收取固定费用；玩家入场时按匹配到的规则结算。")}
+          </p>
+        </div>
         {canWrite && (
           <button
             className={primary}
@@ -110,27 +117,64 @@ export function PricingPage() {
             {t("添加规则")}
           </button>
         )}
+      </header>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          />
+          {t("显示已归档")}
+        </label>
+        {canWrite && (
+          <button
+            type="button"
+            className={button}
+            aria-expanded={showSimulator}
+            onClick={() => setShowSimulator((value) => !value)}
+          >
+            {t("计费模拟器")}
+            <ChevronDown
+              size={15}
+              className={showSimulator ? "rotate-180" : ""}
+              aria-hidden="true"
+            />
+          </button>
+        )}
       </div>
-      {canWrite && <div>
-        <button type="button" className={button} aria-expanded={showSimulator} onClick={() => setShowSimulator(value => !value)}>
-          {t("计费模拟器")}{showSimulator ? " −" : " +"}
-        </button>
-      </div>}
-      {showSimulator && resource.data && <BillingSimulator pricingConfigs={resource.data.pricingConfigs} />}
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={showArchived}
-          onChange={(e) => setShowArchived(e.target.checked)}
-        />
-        {t("显示已归档")}
-      </label>
+      {showSimulator && resource.data && (
+        <BillingSimulator pricingConfigs={resource.data.pricingConfigs} />
+      )}
       {!rows ? (
         <State error={resource.error} />
       ) : !rows.length ? (
-        <State empty />
+        <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
+          <p className="font-medium">{t("还没有计费规则")}</p>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-ink/55">
+            {t("入场计费需要至少一条按时计费的规则。")}
+          </p>
+          {canWrite && (
+            <button
+              className={`${primary} mt-5`}
+              onClick={() =>
+                setEdit({
+                  id: "",
+                  kind: "time.priority",
+                  name: "",
+                  enabled: true,
+                  status: "active",
+                  provider: { id: crypto.randomUUID(), rules: [newRule()] },
+                })
+              }
+            >
+              <Plus size={16} />
+              {t("添加规则")}
+            </button>
+          )}
+        </div>
       ) : (
-        <Table headers={["名称", "计费方式", "状态", "操作"]}>
+        <Table headers={["名称", "计费方式", "时段", "状态", "操作"]}>
           {rows.map((row) => (
             <tr key={row.id}>
               <td className={`${cell} font-medium`}>{row.name}</td>
@@ -139,6 +183,13 @@ export function PricingPage() {
                 {row.kind === "charge.fixed" && (
                   <span className="ml-2">{money(row.provider.amount)}</span>
                 )}
+              </td>
+              <td className={`${cell} text-ink/60`}>
+                {row.kind === "charge.fixed"
+                  ? t("单次收取")
+                  : t("{count} 个时段", {
+                      count: row.provider.rules?.length ?? 0,
+                    })}
               </td>
               <td className={cell}>
                 {t(
@@ -172,6 +223,7 @@ export function PricingPage() {
         <Modal
           title={edit.id ? "编辑规则" : "添加规则"}
           close={() => setEdit(null)}
+          wide
         >
           <PricingEditor
             value={edit}
@@ -209,6 +261,32 @@ export function PricingPage() {
     </div>
   );
 }
+
+/** The one line a collapsed period shows, so its settings stay readable. */
+function ruleSummary(rule: Rule, kind: Pricing["kind"], t: (key: string) => string) {
+  const time = rule.timeRange
+    ? `${rule.timeRange.start}–${rule.timeRange.end}`
+    : null;
+  if (kind === "time.cap")
+    return [
+      rule.label || t("未命名时段"),
+      time,
+      money(rule.priceCap ?? 0),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  const pricing = rule.pricing;
+  return [
+    rule.label || t("未命名时段"),
+    time,
+    pricing
+      ? `${money(pricing.unitPrice)} / ${pricing.unitMinutes} ${t("分钟")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function PricingEditor({
   value,
   all,
@@ -221,11 +299,33 @@ function PricingEditor({
   const { t } = useI18n();
   const request = useStaffApi();
   const { timeZone } = useMerchant();
-  const displayTimeZone = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const [day, setDay] = useState(() => billTime(new Date().toISOString(), displayTimeZone).date);
-  const [draft, setDraft] = useState(() => pricingInZone(value, value.id ? value.provider.timeZone ?? "UTC" : displayTimeZone, displayTimeZone, day));
+  const displayTimeZone =
+    timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [day, setDay] = useState(() =>
+    billTime(new Date().toISOString(), displayTimeZone).date,
+  );
+  const [draft, setDraft] = useState(() =>
+    pricingInZone(
+      value,
+      value.id ? (value.provider.timeZone ?? "UTC") : displayTimeZone,
+      displayTimeZone,
+      day,
+    ),
+  );
+  // Periods start collapsed: a rule with four periods used to be a 2000px
+  // form. Opening one at a time keeps the current period in view.
+  const [openRule, setOpenRule] = useState<number | null>(null);
+  const [showRing, setShowRing] = useState(false);
+  const rules = draft.provider.rules ?? [];
   const changeDay = (nextDay: string) => {
-    setDraft(pricingInZone(pricingInZone(draft, displayTimeZone, "UTC", day), "UTC", displayTimeZone, nextDay));
+    setDraft(
+      pricingInZone(
+        pricingInZone(draft, displayTimeZone, "UTC", day),
+        "UTC",
+        displayTimeZone,
+        nextDay,
+      ),
+    );
     setDay(nextDay);
   };
   const update = (patch: Partial<Pricing>) => setDraft({ ...draft, ...patch });
@@ -233,100 +333,156 @@ function PricingEditor({
     update({ provider: { ...draft.provider, ...patch } });
   const changeRule = (index: number, patch: Partial<Rule>) =>
     provider({
-      rules: draft.provider.rules?.map((r, i) =>
-        i === index ? { ...r, ...patch } : r,
-      ),
+      rules: rules.map((r, i) => (i === index ? { ...r, ...patch } : r)),
     });
+  const openPeriod = (index: number) => {
+    setOpenRule(index);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`dialog[open] [data-period="${index}"]`)
+          ?.scrollIntoView({ block: "nearest" });
+      });
+    });
+  };
+  /** Returns the first reason the draft cannot be saved. */
+  const firstProblem = (): { message: string; period?: number } | null => {
+    if (!draft.name.trim()) return { message: t("请填写规则名称") };
+    if (draft.kind === "charge.fixed") {
+      if (!draft.provider.label?.trim())
+        return { message: t("请填写账单名称") };
+      if ((draft.provider.amount ?? 0) < 0)
+        return { message: t("金额不能为负数") };
+      return null;
+    }
+    for (let index = 0; index < rules.length; index += 1) {
+      const rule = rules[index]!;
+      if (!rule.label.trim())
+        return { message: t("请填写时段名称"), period: index };
+      if (draft.kind === "time.cap") {
+        if (!((rule.priceCap ?? 0) > 0))
+          return { message: t("封顶金额需要大于 0"), period: index };
+      } else if (rule.pricing) {
+        if (!(rule.pricing.unitMinutes > 0))
+          return { message: t("每隔分钟数需要大于 0"), period: index };
+        if (!(rule.pricing.unitPrice >= 0))
+          return { message: t("收费金额不能为负数"), period: index };
+      }
+    }
+    return null;
+  };
   return (
     <ActionForm
+      sticky
+      noValidate
       done={done}
-      submit={() =>
-        request(
+      submit={() => {
+        const problem = firstProblem();
+        if (problem) {
+          // Browsers cannot focus a field in a collapsed period, so the check
+          // runs here and opens the period that needs attention.
+          if (problem.period !== undefined) openPeriod(problem.period);
+          throw new Error(problem.message);
+        }
+        return request(
           `pricing-configs${draft.id ? `/${segment(draft.id)}` : ""}`,
           draft.id ? "PATCH" : "POST",
           {
             kind: draft.kind,
-            name: draft.name,
+            name: draft.name.trim(),
             enabled: draft.enabled,
             provider: pricingInZone(draft, displayTimeZone, "UTC", day).provider,
           },
-        )
-      }
+        );
+      }}
     >
-      <Field label="名称">
-        <input
-          className={input}
-          required
-          maxLength={80}
-          value={draft.name}
-          onChange={(e) => update({ name: e.target.value })}
-        />
-      </Field>
-      <Field label="计费方式">
-        <select
-          className={input}
-          value={draft.kind}
-          disabled={!!draft.id}
-          onChange={(e) => {
-            const kind = e.target.value as Pricing["kind"];
-            update({
-              kind,
-              provider:
-                kind === "charge.fixed"
-                  ? { id: draft.provider.id, label: draft.name, amount: 10 }
-                  : {
-                      id: draft.provider.id,
-                      rules: [newRule()],
-                      ...(kind === "time.cap"
-                        ? { includedPricingConfigIds: [] }
-                        : {}),
-                    },
-            });
-          }}
-        >
-          {Object.entries(kinds).map(([key, label]) => (
-            <option key={key} value={key}>
-              {t(label)}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={draft.enabled}
-          disabled={draft.status === "archived"}
-          onChange={(e) => update({ enabled: e.target.checked })}
-        />
-        {t("启用")}
-      </label>
+      <section className="grid gap-3">
+        <h3 className="text-sm font-semibold">{t("基本信息")}</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="名称">
+            <input
+              className={input}
+              required
+              maxLength={80}
+              value={draft.name}
+              onChange={(e) => update({ name: e.target.value })}
+            />
+          </Field>
+          <Field label="计费方式">
+            <select
+              className={input}
+              value={draft.kind}
+              disabled={!!draft.id}
+              onChange={(e) => {
+                const kind = e.target.value as Pricing["kind"];
+                update({
+                  kind,
+                  provider:
+                    kind === "charge.fixed"
+                      ? { id: draft.provider.id, label: draft.name, amount: 10 }
+                      : {
+                          id: draft.provider.id,
+                          rules: [newRule()],
+                          ...(kind === "time.cap"
+                            ? { includedPricingConfigIds: [] }
+                            : {}),
+                        },
+                });
+                setOpenRule(null);
+              }}
+            >
+              {Object.entries(kinds).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {t(label)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            disabled={draft.status === "archived"}
+            onChange={(e) => update({ enabled: e.target.checked })}
+          />
+          {t("启用规则")}
+        </label>
+      </section>
+
       {draft.kind === "charge.fixed" ? (
-        <>
-          <Field label="账单名称">
-            <input
-              className={input}
-              required
-              value={draft.provider.label ?? ""}
-              onChange={(e) => provider({ label: e.target.value })}
-            />
-          </Field>
-          <Field label="金额">
-            <input
-              className={input}
-              type="number"
-              required
-              min="0"
-              step="0.01"
-              value={draft.provider.amount ?? 0}
-              onChange={(e) => provider({ amount: Number(e.target.value) })}
-            />
-          </Field>
-        </>
+        <section className="grid gap-3">
+          <h3 className="text-sm font-semibold">{t("收费")}</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="账单名称">
+              <input
+                className={input}
+                required
+                value={draft.provider.label ?? ""}
+                onChange={(e) => provider({ label: e.target.value })}
+              />
+            </Field>
+            <Field label="金额">
+              <input
+                className={input}
+                type="number"
+                required
+                min="0"
+                step="0.01"
+                value={draft.provider.amount ?? 0}
+                onChange={(e) => provider({ amount: Number(e.target.value) })}
+              />
+            </Field>
+          </div>
+        </section>
       ) : (
-        <>
+        <section className="grid gap-3">
+          <h3 className="text-sm font-semibold">
+            {t(draft.kind === "time.cap" ? "封顶设置" : "计费时段")}
+          </h3>
           {draft.kind === "time.cap" && (
-            <fieldset className="grid gap-2">
-              <legend className="mb-2 text-sm font-medium">
+            <fieldset className="grid gap-2 rounded-xl border border-ink/10 p-4">
+              <legend className="px-1 text-sm font-medium">
                 {t("计入封顶的规则")}
               </legend>
               {all
@@ -362,254 +518,344 @@ function PricingEditor({
                     {p.name}
                   </label>
                 ))}
+              {!all.some(
+                (p) =>
+                  p.id !== draft.id &&
+                  p.kind !== "time.cap" &&
+                  p.status !== "archived",
+              ) && (
+                <p className="text-sm text-ink/55">
+                  {t("还没有可计入封顶的规则。")}
+                </p>
+              )}
             </fieldset>
           )}
-          <PricingRing
-            value={draft}
-            localDate={day}
-            onDateChange={changeDay}
-            onSelect={(id) =>
-              document
-                .getElementById(`pricing-rule-${id}`)
-                ?.scrollIntoView({ behavior: "smooth", block: "start" })
-            }
-          />
-          <div className="divide-y divide-ink/10">
-            {draft.provider.rules?.map((rule, index) => (
-              <div
+
+          <div className="grid gap-2">
+            {rules.map((rule, index) => (
+              <PeriodCard
                 key={rule.id}
-                id={`pricing-rule-${rule.id}`}
-                className="grid scroll-mt-20 gap-3 py-5"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">
-                    {t("时段")} {index + 1}
-                  </span>
-                  <button
-                    type="button"
-                    className="focus-ring rounded p-2 text-sm text-coral"
-                    disabled={draft.provider.rules!.length === 1}
-                    onClick={() =>
-                      provider({
-                        rules: draft.provider.rules?.filter(
-                          (_, i) => i !== index,
-                        ),
-                      })
-                    }
-                  >
-                    {t("移除")}
-                  </button>
-                </div>
-                <Field label="名称">
+                index={index}
+                rule={rule}
+                kind={draft.kind}
+                open={openRule === index}
+                onToggle={() => setOpenRule(openRule === index ? null : index)}
+                canRemove={rules.length > 1}
+                onRemove={() =>
+                  provider({
+                    rules: rules.filter((_, i) => i !== index),
+                  })
+                }
+                onChange={(patch) => changeRule(index, patch)}
+                weekdaysLabel={(day) => t(["一", "二", "三", "四", "五", "六", "日"][day]!)}
+                t={t}
+              />
+            ))}
+            <button
+              type="button"
+              className={`${buttonQuiet} min-h-10 justify-self-start px-2 text-sm`}
+              onClick={() => {
+                provider({ rules: [...rules, newRule()] });
+                setOpenRule(rules.length);
+              }}
+            >
+              <Plus size={15} />
+              {t("添加时段")}
+            </button>
+          </div>
+
+          <div className="rounded-xl border border-ink/10">
+            <button
+              type="button"
+              className="focus-ring flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium"
+              aria-expanded={showRing}
+              onClick={() => setShowRing((value) => !value)}
+            >
+              {t("24 小时计费预览")}
+              <ChevronDown
+                size={16}
+                className={`text-ink/35 transition-transform ${showRing ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+            {showRing && (
+              <div className="border-t border-ink/10 p-4">
+                <PricingRing
+                  value={draft}
+                  localDate={day}
+                  onDateChange={changeDay}
+                  onSelect={(id) => {
+                    const index = rules.findIndex((r) => r.id === id);
+                    if (index >= 0) openPeriod(index);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+    </ActionForm>
+  );
+}
+
+/**
+ * One period: the header states the rule in one line, and the fields only
+ * exist while the period is open.
+ */
+function PeriodCard({
+  index,
+  rule,
+  kind,
+  open,
+  onToggle,
+  canRemove,
+  onRemove,
+  onChange,
+  weekdaysLabel,
+  t,
+}: {
+  index: number;
+  rule: Rule;
+  kind: Pricing["kind"];
+  open: boolean;
+  onToggle: () => void;
+  canRemove: boolean;
+  onRemove: () => void;
+  onChange: (patch: Partial<Rule>) => void;
+  weekdaysLabel: (day: number) => string;
+  t: (key: string) => string;
+}) {
+  return (
+    <div
+      data-period={index}
+      className={`rounded-xl border transition-colors ${
+        open ? "border-mint/40 bg-mint/[0.03]" : "border-ink/10 bg-panel"
+      }`}
+    >
+      <div className="flex items-start gap-3 p-4">
+        <button
+          type="button"
+          className="focus-ring flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left"
+          aria-expanded={open}
+          onClick={onToggle}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">
+              {`${t("时段")} ${index + 1}`}
+            </span>
+            <span className="mt-0.5 block text-xs text-ink/55">
+              {ruleSummary(rule, kind, t)}
+            </span>
+          </span>
+          <ChevronDown
+            size={16}
+            className={`mt-0.5 shrink-0 text-ink/35 transition-transform ${open ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
+        </button>
+        {canRemove && (
+          <button
+            type="button"
+            className={`${buttonQuiet} min-h-9 shrink-0 px-2 text-xs text-coral`}
+            onClick={onRemove}
+          >
+            {t("移除")}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="grid gap-3 border-t border-ink/10 p-4">
+          <Field label="名称">
+            <input
+              className={input}
+              required
+              value={rule.label}
+              onChange={(e) => onChange({ label: e.target.value })}
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="开始">
+              <input
+                className={input}
+                type="time"
+                required
+                value={rule.timeRange?.start ?? "00:00"}
+                onChange={(e) =>
+                  onChange({
+                    timeRange: {
+                      start: e.target.value,
+                      end: rule.timeRange?.end ?? "00:00",
+                    },
+                  })
+                }
+              />
+            </Field>
+            <Field label="结束">
+              <input
+                className={input}
+                type="time"
+                required
+                value={rule.timeRange?.end ?? "00:00"}
+                onChange={(e) =>
+                  onChange({
+                    timeRange: {
+                      start: rule.timeRange?.start ?? "00:00",
+                      end: e.target.value,
+                    },
+                  })
+                }
+              />
+            </Field>
+          </div>
+          <p className="text-xs text-ink/50">
+            {t("开始与结束相同表示全天。")}
+          </p>
+          {kind === "time.cap" ? (
+            <Field label="封顶金额">
+              <input
+                className={input}
+                required
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={rule.priceCap ?? 0}
+                onChange={(e) =>
+                  onChange({ priceCap: Number(e.target.value) })
+                }
+              />
+            </Field>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {(
+                [
+                  ["unitMinutes", "每隔（分钟）", 1],
+                  ["unitPrice", "收费金额", 0],
+                  ["roundGraceMinutes", "宽限（分钟）", 0],
+                  ["priceCap", "时段封顶（0 为不限）", 0],
+                ] as const
+              ).map(([key, label, min]) => (
+                <Field key={key} label={label}>
                   <input
                     className={input}
+                    type="number"
                     required
-                    value={rule.label}
+                    min={min}
+                    step={
+                      key === "unitPrice" || key === "priceCap" ? "0.01" : "1"
+                    }
+                    value={rule.pricing?.[key] ?? 0}
                     onChange={(e) =>
-                      changeRule(index, { label: e.target.value })
+                      onChange({
+                        pricing: {
+                          ...rule.pricing!,
+                          [key]: Number(e.target.value),
+                        },
+                      })
                     }
                   />
                 </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="开始">
+              ))}
+            </div>
+          )}
+          <details>
+            <summary className="cursor-pointer py-2 text-sm text-ink/60">
+              {t("日期与优先级")}
+            </summary>
+            <div className="mt-3 grid gap-3">
+              <Field label="优先级">
+                <input
+                  className={input}
+                  type="number"
+                  step="1"
+                  required
+                  value={rule.priority}
+                  onChange={(e) =>
+                    onChange({ priority: Number(e.target.value) })
+                  }
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                {[1, 2, 3, 4, 5, 6, 0].map((day) => (
+                  <label className="flex gap-1 text-sm" key={day}>
+                    <input
+                      type="checkbox"
+                      checked={rule.weekdays?.includes(day) ?? true}
+                      onChange={(e) =>
+                        onChange({
+                          weekdays: e.target.checked
+                            ? [...(rule.weekdays ?? []), day]
+                            : (rule.weekdays ?? [0, 1, 2, 3, 4, 5, 6]).filter(
+                                (d) => d !== day,
+                              ),
+                        })
+                      }
+                    />
+                    {weekdaysLabel(day)}
+                  </label>
+                ))}
+              </div>
+              <Field label="指定日期（逗号分隔）">
+                <input
+                  className={input}
+                  placeholder="2026-10-01, 2026-10-02"
+                  value={rule.specificDates?.join(", ") ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      specificDates: e.target.value
+                        ? e.target.value.split(",").map((s) => s.trim())
+                        : undefined,
+                    })
+                  }
+                />
+              </Field>
+              {rule.dateTimeRange && (
+                <>
+                  <Field label="生效时间">
                     <input
                       className={input}
-                      type="time"
-                      required
-                      value={rule.timeRange?.start ?? "00:00"}
+                      value={rule.dateTimeRange.start}
                       onChange={(e) =>
-                        changeRule(index, {
-                          timeRange: {
+                        onChange({
+                          dateTimeRange: {
+                            ...rule.dateTimeRange!,
                             start: e.target.value,
-                            end: rule.timeRange?.end ?? "00:00",
                           },
                         })
                       }
                     />
                   </Field>
-                  <Field label="结束">
+                  <Field label="结束时间">
                     <input
                       className={input}
-                      type="time"
-                      required
-                      value={rule.timeRange?.end ?? "00:00"}
+                      value={rule.dateTimeRange.end}
                       onChange={(e) =>
-                        changeRule(index, {
-                          timeRange: {
-                            start: rule.timeRange?.start ?? "00:00",
+                        onChange({
+                          dateTimeRange: {
+                            ...rule.dateTimeRange!,
                             end: e.target.value,
                           },
                         })
                       }
                     />
                   </Field>
-                </div>
-                <p className="text-xs text-ink/50">
-                  {t("开始与结束相同表示全天。")}
-                </p>
-                {draft.kind === "time.cap" ? (
-                  <Field label="封顶金额">
-                    <input
-                      className={input}
-                      required
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={rule.priceCap ?? 0}
-                      onChange={(e) =>
-                        changeRule(index, { priceCap: Number(e.target.value) })
-                      }
-                    />
-                  </Field>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    {(
-                      [
-                        ["unitMinutes", "每隔（分钟）", 1],
-                        ["unitPrice", "收费金额", 0],
-                        ["roundGraceMinutes", "宽限（分钟）", 0],
-                        ["priceCap", "时段封顶（0 为不限）", 0],
-                      ] as const
-                    ).map(([key, label, min]) => (
-                      <Field key={key} label={label}>
-                        <input
-                          className={input}
-                          type="number"
-                          required
-                          min={min}
-                          step={
-                            key === "unitPrice" || key === "priceCap"
-                              ? "0.01"
-                              : "1"
-                          }
-                          value={rule.pricing?.[key] ?? 0}
-                          onChange={(e) =>
-                            changeRule(index, {
-                              pricing: {
-                                ...rule.pricing!,
-                                [key]: Number(e.target.value),
-                              },
-                            })
-                          }
-                        />
-                      </Field>
-                    ))}
-                  </div>
-                )}
-                <details>
-                  <summary className="cursor-pointer py-2 text-sm text-ink/60">
-                    {t("日期与优先级")}
-                  </summary>
-                  <div className="mt-3 grid gap-3">
-                    <Field label="优先级">
-                      <input
-                        className={input}
-                        type="number"
-                        step="1"
-                        required
-                        value={rule.priority}
-                        onChange={(e) =>
-                          changeRule(index, {
-                            priority: Number(e.target.value),
-                          })
-                        }
-                      />
-                    </Field>
-                    <div className="flex flex-wrap gap-3">
-                      {[1, 2, 3, 4, 5, 6, 0].map((day, i) => (
-                        <label className="flex gap-1 text-sm" key={day}>
-                          <input
-                            type="checkbox"
-                            checked={rule.weekdays?.includes(day) ?? true}
-                            onChange={(e) =>
-                              changeRule(index, {
-                                weekdays: e.target.checked
-                                  ? [...(rule.weekdays ?? []), day]
-                                  : (
-                                      rule.weekdays ?? [0, 1, 2, 3, 4, 5, 6]
-                                    ).filter((d) => d !== day),
-                              })
-                            }
-                          />
-                          {t(["一", "二", "三", "四", "五", "六", "日"][i]!)}
-                        </label>
-                      ))}
-                    </div>
-                    <Field label="指定日期（逗号分隔）">
-                      <input
-                        className={input}
-                        placeholder="2026-10-01, 2026-10-02"
-                        value={rule.specificDates?.join(", ") ?? ""}
-                        onChange={(e) =>
-                          changeRule(index, {
-                            specificDates: e.target.value
-                              ? e.target.value.split(",").map((s) => s.trim())
-                              : undefined,
-                          })
-                        }
-                      />
-                    </Field>
-                    {rule.dateTimeRange && (
-                      <>
-                        <Field label="生效时间">
-                          <input
-                            className={input}
-                            value={rule.dateTimeRange.start}
-                            onChange={(e) =>
-                              changeRule(index, {
-                                dateTimeRange: {
-                                  ...rule.dateTimeRange!,
-                                  start: e.target.value,
-                                },
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="结束时间">
-                          <input
-                            className={input}
-                            value={rule.dateTimeRange.end}
-                            onChange={(e) =>
-                              changeRule(index, {
-                                dateTimeRange: {
-                                  ...rule.dateTimeRange!,
-                                  end: e.target.value,
-                                },
-                              })
-                            }
-                          />
-                        </Field>
-                      </>
-                    )}
-                    <label className="flex gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={rule.status !== "archived"}
-                        onChange={(e) =>
-                          changeRule(index, {
-                            status: e.target.checked ? "active" : "archived",
-                          })
-                        }
-                      />
-                      {t("启用时段")}
-                    </label>
-                  </div>
-                </details>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className={button}
-            onClick={() =>
-              provider({ rules: [...(draft.provider.rules ?? []), newRule()] })
-            }
-          >
-            <Plus size={16} />
-            {t("添加时段")}
-          </button>
-        </>
+                </>
+              )}
+              <label className="flex gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={rule.status !== "archived"}
+                  onChange={(e) =>
+                    onChange({
+                      status: e.target.checked ? "active" : "archived",
+                    })
+                  }
+                />
+                {t("启用时段")}
+              </label>
+            </div>
+          </details>
+        </div>
       )}
-    </ActionForm>
+    </div>
   );
 }
