@@ -191,11 +191,14 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
   const visible = matched.map((row) => {
     const quote = quoted.get(row.id);
     if (!quote) return row;
+    const bill = liveBilling(quote);
     return {
       ...row,
       stayMinutes: quote.stayDurationMinutes,
       estimatedTotal: quote.estimatedTotal,
       status: quote.status,
+      billStatus: bill.status,
+      planNames: bill.plans,
       startedAt: quote.sessions?.[0]?.startedAt ?? row.startedAt,
       sessionCount: quote.sessions?.length ?? row.sessionCount,
     };
