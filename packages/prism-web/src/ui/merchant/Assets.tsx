@@ -129,27 +129,6 @@ export function AssetsPage() {
           </button>
         )}
       </header>
-      {/* The four tabs are one flow, not four equal sections: assets are what a
-          player holds, an effect prices them, and gifts/codes hand them out. */}
-      <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink/50">
-        {[
-          ["1", "资产", "余额或权益"],
-          ["2", "优惠", "折扣或加收"],
-          ["3", "礼物", "打包发放"],
-          ["4", "兑换码", "玩家领取"],
-        ].map(([step, label, hint], index) => (
-          <li key={step} className="flex items-center gap-2">
-            {index > 0 && <span className="text-ink/25">→</span>}
-            <span className="inline-flex items-center gap-1.5">
-              <span className="grid size-4 place-items-center rounded-full bg-ink/8 text-[10px] text-ink/60">
-                {step}
-              </span>
-              <span className="font-medium text-ink/70">{t(label!)}</span>
-              {t(hint!)}
-            </span>
-          </li>
-        ))}
-      </ol>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="scroll-fade min-w-0 flex-1">
           <nav

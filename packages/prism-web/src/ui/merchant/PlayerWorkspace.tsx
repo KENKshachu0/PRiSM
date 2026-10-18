@@ -35,16 +35,21 @@ type EntryPlan = {
   kind: string;
   enabled: boolean;
   status: string;
+  /** Live-only: the status word shown on the right of the row. */
+  billStatus?: string;
 };
 
 /** Stable identity for the tabs that have no live players. */
 const NO_PLAYERS: LivePlayer[] = [];
 
 type Row = Player & {
-  /** Live-only: the estimate shown in the list for a checked-in player. */
+  /** Live-only: the figures the list shows for a checked-in player. */
   stayMinutes?: number;
   estimatedTotal?: number | null;
   planNames?: string[];
+  startedAt?: string;
+  sessionCount?: number;
+  billStatus?: string;
 };
 
 type Holdings = {
@@ -150,8 +155,15 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
       stayMinutes: player.stayDurationMinutes,
       estimatedTotal: player.estimatedTotal,
       planNames: bill.plans,
+      billStatus: bill.status,
+      startedAt: player.sessions?.[0]?.startedAt,
+      sessionCount: player.sessions?.length ?? 0,
     };
   });
+  const clockAt = (value: string) =>
+    billTime(value, timeZone || undefined).time;
+  const dayAt = (value: string) =>
+    billTime(value, timeZone || undefined).date.slice(5);
   const rows: Row[] | undefined = live ? liveRows : list.data?.players;
 
   const matched = useMemo(() => {
@@ -184,6 +196,8 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
       stayMinutes: quote.stayDurationMinutes,
       estimatedTotal: quote.estimatedTotal,
       status: quote.status,
+      startedAt: quote.sessions?.[0]?.startedAt ?? row.startedAt,
+      sessionCount: quote.sessions?.length ?? row.sessionCount,
     };
   });
   const liveSelection = activeId ? quoted.get(activeId) ?? null : null;
@@ -398,12 +412,17 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
                       )}
                       <button
                         type="button"
-                        className={`focus-ring block w-full px-4 py-3 text-left ${
+                        className={`focus-ring block w-full px-4 py-4 text-left ${
                           active ? "bg-ink/[0.06]" : "hover:bg-ink/[0.025]"
                         }`}
                         aria-pressed={active}
                         onClick={(event) => {
-                          if (selecting || event.metaKey || event.ctrlKey || event.shiftKey) {
+                          if (
+                            selecting ||
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey
+                          ) {
                             setSelecting(true);
                             togglePick(player.id);
                             return;
@@ -412,39 +431,71 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
                         }}
                       >
                         <span className="flex items-baseline justify-between gap-3">
-                          <span className="truncate text-sm font-semibold">
+                          <span className="truncate text-base font-semibold">
                             {player.displayName}
                           </span>
-                          <span className="shrink-0 text-xs text-ink/55">
+                          {/* Short on funds is the one state a staff member has
+                              to act on, so it is the only red line here. */}
+                          <span
+                            className={`shrink-0 text-xs ${
+                              player.paymentMode !== "cashier" &&
+                              (player.estimatedTotal ?? 0) !== null &&
+                              player.walletTotal < (player.estimatedTotal ?? 0)
+                                ? "text-coral"
+                                : "text-ink/60"
+                            }`}
+                          >
                             {live
-                              ? t(
-                                  player.status !== "active"
-                                    ? "已停用"
-                                    : player.activeSessionId
-                                      ? "计费中"
-                                      : "正常",
-                                )
+                              ? t(player.billStatus ?? "计费中")
                               : money(player.walletTotal)}
                           </span>
                         </span>
-                        <span className="mt-1 flex items-baseline gap-3 text-xs text-ink/50">
-                          {live && player.planNames?.length ? (
-                            <span className="min-w-0 truncate">
-                              {player.planNames.join(" + ")}
+                        {live ? (
+                          <span className="mt-3 grid grid-cols-3 gap-3">
+                            <span>
+                              <span className="block text-xs text-ink/60">
+                                {t("入场时间")}
+                              </span>
+                              <span className="mt-1 block text-xl font-semibold leading-tight tabular-nums">
+                                {player.startedAt ? (
+                                  <time dateTime={player.startedAt}>
+                                    {clockAt(player.startedAt)}
+                                  </time>
+                                ) : (
+                                  "—"
+                                )}
+                              </span>
+                              <span className="mt-1 block text-xs text-ink/50">
+                                {player.startedAt && dayAt(player.startedAt)}
+                              </span>
                             </span>
-                          ) : (
-                            <span className="min-w-0 truncate">
-                              {player.identities?.map(identityText).join(" · ") ||
-                                t("无绑定身份")}
+                            <span>
+                              <span className="block text-xs text-ink/60">
+                                {t("时长")}
+                              </span>
+                              <strong className="mt-1 block text-xl font-semibold leading-tight tabular-nums">
+                                {stayDuration(player.stayMinutes ?? 0)}
+                              </strong>
                             </span>
-                          )}
-                          {live && (
-                            <span className="shrink-0 tabular-nums">
-                              {stayDuration(player.stayMinutes ?? 0)} ·{" "}
-                              {money(player.estimatedTotal)}
+                            <span className="text-right">
+                              <span className="block text-xs text-ink/60">
+                                {t("应付")}
+                              </span>
+                              <strong className="mt-1 block break-all text-xl font-semibold leading-tight tabular-nums">
+                                {money(player.estimatedTotal)}
+                              </strong>
+                              <span className="mt-1 block text-xs text-ink/50">
+                                {player.sessionCount ?? 0} {t("项")}
+                              </span>
                             </span>
-                          )}
-                        </span>
+                          </span>
+                        ) : (
+                          <span className="mt-1 block truncate text-xs text-ink/50">
+                            {player.identities
+                              ?.map(identityText)
+                              .join(" · ") || t("无绑定身份")}
+                          </span>
+                        )}
                       </button>
                     </div>
                   );
