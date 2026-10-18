@@ -22,7 +22,7 @@ import {
   input,
   primary,
 } from "./merchant/shared";
-import { Players } from "./merchant/Players";
+import { PlayerWorkspace } from "./merchant/PlayerWorkspace";
 import { PricingPage } from "./merchant/Pricing";
 import { AssetsPage } from "./merchant/Assets";
 import { ReportsPage } from "./merchant/Reports";
@@ -238,9 +238,9 @@ function Workspace({
         ) : state.billingEnabled && section === "cashier" ? (
           <CashierRedirect shopCode={shop.publicId} />
         ) : state.billingEnabled && section === "live" ? (
-          <Players live />
+          <PlayerWorkspace live />
         ) : state.billingEnabled && section === "players" ? (
-          <Players />
+          <PlayerWorkspace />
         ) : (state.billingEnabled || state.owner) && section === "pricing" ? (
           <PricingPage />
         ) : (state.billingEnabled || state.owner) && section === "assets" ? (

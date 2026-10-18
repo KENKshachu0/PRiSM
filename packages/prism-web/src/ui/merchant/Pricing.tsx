@@ -187,13 +187,35 @@ export function PricingPage() {
                     })}
               </td>
               <td className={cell}>
-                {t(
-                  row.status === "archived"
-                    ? "已归档"
-                    : row.enabled
-                      ? "启用"
-                      : "停用",
-                )}
+                {/* Enabled state decides whether the rule bills anyone, so it
+                    is a pill with a dot rather than plain grey text. */}
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                    row.status === "archived"
+                      ? "bg-ink/5 text-ink/50"
+                      : row.enabled
+                        ? "bg-mint/12 text-mint"
+                        : "bg-coral/10 text-coral"
+                  }`}
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      row.status === "archived"
+                        ? "bg-ink/30"
+                        : row.enabled
+                          ? "bg-mint"
+                          : "bg-coral"
+                    }`}
+                    aria-hidden="true"
+                  />
+                  {t(
+                    row.status === "archived"
+                      ? "已归档"
+                      : row.enabled
+                        ? "启用"
+                        : "停用",
+                  )}
+                </span>
               </td>
               <td className={cell}>
                 {canWrite && (
@@ -433,14 +455,31 @@ function PricingEditor({
             </select>
           </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm">
+        {/* The switch sits next to its state, because "is this rule billing
+            anyone right now" is the question this screen answers. */}
+        <label className="flex items-center gap-3 rounded-lg border border-ink/10 px-3 py-2 text-sm">
           <input
             type="checkbox"
+            role="switch"
+            className="peer sr-only"
             checked={draft.enabled}
             disabled={draft.status === "archived"}
             onChange={(e) => update({ enabled: e.target.checked })}
           />
-          {t("启用规则")}
+          <span
+            aria-hidden="true"
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+              draft.enabled ? "bg-mint" : "bg-ink/20"
+            } after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-white after:transition-transform ${
+              draft.enabled ? "after:translate-x-5" : ""
+            } peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-mint`}
+          />
+          <span className="font-medium">
+            {t(draft.enabled ? "启用规则" : "停用规则")}
+          </span>
+          <span className="text-xs text-ink/50">
+            {t(draft.enabled ? "启用后参与计费" : "停用后不参与计费")}
+          </span>
         </label>
       </section>
 

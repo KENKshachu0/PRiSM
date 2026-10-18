@@ -227,16 +227,30 @@ const cases = [
               await nav.getByRole("button", { name: "礼物" }).click();
               await nav.getByRole("button", { name: "兑换码" }).click();
             }
-            if (testCase.role === "viewer" && url === "/merchant/demo/live") {
+            // Both player tabs render one workspace: a list on the left and the
+            // selected player's panel on the right. A viewer sees the panel but
+            // gets no management actions, and there is no "add player" flow.
+            if (url.endsWith("/live") || url.endsWith("/players")) {
+              await page.getByRole("region", { name: "玩家资料" }).first().waitFor();
               assert.equal(await page.getByRole("button", { name: "添加玩家" }).count(), 0);
-              assert.equal(await page.getByRole("button", { name: "结账", exact: true }).count(), 0);
+              if (testCase.role === "viewer") {
+                for (const action of ["结账", "充值 / 扣款", "发放资产"]) {
+                  assert.equal(
+                    await page.getByRole("button", { name: action, exact: true }).count(),
+                    0,
+                  );
+                }
+              }
+            }
+            if (testCase.role === "owner" && url.endsWith("/pricing")) {
+              await page.getByRole("button", { name: "添加规则" }).first().click();
+              await page.getByRole("dialog").first().waitFor();
+              await page.getByRole("dialog").first().getByRole("button", { name: "关闭" }).click();
+              await page.getByRole("dialog").first().waitFor({ state: "hidden" });
             }
             if (testCase.role === "owner") {
               let open;
               if (url.endsWith("/devices")) open = "添加设备";
-              if (url.endsWith("/players")) open = "添加玩家";
-              if (url.endsWith("/pricing")) open = "添加规则";
-              if (url.endsWith("/live")) open = "玩家资料";
               if (open) {
                 await page.getByRole("button", { name: open, exact: true }).first().click();
                 await page.getByRole("dialog").first().waitFor();

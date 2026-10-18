@@ -7,6 +7,41 @@ import {
   type PriorityTimePricingProviderConfig,
 } from "../src/index";
 
+describe("negative unit price", () => {
+  // A negative unit price is how a stacking discount is expressed: the rule
+  // subtracts from the bill instead of adding to it.
+  it("subtracts from the bill instead of refusing the config", async () => {
+    const config: PriorityTimePricingProviderConfig = {
+      id: "time.priority",
+      pricingConfigId: "pricing-discount",
+      timeZone: "UTC",
+      rules: [
+        {
+          id: "discount",
+          label: "会员抵扣",
+          priority: 1,
+          timeRange: { start: "00:00", end: "00:00" },
+          // No cap: a cap of 0 would clamp the negative amount to zero.
+          pricing: { unitMinutes: 60, unitPrice: -2, roundGraceMinutes: 0, priceCap: 0 },
+        },
+      ],
+    };
+
+    const charges = await createPriorityTimePricingProvider(config).quote({
+      session: {
+        id: "s1",
+        playerId: "player-1",
+        startedAt: new Date("2026-07-09T10:00:00Z"),
+        status: "active",
+      },
+      now: new Date("2026-07-09T13:00:00Z"),
+      assetHoldings: [],
+    });
+
+    expect(charges[0]?.amount).toBe(moneyFixture(-6));
+  });
+});
+
 describe("time pricing explanations", () => {
   it("records the actual overnight segment and reached interval cap", async () => {
     const config: PriorityTimePricingProviderConfig = {

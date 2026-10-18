@@ -91,7 +91,10 @@ export function quantizePricingProvider(
   }
 
   for (const rule of provider.rules) {
-    assertNonNegativePrice(rule.pricing.unitPrice);
+    // A negative unit price is legitimate: the rule subtracts from the bill,
+    // which is how a stacking discount is expressed. The cap itself still has
+    // to be a real upper bound.
+    assertFinitePrice(rule.pricing.unitPrice);
     assertNonNegativePrice(rule.pricing.priceCap);
   }
   return {
@@ -111,6 +114,13 @@ export function quantizePricingProvider(
 function assertNonNegativePrice(value: number): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new PrismDomainError("Price must be a non-negative finite number.", "INVALID_PRICING_AMOUNT");
+  }
+}
+
+/** A negative value is allowed here; only non-numbers are rejected. */
+function assertFinitePrice(value: number): void {
+  if (!Number.isFinite(value)) {
+    throw new PrismDomainError("Price must be a finite number.", "INVALID_PRICING_AMOUNT");
   }
 }
 

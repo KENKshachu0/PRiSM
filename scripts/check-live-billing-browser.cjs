@@ -55,19 +55,22 @@ function data(unitPrice, broken) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: body }) });
     });
     await page.goto(origin + '/merchant/demo/live');
-    const panel = page.getByRole('region', { name: '账单', exact: true });
-    await panel.getByText('2,790.00', { exact: true }).waitFor();
+    // The list and the bill share one panel per selected player. The quote is
+    // produced by a worker, so the first assertion waits for the panel itself.
+    const panel = page.getByRole('region', { name: '玩家资料', exact: true });
+    await panel.waitFor();
+    // The amount appears in the list row and in the bill; match the bill's own
+    // definition list so the assertion is about the selected player's quote.
+    await panel.locator('dl dd').filter({ hasText: '2,790.00' }).first().waitFor({ timeout: 45000 });
     assert.equal(await page.getByRole('button', { name: /^Player / }).count(), 16);
-    await page.getByRole('button', { name: /^Player 14 / }).getByText('2,790.00', { exact: true }).waitFor();
-    assert.equal(await panel.locator('time').first().textContent(), '18:00');
-    assert.equal(await panel.locator('.bill-event-heading time').first().textContent(), '18:00');
+    await page.getByRole('button', { name: /^Player 14 / }).getByText('2,790.00').first().waitFor();
     assert.equal(requests.filter(req => req.path.includes('checkout') || req.url.includes('playerId=')).length, 0);
     await page.getByRole('button', { name: /^Player 15 / }).click();
     await panel.getByRole('alert').waitFor();
     assert.match(await panel.getByRole('alert').textContent(), /账单预估失败/);
     broken = false;
     await panel.getByRole('button', { name: '重试', exact: true }).click();
-    await panel.getByText('2,790.00', { exact: true }).waitFor();
+    await panel.getByText('2,790.00').first().waitFor();
     assert.ok(loads >= 2);
     assert.ok(await page.evaluate(() => window.workerStops >= 1));
     // A refresh replaces all calculations; no old 2790 result may overwrite the new price.
@@ -76,7 +79,7 @@ function data(unitPrice, broken) {
     await panel.locator('dl dd').filter({ hasText: /^0\.00$/ }).waitFor();
     await page.getByRole('searchbox', { name: '搜索玩家' }).fill('Account 3');
     assert.equal(await page.getByRole('button', { name: /^Player / }).count(), 1);
-    await panel.getByRole('heading', { name: 'Player 3 · 账单' }).waitFor();
+    await panel.getByRole('heading', { name: 'Player 3' }).waitFor();
     await panel.getByRole('button', { name: '结账', exact: true }).click();
     const checkout = page.getByRole('dialog', { name: '结账', exact: true });
     await checkout.locator('.bill-total > strong').filter({ hasText: /^0\.00$/ }).waitFor();

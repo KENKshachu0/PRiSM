@@ -237,6 +237,28 @@ describe("quantizePricingProvider", () => {
     expect(provider.paidHistory).toEqual({ "rule:base": moneyFixture(12.35) });
   });
 
+  it("keeps a negative unit price so a rule can subtract from the bill", () => {
+    const provider = quantizePricingProvider({
+      id: "time.discount",
+      rules: [
+        {
+          id: "discount",
+          label: "会员抵扣",
+          priority: 0,
+          timeRange: { start: "00:00", end: "00:00" },
+          pricing: {
+            unitMinutes: 60,
+            unitPrice: -2.5,
+            roundGraceMinutes: 0,
+            priceCap: 0,
+          },
+        },
+      ],
+    });
+
+    expect(provider.rules[0]!.pricing.unitPrice).toBe(-2.5);
+  });
+
   it("keeps minute fields untouched because they are counts, not money", () => {
     const provider = quantizePricingProvider({
       id: "time.default",
