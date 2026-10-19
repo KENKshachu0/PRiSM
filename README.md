@@ -119,6 +119,7 @@ The root `package.json` owns the release SemVer. `bun run version:bump patch|min
 - [UTC 业务时间与 UI 展示时间](docs/utc-time-contract.md)
 - [Architecture](docs/architecture.md)
 - [API Reference](docs/api.md)
+- [商户工作台的开店指引](docs/merchant-setup-guide.md)
 - [已有店铺转换为计费店铺](docs/billing-setup.md)
 - [前台收银与 WebHID 读卡](docs/cashier.md)
 - [Deployment](docs/deployment.md)

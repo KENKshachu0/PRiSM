@@ -2,7 +2,10 @@ import { PricingRing } from "./PricingRing";
 import { BillingSimulator } from "./BillingSimulator";
 import { pricingInZone } from "./pricing-clock";
 import { billTime } from "../bill-time";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { api } from "../../api";
+import { shopApi } from "../BillingPages";
 import { ChevronDown, Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 import {
@@ -78,10 +81,21 @@ const newRule = (): Rule => ({
 
 export function PricingPage() {
   const { t } = useI18n();
-  const { canWrite } = useMerchant();
+  const { canWrite, shopCode, billingEnabled, owner } = useMerchant();
   const resource = useResource<{ pricingConfigs: Pricing[] }>(
     "pricing-configs",
   );
+  // Which rules entry uses lives in the shop settings; without it a new rule
+  // looks live here but never bills anyone.
+  const [entryIds, setEntryIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!billingEnabled) return;
+    let active = true;
+    api<{ entryPricingIds: string[] }>(shopApi(shopCode, "settings"))
+      .then((settings) => { if (active) setEntryIds(settings.entryPricingIds); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [shopCode, billingEnabled]);
   const request = useStaffApi();
   const [edit, setEdit] = useState<Pricing | null>(null);
   const [archive, setArchive] = useState<Pricing | null>(null);
@@ -147,7 +161,7 @@ export function PricingPage() {
         <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
           <p className="font-medium">{t("还没有计费规则")}</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-ink/55">
-            {t("入场计费需要至少一条按时计费的规则。")}
+            {t("规则决定玩家什么时段、按什么价格付费。入场至少需要一条按时计费或固定收费的规则。")}
           </p>
           {canWrite && (
             <button
@@ -169,10 +183,34 @@ export function PricingPage() {
           )}
         </div>
       ) : (
+        <>
+        {entryIds && (
+          <p className="text-sm text-ink/60">
+            {t("标有「入场」的规则在玩家入场时计费；新建的规则要在设置里选中才会用于入场。")}
+            {owner && (
+              <>
+                {" "}
+                <Link
+                  className="underline"
+                  to={`/merchant/${segment(shopCode)}/settings?group=billing`}
+                >
+                  {t("选择入场规则")}
+                </Link>
+              </>
+            )}
+          </p>
+        )}
         <Table headers={["名称", "计费方式", "时段", "状态", "操作"]}>
           {rows.map((row) => (
             <tr key={row.id}>
-              <td className={`${cell} font-medium`}>{row.name}</td>
+              <td className={`${cell} font-medium`}>
+                {row.name}
+                {entryIds?.includes(row.id) && (
+                  <span className="ml-2 rounded-full bg-mint/10 px-2 py-0.5 text-xs font-medium text-mint">
+                    {t("入场")}
+                  </span>
+                )}
+              </td>
               <td className={cell}>
                 {t(kinds[row.kind])}
                 {row.kind === "charge.fixed" && (
@@ -235,6 +273,7 @@ export function PricingPage() {
             </tr>
           ))}
         </Table>
+        </>
       )}
       {edit && (
         <Modal

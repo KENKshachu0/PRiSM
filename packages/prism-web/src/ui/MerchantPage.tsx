@@ -17,9 +17,8 @@ import {
   MerchantContext,
   State,
   Modal,
-  Field,
+  CopyValue,
   button,
-  input,
   primary,
 } from "./merchant/shared";
 import { PlayerWorkspace } from "./merchant/PlayerWorkspace";
@@ -30,6 +29,7 @@ import { SettingsPage } from "./merchant/Settings";
 import { BillingSetupFields, defaultBillingSetup } from "./merchant/BillingSetup";
 import { DevicesPage } from "./merchant/Devices";
 import { ShopForm, MembersPanel } from "./merchant/ShopDetails";
+import { SetupContext, ShopGuide, useSetupStatus } from "./merchant/ShopGuide";
 import type { StaffMeView } from "@prism/core";
 
 export function MerchantPage() {
@@ -40,7 +40,7 @@ export function MerchantPage() {
   );
 }
 function MerchantContent() {
-  const { shopCode, section = "devices" } = useParams();
+  const { shopCode, section } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -82,7 +82,7 @@ function MerchantContent() {
           <Store className="mx-auto text-mint" size={36} />
           <h1 className="text-2xl font-semibold">{t("创建你的店铺")}</h1>
           <p className="text-sm text-ink/60">
-            {t("从扫码使用设备开始，也可以同时管理入场计费。")}
+            {t("创建后，开店指引会带你一步步把设备和计费接入店里。")}
           </p>
           <button className={primary} onClick={() => setCreating(true)}>
             <Plus size={18} />
@@ -91,12 +91,12 @@ function MerchantContent() {
         </div>
       )}
       {creating && (
-        <Modal title="新建店铺" close={() => setCreating(false)}>
+        <Modal title="新建店铺" close={() => setCreating(false)} wide>
           <ShopWizard
             done={async (newShop) => {
               await load();
               setCreating(false);
-              navigate(`/merchant/${newShop.publicId}`);
+              navigate(`/merchant/${newShop.publicId}/guide`);
             }}
           />
         </Modal>
@@ -107,13 +107,13 @@ function MerchantContent() {
 function Workspace({
   shop,
   shops,
-  section,
+  section: requested,
   create,
   reload,
 }: {
   shop: Shop;
   shops: Shop[];
-  section: string;
+  section: string | undefined;
   create: () => void;
   reload: () => Promise<void>;
 }) {
@@ -154,18 +154,38 @@ function Workspace({
     window.addEventListener("prism-shop-settings", refresh);
     return () => window.removeEventListener("prism-shop-settings", refresh);
   }, [load]);
-  if (!state) return <State error={error} />;
+  const setup = useSetupStatus(shop.publicId, shop.id, !!state?.owner);
+  if (!state || !setup.loaded) return <State error={error} />;
+  // A bare shop URL opens where the owner has work left, otherwise on the
+  // screen used every day: who is in the shop, or the devices.
+  if (!requested)
+    return (
+      <Navigate
+        replace
+        to={`/merchant/${shop.publicId}/${
+          setup.status && !setup.status.complete
+            ? "guide"
+            : state.billingEnabled
+              ? "live"
+              : "devices"
+        }`}
+      />
+    );
+  const section = requested;
   const tabs = [
-    ["devices", "设备"],
+    ...(state.owner && setup.status && (!setup.status.complete || section === "guide")
+      ? [["guide", "开店指引"]]
+      : []),
     ...(state.billingEnabled
       ? [
           ["live", "在店"],
           ["players", "玩家"],
+          ["devices", "设备"],
           ["pricing", "计费"],
           ["assets", "资产"],
           ["reports", "记录"],
         ]
-      : []),
+      : [["devices", "设备"]]),
     ...(!state.billingEnabled &&
     state.owner &&
     ["pricing", "assets"].includes(section)
@@ -233,7 +253,11 @@ function Workspace({
         </nav>
       </div>
       <div key={section}>
-        {section === "devices" ? (
+        {section === "guide" && state.owner ? (
+          <SetupContext.Provider value={setup}>
+            <ShopGuide />
+          </SetupContext.Provider>
+        ) : section === "devices" ? (
           <DevicesPage />
         ) : state.billingEnabled && section === "cashier" ? (
           <CashierRedirect shopCode={shop.publicId} />
@@ -254,6 +278,7 @@ function Workspace({
                 <ShopForm shop={shop} onSaved={async () => { await reload(); }} />
               </section>}
               members={<StaffMembers shopId={shop.id} />}
+              guide={!!setup.status}
             />
           </div>
         ) : (
@@ -298,6 +323,7 @@ function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
     ...defaultBillingSetup,
     createBotToken: false,
     botContact: "",
+    // The identity policy is chosen in the setup guide, where its effect is explained.
     autoRegister: false,
   });
   const [created, setCreated] = useState<{ shop: Shop; token: string } | null>(
@@ -308,23 +334,18 @@ function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
       <div className="grid gap-5">
         <h3 className="font-semibold">{t("连接 Bot")}</h3>
         <p className="text-sm text-ink/60">
-          {t(
-            "基础资产与入场规则已创建。将以下凭据填入店铺 Bot 后，玩家即可绑定平台身份。凭据仅显示一次。",
-          )}
+          {t("把下面三项填进店铺 Bot 的 PRiSM 插件配置。凭据只显示这一次。")}
         </p>
-        <code className="select-all break-all rounded bg-ink/5 p-3 text-sm">
-          {created.token}
-        </code>
-        <p className="break-all text-sm">
-          {window.location.origin}/api/v1/shops/{created.shop.publicId}
-        </p>
+        <CopyValue label="接入凭据" value={created.token} />
+        <CopyValue label="店铺编号" value={created.shop.publicId} />
+        <CopyValue label="API 地址" value={window.location.origin} />
         <button className={primary} onClick={() => done(created.shop)}>
-          {t("进入工作台")}
+          {t("进入开店指引")}
         </button>
       </div>
     );
   const steps = billing
-    ? ["经营方式", "基础计费", "店铺信息"]
+    ? ["经营方式", "收费标准", "店铺信息"]
     : ["经营方式", "店铺信息"];
   const finalStep = billing ? 2 : 1;
   return (
@@ -381,19 +402,15 @@ function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
           </button>
         </div>
       ) : step === finalStep ? (
-        <>
-          <ShopForm
-            billingSetup={billing ? setup : undefined}
-            onSaved={async (shop, token) => {
-              await refresh();
-              if (token) setCreated({ shop, token });
-              else await done(shop);
-            }}
-          />
-          <button className={button} onClick={() => setStep(step - 1)}>
-            {t("上一步")}
-          </button>
-        </>
+        <ShopForm
+          billingSetup={billing ? setup : undefined}
+          back={() => setStep(step - 1)}
+          onSaved={async (shop, token) => {
+            await refresh();
+            if (token) setCreated({ shop, token });
+            else await done(shop);
+          }}
+        />
       ) : (
         <form
           className="grid gap-4"
@@ -402,22 +419,14 @@ function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
             setStep(2);
           }}
         >
-          <h3 className="font-semibold">{t("基础资产与计费")}</h3>
+          <h3 className="font-semibold">{t("收费标准")}</h3>
+          <p className="text-sm text-ink/60">
+            {t("先用一条全天规则开张，之后可以在「计费」页按时段细调。")}
+          </p>
           <BillingSetupFields value={setup} change={value => setSetup({ ...setup, ...value })} />
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={setup.createBotToken} onChange={event => setSetup({ ...setup, createBotToken: event.target.checked })} />
-            {t("创建 Bot 接入凭据（可选）")}
-          </label>
-          <p className="text-sm text-ink/60">{t("无需创建 Bot 凭据；需要连接 Bot 时，可在「接入凭据」单独配置。")}</p>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={setup.autoRegister}
-              onChange={(e) =>
-                setSetup({ ...setup, autoRegister: e.target.checked })
-              }
-            />
-            {t("平台身份验证后允许新玩家注册")}
+            {t("同时创建 Bot 接入凭据")}
           </label>
           <div className="flex justify-between gap-3">
             <button type="button" className={button} onClick={() => setStep(0)}>

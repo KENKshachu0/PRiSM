@@ -7,12 +7,14 @@ import { useI18n } from "../../i18n";
 import { BillingSettings } from "../BillingPages";
 import {
   ActionForm,
+  CopyValue,
   Field,
   Modal,
   State,
   Table,
   button,
   cell,
+  date,
   input,
   segment,
   useMerchant,
@@ -53,7 +55,13 @@ type Settings = {
     aliases: string[];
   }[];
 };
-type Token = { id: string; label: string; role: string; status: string };
+type Token = {
+  id: string;
+  label: string;
+  role: string;
+  status: string;
+  lastUsedAt?: string | null;
+};
 const groups = [
   {
     id: "general",
@@ -70,7 +78,7 @@ const groups = [
   {
     id: "players",
     label: "玩家与身份",
-    description: "身份绑定要求、新玩家注册与身份转换。",
+    description: "玩家进店前如何确认身份、新玩家礼物与平台标识转换。",
     icon: Users,
   },
   {
@@ -82,7 +90,7 @@ const groups = [
   {
     id: "integrations",
     label: "Bot 与接入",
-    description: "Bot 配置与机台接入凭据。",
+    description: "让 QQ 等平台的店铺 Bot 代表玩家绑定身份、查询余额和操作设备。",
     icon: Plug,
   },
   {
@@ -102,9 +110,12 @@ const groups = [
 export function SettingsPage({
   shopDetails,
   members,
+  guide = false,
 }: {
   shopDetails: ReactNode;
   members: ReactNode;
+  /** Link back to the setup guide once it has left the tab bar. */
+  guide?: boolean;
 }) {
   const { t } = useI18n();
   const { shopCode, owner } = useMerchant();
@@ -136,7 +147,17 @@ export function SettingsPage({
   if (!owner) return null;
   return (
     <div className="grid gap-5">
-      <h2 className="text-xl font-semibold">{t("店铺设置")}</h2>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <h2 className="text-xl font-semibold">{t("店铺设置")}</h2>
+        {guide && (
+          <Link
+            className="text-sm text-ink/60 underline hover:text-ink"
+            to={`/merchant/${segment(shopCode)}/guide`}
+          >
+            {t("开店指引")}
+          </Link>
+        )}
+      </header>
       <div className="grid gap-5 lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-8">
         <nav
           aria-label={t("设置分类")}
@@ -192,6 +213,16 @@ export function SettingsPage({
                   <h4 className="mb-4 font-semibold">{t("新玩家礼物")}</h4>
                   {!gifts.data ? (
                     <State error={gifts.error} />
+                  ) : !gifts.data.presents.some((p) => p.status !== "archived") ? (
+                    <p className="text-sm text-ink/60">
+                      {t("新玩家第一次进店时自动领取一份礼物，比如体验余额。先创建礼物再回来选择。")}{" "}
+                      <Link
+                        className="underline"
+                        to={`/merchant/${segment(shopCode)}/assets?tab=gifts`}
+                      >
+                        {t("去创建礼物")}
+                      </Link>
+                    </p>
                   ) : (
                     <ActionForm
                       label="保存玩家礼物"
@@ -308,45 +339,53 @@ function Tokens({ shopCode }: { shopCode: string }) {
   const [revoke, setRevoke] = useState<Token | null>(null);
   return (
     <section className="grid gap-4 rounded-xl border border-ink/10 bg-panel p-5">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold">{t("接入凭据")}</h3>
-        <button className={button} onClick={() => setCreate(true)}>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-semibold">{t("Bot 接入凭据")}</h3>
+        <button type="button" className={button} onClick={() => setCreate(true)}>
           {t("创建凭据")}
         </button>
       </div>
       <div className="grid gap-3 rounded-lg border border-ink/10 bg-surface p-4">
-        <div>
-          <p className="text-sm font-medium">{t("Koishi / 集成配置")}</p>
-          <p className="mt-1 text-xs text-ink/60">
-            {t("将下面的店铺编号和正式 API 地址填入 Bot 配置。")}
-          </p>
-        </div>
+        <p className="text-xs leading-relaxed text-ink/60">
+          {t("在 Bot 的 PRiSM 插件（Koishi）里填入接入凭据、店铺编号和 API 地址。")}
+        </p>
         <CopyValue label="店铺编号" value={shopCode} />
         <CopyValue label="API 地址" value={window.location.origin} />
       </div>
       {secret && (
-        <div role="status" className="rounded border border-ink/15 p-4">
-          <p className="mb-2 text-sm">{t("请保存凭据，关闭后不再显示。")}</p>
-          <code className="block select-all break-all text-sm">{secret}</code>
-          <button className={`${button} mt-3`} onClick={() => setSecret("")}>
+        <div role="status" className="grid gap-3 rounded border border-mint/40 bg-mint/5 p-4">
+          <p className="text-sm">{t("请保存凭据，关闭后不再显示。")}</p>
+          <CopyValue label="接入凭据" value={secret} />
+          <button type="button" className={`${button} justify-self-start`} onClick={() => setSecret("")}>
             {t("已保存，关闭")}
           </button>
         </div>
       )}
-      {tokens.data ? (
-        <Table headers={["名称", "用途", "状态", "操作"]}>
+      {!tokens.data ? (
+        <State error={tokens.error} />
+      ) : !tokens.data.apiTokens.length ? (
+        <p className="rounded-lg border border-dashed border-ink/20 px-4 py-6 text-center text-sm text-ink/60">
+          {t("还没有凭据")}
+        </p>
+      ) : (
+        <Table headers={["名称", "状态", "最近连接", "操作"]}>
           {tokens.data.apiTokens.map((token) => (
             <tr key={token.id}>
-              <td className={cell}>{token.label}</td>
               <td className={cell}>
-                {token.role === "integration" ? "Bot" : t("机台")}
+                {token.label}
+                {token.role !== "integration" && (
+                  <span className="ml-2 text-xs text-ink/50">{t("旧版机台凭据")}</span>
+                )}
               </td>
               <td className={cell}>
                 {t(token.status === "active" ? "有效" : "已撤销")}
               </td>
               <td className={cell}>
+                {token.lastUsedAt ? date(token.lastUsedAt) : t("从未连接")}
+              </td>
+              <td className={cell}>
                 {token.status === "active" && (
-                  <button className={button} onClick={() => setRevoke(token)}>
+                  <button type="button" className={button} onClick={() => setRevoke(token)}>
                     {t("撤销")}
                   </button>
                 )}
@@ -354,8 +393,6 @@ function Tokens({ shopCode }: { shopCode: string }) {
             </tr>
           ))}
         </Table>
-      ) : (
-        <State error={tokens.error} />
       )}
       {create && (
         <Modal title="创建凭据" close={() => setCreate(false)}>
@@ -369,19 +406,13 @@ function Tokens({ shopCode }: { shopCode: string }) {
                 apiToken: Token & { token: string };
               }>("api-tokens", "POST", {
                 label: f.get("name"),
-                role: f.get("role"),
+                role: "integration",
               });
               setSecret(result.apiToken.token);
             }}
           >
             <Field label="名称">
-              <input className={input} name="name" required />
-            </Field>
-            <Field label="用途">
-              <select className={input} name="role">
-                <option value="integration">Bot</option>
-                <option value="machine">{t("机台")}</option>
-              </select>
+              <input className={input} name="name" defaultValue="Bot" required />
             </Field>
           </ActionForm>
         </Modal>
@@ -406,25 +437,6 @@ function Tokens({ shopCode }: { shopCode: string }) {
   );
 }
 
-function CopyValue({ label, value }: { label: string; value: string }) {
-  const { t } = useI18n();
-  const copy = async () => {
-    await navigator.clipboard?.writeText(value);
-  };
-  return (
-    <div className="grid gap-1">
-      <span className="text-xs text-ink/60">{t(label)}</span>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all rounded border border-ink/10 bg-panel px-3 py-2 text-sm">
-          {value}
-        </code>
-        <button className={button} type="button" onClick={copy}>
-          {t("复制")}
-        </button>
-      </div>
-    </div>
-  );
-}
 function TTLockConnection({
   settings,
   reload,
@@ -436,11 +448,22 @@ function TTLockConnection({
   const request = useStaffApi();
   const [saved, setSaved] = useState(false);
   const connection = settings.ttLockConnection;
+  const connected = !!(
+    connection?.clientId &&
+    connection.clientSecret &&
+    (connection.accessToken || connection.appAccount)
+  );
   return (
     <details className="rounded-xl border border-ink/10 bg-panel p-5">
       <summary className="cursor-pointer font-semibold">
-        {t("连接 TTLock 账号")}
+        {t("TTLock 门锁账号")}
+        <span className={`ml-3 text-xs font-normal ${connected ? "text-mint" : "text-ink/50"}`}>
+          {t(connected ? "已连接" : "未连接")}
+        </span>
       </summary>
+      <p className="mt-3 text-sm leading-relaxed text-ink/60">
+        {t("设备的「开门密码」能力用这个账号生成临时密码。Client ID 和 Client Secret 来自 TTLock 开放平台上创建的应用。")}
+      </p>
       <div className="mt-5">
         <ActionForm
           done={() => {

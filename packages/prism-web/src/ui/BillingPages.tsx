@@ -7,6 +7,9 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { BillingConversionWizard } from "./merchant/BillingSetup";
+import { IdentityPolicyPicker } from "./merchant/IdentityPolicyPicker";
+import { identityPolicy, identityPolicySettings } from "./merchant/setup-guide";
+import { primary } from "./merchant/shared";
 
 export type Settings = {
   billingEnabled: boolean;
@@ -162,9 +165,12 @@ export function BillingSettings({
     return section ? <p role="status">{error || t("加载中...")}</p> : null;
   const flags = {
     billingEnabled: "启用入场计费",
-    autoRegister: "允许自动创建玩家档案",
     locationEnabled: "启用位置校验",
   } as const;
+  // Turning billing on by hand fails until a balance asset and an entry rule
+  // exist; the conversion wizard creates both, so it is the only way offered.
+  const needsConversion =
+    !billingActive && !settings.billingConfiguration?.ready;
   return (
     <>
       <form
@@ -212,36 +218,25 @@ export function BillingSettings({
           <h4 className="font-semibold">
             {t(
               section === "players"
-                ? "注册与身份绑定"
+                ? "玩家如何进店"
                 : section === "devices"
                   ? "位置校验"
                   : "入场与收银",
             )}
           </h4>
-          {section === "billing" && !billingActive && !settings.billingConfiguration?.ready && (
+          {section === "billing" && needsConversion && (
             <div className="grid gap-3 rounded-lg bg-ink/5 p-4 text-sm">
-              <p>{t("通过向导设置收费标准，一次完成基础配置并启用计费。")}</p>
+              <p>{t("按时长向玩家收费，管理玩家余额和离店结账。向导会一次建好余额资产和一条全天入场规则，再启用计费。")}</p>
               <button
                 type="button"
-                className={`${control} justify-self-start`}
+                className={`${primary} justify-self-start`}
                 onClick={() => setConverting(true)}
               >
                 {t("转换为计费店铺")}
               </button>
-              <div className="flex flex-wrap gap-3">
-                <Link className="underline" to={`/merchant/${shopCode}/assets`}>
-                  {t("配置基础资产")}
-                </Link>
-                <Link
-                  className="underline"
-                  to={`/merchant/${shopCode}/pricing`}
-                >
-                  {t("配置入场规则")}
-                </Link>
-              </div>
             </div>
           )}
-          {section === "billing" && (
+          {section === "billing" && !needsConversion && (
             <>
               <label className="grid gap-2">
                 <span className="flex items-center gap-3">
@@ -284,48 +279,13 @@ export function BillingSettings({
             </>
           )}
           {section === "players" && (
-            <>
-              <label className="grid gap-2">
-                <span className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={settings.identityBindingRequired}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        identityBindingRequired: e.target.checked,
-                      })
-                    }
-                  />
-                  {t("要求绑定平台身份")}
-                </span>
-                <span className="pl-7 text-sm leading-relaxed text-ink/60">
-                  {t(
-                    "开启后，绑定任意一个 Bot 平台身份即可入场和使用设备；关闭后，登录网页账号即可使用。",
-                  )}
-                </span>
-              </label>
-              <label className="grid gap-2">
-                <span className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={settings.autoRegister}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        autoRegister: e.target.checked,
-                      })
-                    }
-                  />
-                  {t(flags.autoRegister)}
-                </span>
-                <span className="pl-7 text-sm leading-relaxed text-ink/60">
-                  {t(
-                    "开启后，验证平台身份可创建新玩家档案；关闭后，仅可认领已有平台身份档案。",
-                  )}
-                </span>
-              </label>
-            </>
+            <IdentityPolicyPicker
+              name="settings-identity-policy"
+              value={identityPolicy(settings)}
+              change={(policy) =>
+                setSettings({ ...settings, ...identityPolicySettings(policy) })
+              }
+            />
           )}
           {section === "devices" && (
             <label className="grid gap-2">
@@ -344,21 +304,27 @@ export function BillingSettings({
               </span>
               <span className="pl-7 text-sm leading-relaxed text-ink/60">
                 {t(
-                  "位置校验开启后，入场、开门、开机、投币和刷卡均须在店内；离场结账须定位确认已在店外。范围使用店铺地图设置。",
-                )}
+                  "位置校验开启后，入场、开门、开机、投币和刷卡均须在店内；离场结账须定位确认已在店外。",
+                )}{" "}
+                <Link className="underline" to="?group=general">
+                  {t("调整店铺范围")}
+                </Link>
               </span>
             </label>
           )}
 
-          {section === "billing" && (
+          {section === "billing" && !needsConversion && (
             <fieldset>
-              <legend>{t("普通入场计费规则")}</legend>
+              <legend className="font-medium">{t("入场规则")}</legend>
               <p className="mt-2 text-sm text-ink/60">
-                {t("创建规则后，还需在这里选中入场时使用的方案。消费封顶不能单独作为入场规则。")}
+                {t("玩家入场时按选中的规则计费。在「计费」页新建的规则要在这里选中才会生效；消费封顶不能单独作为入场规则。")}
               </p>
               {!rules.some(availableEntryRule) && (
                 <p className="mt-2 text-sm text-ink/60">
-                  {t("暂无启用的入场规则，请先在计费管理中配置。")}
+                  {t("还没有启用中的计费规则。")}{" "}
+                  <Link className="underline" to={`/merchant/${shopCode}/pricing`}>
+                    {t("去「计费」页创建")}
+                  </Link>
                 </p>
               )}
               {rules
@@ -393,21 +359,23 @@ export function BillingSettings({
               ))}
             </fieldset>
           )}
-          {error && errorSection === section && <p role="alert">{error}</p>}
-          {savedSection === section && <p role="status">{t("已保存")}</p>}
-          <button className={`${control} justify-self-start`} disabled={busy}>
-            {t(
-              section === "players"
-                ? "保存身份设置"
-                : section === "devices"
-                  ? "保存位置校验"
-                  : "保存计费设置",
-            )}
-          </button>
+          {error && errorSection === section && <p role="alert" className="text-sm text-coral">{error}</p>}
+          {savedSection === section && <p role="status" className="text-sm text-mint">{t("已保存")}</p>}
+          {!(section === "billing" && needsConversion) && (
+            <button className={`${primary} justify-self-start`} disabled={busy}>
+              {t(
+                section === "players"
+                  ? "保存身份设置"
+                  : section === "devices"
+                    ? "保存位置校验"
+                    : "保存计费设置",
+              )}
+            </button>
+          )}
         </fieldset>
-        {section === "billing" && (
-          <Link className="underline" to={`/merchant/${shopCode}/pricing`}>
-            {t("打开计费管理")}
+        {section === "billing" && !needsConversion && (
+          <Link className="text-sm underline" to={`/merchant/${shopCode}/pricing`}>
+            {t("打开计费规则")}
           </Link>
         )}
       </form>

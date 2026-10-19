@@ -381,6 +381,23 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
         <State error={list.error || onSite.error} />
       ) : !rows ? (
         <State />
+      ) : !rows.length ? (
+        <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
+          <p className="font-medium">{t(live ? "现在没有在店玩家" : "还没有玩家")}</p>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink/55">
+            {t(
+              live
+                ? "玩家扫设备二维码并确认入场后会出现在这里，可以看实时账单、替他们结账。"
+                : "玩家第一次扫设备二维码登录后自动建档。从旧系统迁移的玩家可以在「设置 → 数据管理」导入。",
+            )}
+          </p>
+          <Link
+            className={`${button} mt-5`}
+            to={`/merchant/${encodeURIComponent(shopCode)}/devices`}
+          >
+            {t("打开设备二维码")}
+          </Link>
+        </div>
       ) : (
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
           <div className="max-h-[70vh] overflow-y-auto rounded-xl border border-ink/10 bg-panel">
@@ -906,6 +923,7 @@ function PlayerPanel({
           <ActionForm
             done={done}
             label="开始计费"
+            submitDisabled={!entryPlans.length}
             submit={(form) => {
               const chosen = form.getAll("plan").map(String);
               return request(`${base}/session/start`, "POST", {

@@ -1,5 +1,6 @@
 import { parseLocalDateTime } from "@prism/core";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { displayDateTime } from "../bill-time";
@@ -41,7 +42,16 @@ export function AssetsPage() {
   const effects = useResource<{ pricingEffects: Effect[] }>("pricing-effects");
   const presents = useResource<{ presents: Present[] }>("presents");
   const codes = useResource<{ redeemCodes: RedeemCode[] }>("redeem-codes");
-  const [tab, setTab] = useState("assets");
+  // The tab is in the URL so other pages can link straight to gifts or codes.
+  const [params, setParams] = useSearchParams();
+  const tabs = ["assets", "effects", "gifts", "codes"];
+  const tab = tabs.includes(params.get("tab") ?? "") ? params.get("tab")! : "assets";
+  const setTab = (next: string) => {
+    const query = new URLSearchParams(params);
+    if (next === "assets") query.delete("tab");
+    else query.set("tab", next);
+    setParams(query, { replace: true });
+  };
   const tabRef = useScrollFade<HTMLElement>();
   const [creatingAsset, setCreatingAsset] = useState(false);
   const [editing, setEditing] = useState<Asset | null>(null);
@@ -89,40 +99,42 @@ export function AssetsPage() {
         : tab === "gifts"
           ? "新建礼物"
           : "生成兑换码";
+  function startCreate() {
+    if (tab === "assets") {
+      setCreatingAsset(true);
+      setEditing({
+        type: "coupon",
+        code: crypto.randomUUID(),
+        name: "",
+        stackable: true,
+        pricingEffectId: null,
+        status: "active",
+        metadata: null,
+      });
+    } else if (tab === "effects")
+      setEffect({
+        id: "",
+        name: "",
+        type: "discount",
+        scope: "unified",
+        value: 1,
+        consumable: true,
+        limitPerDay: null,
+        status: "active",
+        config: null,
+      });
+    else if (tab === "gifts") setGift(true);
+    else setCode(true);
+  }
+  const activePresents = presents.data?.presents.some((p) => p.status !== "archived") ?? false;
   return (
-    <div className="grid gap-5">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <h2 className="text-xl font-semibold">{t("资产与兑换")}</h2>
         {canWrite && (
           <button
             className={primary}
-            onClick={() => {
-              if (tab === "assets") {
-                setCreatingAsset(true);
-                setEditing({
-                  type: "coupon",
-                  code: crypto.randomUUID(),
-                  name: "",
-                  stackable: true,
-                  pricingEffectId: null,
-                  status: "active",
-                  metadata: null,
-                });
-              } else if (tab === "effects")
-                setEffect({
-                  id: "",
-                  name: "",
-                  type: "discount",
-                  scope: "unified",
-                  value: 1,
-                  consumable: true,
-                  limitPerDay: null,
-                  status: "active",
-                  config: null,
-                });
-              else if (tab === "gifts") setGift(true);
-              else setCode(true);
-            }}
+            onClick={startCreate}
           >
             <Plus size={16} />
             {t(createLabel)}
@@ -168,7 +180,11 @@ export function AssetsPage() {
         (!assets.data ? (
           <State error={assets.error} />
         ) : !visibleAssets.length ? (
-          <Empty title="还没有资产" />
+          <Empty
+            title="还没有资产"
+            hint="资产是玩家账户里能持有的东西，比如余额和优惠券。"
+            action={canWrite ? { label: createLabel, run: startCreate } : undefined}
+          />
         ) : (
           <Table
             headers={["名称", "类型", "关联优惠", "有效期", "状态", "操作"]}
@@ -246,7 +262,11 @@ export function AssetsPage() {
         (!effects.data ? (
           <State error={effects.error} />
         ) : !visibleEffects.length ? (
-          <Empty title="还没有优惠" />
+          <Empty
+            title="还没有优惠"
+            hint="优惠决定结账时怎么抵扣：免单、减固定金额或打折。把优惠关联到一种资产，玩家持有这种资产时结账自动抵扣。"
+            action={canWrite ? { label: createLabel, run: startCreate } : undefined}
+          />
         ) : (
           <Table headers={["名称", "优惠方式", "使用限制", "状态", "操作"]}>
             {visibleEffects.map((e) => (
@@ -308,7 +328,11 @@ export function AssetsPage() {
         (!presents.data ? (
           <State error={presents.error} />
         ) : !visiblePresents.length ? (
-          <Empty title="还没有礼物" />
+          <Empty
+            title="还没有礼物"
+            hint="礼物把几种资产打包发放，可以设为新玩家礼物，也可以通过兑换码让玩家自己领。"
+            action={canWrite ? { label: createLabel, run: startCreate } : undefined}
+          />
         ) : (
           <Table headers={["礼物", "内容", "领取限制", "状态", "操作"]}>
             {visiblePresents.map((p) => (
@@ -360,7 +384,17 @@ export function AssetsPage() {
         (!codes.data ? (
           <State error={codes.error} />
         ) : !visibleCodes.length ? (
-          <Empty title="还没有兑换码" />
+          <Empty
+            title="还没有兑换码"
+            hint={activePresents ? "兑换码让玩家自己领取礼物。" : "兑换码让玩家自己领取礼物，先创建一个礼物。"}
+            action={
+              !canWrite
+                ? undefined
+                : activePresents
+                  ? { label: createLabel, run: startCreate }
+                  : { label: "创建礼物", run: () => setTab("gifts") }
+            }
+          />
         ) : (
           <Table headers={["兑换码", "礼物", "使用次数", "到期", "操作"]}>
             {visibleCodes.map((c) => (
@@ -499,7 +533,7 @@ export function AssetsPage() {
                     {(
                       [
                         ["currency", "余额", "玩家充值得到的钱，结账时扣除"],
-                        ["coupon", "权益", "券或次数，按用途发放"],
+                        ["coupon", "优惠券", "券或次数，可关联优惠在结账时抵扣"],
                       ] as const
                     ).map(([value, label, hint]) => (
                       <label
@@ -761,11 +795,28 @@ export function AssetsPage() {
     </div>
   );
 }
-function Empty({ title }: { title: string }) {
+function Empty({
+  title,
+  hint,
+  action,
+}: {
+  title: string;
+  hint: string;
+  action?: { label: string; run: () => void };
+}) {
   const { t } = useI18n();
   return (
     <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
       <p className="font-medium">{t(title)}</p>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink/55">
+        {t(hint)}
+      </p>
+      {action && (
+        <button type="button" className={`${primary} mt-5`} onClick={action.run}>
+          <Plus size={16} />
+          {t(action.label)}
+        </button>
+      )}
     </div>
   );
 }

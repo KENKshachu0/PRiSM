@@ -194,11 +194,14 @@ export function ActionForm({
   onResult,
   sticky = false,
   noValidate = false,
+  submitDisabled = false,
 }: {
   children: ReactNode;
   submit: (form: FormData) => Promise<unknown>;
   label?: string;
   done: () => void;
+  /** Disable submit when the form has nothing valid to send. */
+  submitDisabled?: boolean;
   /**
    * Return `true` to keep the form open after a successful submit. Used where
    * the response carries something that can only be shown once, such as a
@@ -265,7 +268,7 @@ export function ActionForm({
               {error}
             </p>
           )}
-          <button className={`${primary} justify-self-start`}>{t(busy ? "处理中…" : label)}</button>
+          <button className={`${primary} justify-self-start`} disabled={submitDisabled}>{t(busy ? "处理中…" : label)}</button>
         </div>
       </fieldset>
     </form>
@@ -297,6 +300,37 @@ export function Table({
   );
 }
 export const cell = "px-4 py-4";
+/** Copy with visible feedback; `failed` keeps the value selectable when denied. */
+export function useCopy() {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const copy = useCallback(async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+    window.setTimeout(() => setState("idle"), 1800);
+  }, []);
+  return [state, copy] as const;
+}
+export function CopyValue({ label, value }: { label: string; value: string }) {
+  const { t } = useI18n();
+  const [state, copy] = useCopy();
+  return (
+    <div className="grid gap-1">
+      <span className="text-xs text-ink/60">{t(label)}</span>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 select-all break-all rounded border border-ink/10 bg-panel px-3 py-2 text-sm">
+          {value}
+        </code>
+        <button className={button} type="button" onClick={() => copy(value)}>
+          {t(state === "copied" ? "已复制" : state === "failed" ? "复制失败" : "复制")}
+        </button>
+      </div>
+    </div>
+  );
+}
 export type Player = {
   paymentMode?: "cashier";
   id: string;

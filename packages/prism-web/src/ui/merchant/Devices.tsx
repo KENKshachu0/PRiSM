@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
   ChevronRight,
@@ -8,6 +9,7 @@ import {
   Pencil,
   Plus,
   Power,
+  Printer,
   QrCode,
   Ungroup,
 } from "lucide-react";
@@ -21,6 +23,7 @@ import {
   button,
   buttonQuiet,
   primary,
+  useCopy,
   useMerchant,
   useResource,
   type LivePlayer,
@@ -68,6 +71,15 @@ export function DevicesPage() {
   const [history, setHistory] = useState<Machine | null>(null);
   const [editorLocked, setEditorLocked] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+  const [params, setParams] = useSearchParams();
+  // The setup guide links here with `?add=1` to open the editor directly.
+  useEffect(() => {
+    if (params.get("add") !== "1") return;
+    if (canWrite) setEditing("new");
+    const next = new URLSearchParams(params);
+    next.delete("add");
+    setParams(next, { replace: true });
+  }, [params, setParams, canWrite]);
   const load = useCallback(
     () =>
       Api.machines(shopId).then((r) => {
@@ -144,6 +156,11 @@ export function DevicesPage() {
           <p className="font-medium">
             {t(filter === "all" ? "还没有任何设备" : "这个分类下没有设备")}
           </p>
+          {filter === "all" && (
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink/55">
+              {t("一台设备对应店里一样玩家扫码就能用的东西：一台机台、一扇门或一张麻将桌。添加后它会有专属二维码。")}
+            </p>
+          )}
           {canWrite && (
             <button
               className={`${primary} mt-5`}
@@ -208,40 +225,55 @@ export function DevicesPage() {
       )}
       {qr && (
         <Modal title="设备二维码" close={() => setQR(null)}>
-          <div className="grid justify-items-center gap-5">
-            <div className="bg-white p-4">
-              <QRCodeSVG
-                value={`${window.location.origin}/t/${qr.shopPublicId}/${qr.publicId}`}
-                size={224}
-                level="M"
-              />
-            </div>
-            <h3 className="text-lg font-semibold">{qr.name}</h3>
-            <a
-              className={button}
-              href={`/t/${qr.shopPublicId}/${qr.publicId}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {t("测试扫码入口")}
-            </a>
-            <button
-              className={button}
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(
-                    `${window.location.origin}/t/${qr.shopPublicId}/${qr.publicId}`,
-                  );
-                } catch {
-                  setError(t("复制失败"));
-                }
-              }}
-            >
-              {t("复制链接 / 写入 NFC")}
-            </button>
-          </div>
+          <DeviceQR device={qr} />
         </Modal>
       )}
+    </div>
+  );
+}
+
+function DeviceQR({ device }: { device: Machine }) {
+  const { t } = useI18n();
+  const [copied, copy] = useCopy();
+  const code = useRef<HTMLDivElement>(null);
+  const url = `${window.location.origin}/t/${device.shopPublicId}/${device.publicId}`;
+  function print() {
+    const svg = code.current?.querySelector("svg")?.outerHTML;
+    const view = window.open("", "_blank", "width=480,height=640");
+    if (!svg || !view) return;
+    const name = document.createElement("h1");
+    name.textContent = device.name;
+    view.document.title = device.name;
+    view.document.body.innerHTML = `<main style="display:grid;justify-items:center;gap:16px;padding:32px;font-family:system-ui,sans-serif">${svg}${name.outerHTML}</main>`;
+    view.document.querySelector("svg")?.setAttribute("width", "320");
+    view.document.querySelector("svg")?.setAttribute("height", "320");
+    view.focus();
+    view.print();
+  }
+  return (
+    <div className="grid justify-items-center gap-5">
+      <div ref={code} className="bg-white p-4">
+        <QRCodeSVG value={url} size={224} level="M" />
+      </div>
+      <h3 className="text-lg font-semibold">{device.name}</h3>
+      <div className="flex flex-wrap justify-center gap-2">
+        <button type="button" className={primary} onClick={print}>
+          <Printer size={16} aria-hidden="true" />
+          {t("打印")}
+        </button>
+        <button type="button" className={button} onClick={() => copy(url)}>
+          {t(
+            copied === "copied"
+              ? "已复制"
+              : copied === "failed"
+                ? "复制失败"
+                : "复制链接 / 写入 NFC",
+          )}
+        </button>
+        <a className={button} href={url} target="_blank" rel="noreferrer">
+          {t("测试扫码入口")}
+        </a>
+      </div>
     </div>
   );
 }

@@ -76,6 +76,8 @@ const backup = {
       else if (pathname === '/api/v1/merchant/shop-members') data = { members: [] };
       else if (pathname === '/api/v1/shops/demo') data = { shop: { ...shop, billingEnabled: imported, cashierEnabled: false } };
       else if (pathname.endsWith('/staff/me')) data = { staff: { canWrite: owner, role: owner ? 'owner' : 'viewer' } };
+      else if (pathname.endsWith('/staff/live-players')) data = { players: [] };
+      else if (pathname.endsWith('/staff/players')) data = { players: [] };
       else if (pathname.endsWith('/staff/pricing-configs')) data = { pricingConfigs: [] };
       else if (pathname.endsWith('/staff/presents')) data = { presents: [] };
       else if (pathname.endsWith('/staff/api-tokens')) data = { apiTokens: [] };

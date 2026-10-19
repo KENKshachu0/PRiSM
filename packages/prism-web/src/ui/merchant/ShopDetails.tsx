@@ -1,24 +1,23 @@
 import { useI18n } from "../../i18n";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { resolveLocationTimeZone } from "@prism/core";
-import { Plus, Save, Store, Trash2, X } from "lucide-react";
+import { Plus, Save, Trash2 } from "lucide-react";
 import { api, Api, type Shop, type ShopMember } from "../../api";
-import { input, button, useMerchant, segment } from "./shared";
+import { input, button, primary, useMerchant, segment } from "./shared";
 import { MapPicker } from "../MapPicker";
 import { ShopHeroEditor } from "../ShopHeroEditor";
 
 export function ShopForm({
   shop,
   onSaved,
-  isCollapsible,
-  onCancel,
+  back,
   billingSetup,
 }: {
   shop?: Shop | null;
   billingSetup?: Record<string, unknown>;
   onSaved: (shop: Shop, token?: string) => void | Promise<void>;
-  isCollapsible?: boolean;
-  onCancel?: () => void;
+  /** Shown beside save when the form is the last step of a wizard. */
+  back?: () => void;
 }) {
   const { t, errorText } = useI18n();
   const [name, setName] = useState(shop?.name ?? "");
@@ -111,40 +110,17 @@ export function ShopForm({
   };
 
   return (
-    <form
-      onSubmit={submit}
-      className="rounded border border-ink/10 bg-panel p-5 shadow-soft"
-    >
-      <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-xl font-semibold">
-          <Store size={21} />
-          {shop
-            ? t("编辑店铺「{name}」", { name: shop.name })
-            : isCollapsible
-              ? t("新建店铺")
-              : t("添加店铺")}
-        </h2>
-        {(isCollapsible || shop) && onCancel && (
-          <button
-            type="button"
-            className="focus-ring rounded p-1 text-ink/60 hover:bg-ink/5"
-            onClick={onCancel}
-            title={t("收起")}
-          >
-            <X size={18} />
-          </button>
-        )}
-      </div>
+    <form onSubmit={submit}>
       {error && (
-        <p className="mt-3 rounded border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">
+        <p role="alert" className="mb-4 rounded border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">
           {errorText(error)}
         </p>
       )}
-      <div className="mt-4 grid gap-3">
+      <div className="grid gap-4">
         <label className="grid gap-1.5 text-sm font-medium">
           {t("店铺名称")}
           <input
-            className="focus-ring min-h-11 rounded border border-ink/10 bg-surface px-3 font-normal"
+            className={input}
             placeholder={t("例如：万达广场机厅")}
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -175,7 +151,7 @@ export function ShopForm({
             <label className="grid gap-1 text-xs text-ink/70">
               {t("纬度 (Latitude)")}
               <input
-                className="focus-ring min-h-11 rounded border border-ink/10 bg-surface px-3 font-mono text-sm text-ink font-normal"
+                className={`${input} font-mono`}
                 placeholder={t("点击地图或自动定位")}
                 value={latitude ?? ""}
                 onChange={(event) =>
@@ -187,7 +163,7 @@ export function ShopForm({
             <label className="grid gap-1 text-xs text-ink/70">
               {t("经度 (Longitude)")}
               <input
-                className="focus-ring min-h-11 rounded border border-ink/10 bg-surface px-3 font-mono text-sm text-ink font-normal"
+                className={`${input} font-mono`}
                 placeholder={t("点击地图或自动定位")}
                 value={longitude ?? ""}
                 onChange={(event) =>
@@ -220,7 +196,7 @@ export function ShopForm({
               type="number"
               min={30}
               max={1000}
-              className="focus-ring min-h-11 w-full rounded border border-ink/10 bg-surface px-3 pr-10 font-normal"
+              className={`${input} pr-10`}
               placeholder={t("默认 80")}
               value={radiusMeters}
               onChange={(event) => setRadiusMeters(event.target.value)}
@@ -237,23 +213,16 @@ export function ShopForm({
             )}
           </span>
         </label>
-        <div className="flex gap-2">
-          <button
-            className="focus-ring flex min-h-11 flex-1 items-center justify-center gap-2 rounded bg-ink px-4 font-medium text-canvas disabled:opacity-60"
-            disabled={busy || heroBusy}
-          >
-            {shop ? <Save size={18} /> : <Plus size={18} />}
-            {shop ? t("保存修改") : t("保存店铺")}
-          </button>
-          {(isCollapsible || shop) && onCancel && (
-            <button
-              type="button"
-              className="focus-ring rounded border border-ink/15 bg-surface px-4 font-medium text-ink hover:bg-ink/5"
-              onClick={onCancel}
-            >
-              {t("取消")}
+        <div className="flex flex-wrap justify-between gap-3">
+          {back && (
+            <button type="button" className={button} onClick={back}>
+              {t("上一步")}
             </button>
           )}
+          <button className={primary} disabled={busy || heroBusy}>
+            {shop ? <Save size={18} /> : <Plus size={18} />}
+            {t(busy ? "处理中…" : shop ? "保存修改" : "创建店铺")}
+          </button>
         </div>
       </div>
     </form>
@@ -390,11 +359,18 @@ export function MembersPanel({
                 </label>
               )}
             <button
+              type="button"
               title={t("移除成员")}
+              aria-label={t("移除成员")}
               className="focus-ring grid size-9 shrink-0 place-items-center rounded text-coral hover:bg-coral/10"
               onClick={async () => {
-                await Api.removeShopMember(member.id);
-                await onChanged();
+                setError(null);
+                try {
+                  await Api.removeShopMember(member.id);
+                  await onChanged();
+                } catch (caught) {
+                  setError(caught instanceof Error ? caught.message : "保存失败");
+                }
               }}
             >
               <Trash2 size={16} />

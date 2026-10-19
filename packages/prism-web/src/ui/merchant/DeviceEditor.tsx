@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
   ChevronDown,
   CreditCard,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import { api, type Machine } from "../../api";
 import { useI18n } from "../../i18n";
-import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant } from "./shared";
+import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant, useResource } from "./shared";
 import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
 
 /**
@@ -30,8 +31,16 @@ export function DeviceEditor({
   /** Locks the dialog while a one-time token is on screen. */
   onLockChange: (locked: boolean) => void;
 }) {
-  const { shopId, shopCode, billingEnabled } = useMerchant();
+  const { shopId, shopCode, billingEnabled, owner } = useMerchant();
   const { t } = useI18n();
+  const shopSettings = useResource<{
+    settings: { ttLockConnection?: Record<string, string | undefined> | null };
+  }>(owner ? "settings" : null);
+  const lock = shopSettings.data?.settings.ttLockConnection;
+  const ttLockMissing =
+    !!shopSettings.data &&
+    !(lock?.clientId && lock.clientSecret && (lock.accessToken || lock.appAccount));
+  const shopPath = `/merchant/${encodeURIComponent(shopCode)}`;
   const initial = deviceCapabilities(
     value ?? {
       homeAssistant: null,
@@ -509,6 +518,9 @@ export function DeviceEditor({
                   {t("刷卡后自动投一币")}
                 </label>
               </div>
+              {!canCoin && (
+                <Hint>{t("外部中继要先填连接密码，才能设置投币。")}</Hint>
+              )}
               <Hint>
                 {t("按键码使用 Windows Virtual-Key Codes，例如 32 是空格键。")}
               </Hint>
@@ -540,7 +552,16 @@ export function DeviceEditor({
                 onChange={(e) => setLockId(e.target.value)}
               />
             </Field>
-            <Hint>{t("TTLock 账号在「设置 → 位置与设备」中连接。")}</Hint>
+            {ttLockMissing ? (
+              <p className="text-sm text-coral">
+                {t("店铺还没有连接 TTLock 账号，开门会失败。")}{" "}
+                <Link className="underline" to={`${shopPath}/settings?group=devices`}>
+                  {t("去连接")}
+                </Link>
+              </p>
+            ) : (
+              <Hint>{t("TTLock 账号在「设置 → 位置与设备」中连接。")}</Hint>
+            )}
           </div>
         </CapabilityCard>
 
@@ -586,8 +607,14 @@ export function DeviceEditor({
               {pricing.filter((r) => r.enabled).length === 0 ? (
                 <p className="text-sm text-ink/55">
                   {billingEnabled
-                    ? t("还没有启用中的计费规则，请先在「计费」页创建。")
-                    : t("启用入场计费后即可选择麻将计费规则。")}
+                    ? t("还没有启用中的计费规则。")
+                    : t("麻将桌按座位计时收费，需要先启用入场计费。")}{" "}
+                  <Link
+                    className="underline"
+                    to={billingEnabled ? `${shopPath}/pricing` : `${shopPath}/settings?group=billing`}
+                  >
+                    {t(billingEnabled ? "去「计费」页创建" : "启用入场计费")}
+                  </Link>
                 </p>
               ) : (
                 <div className="grid gap-1">

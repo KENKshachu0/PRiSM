@@ -71,7 +71,6 @@ export function BillingConversionWizard({ shopCode, close, done }: {
           </dl>
           <p className="text-sm">{t("将补齐基础余额资产，创建并选用新的标准入场方案，然后启用计费。已有设备、玩家、资产和计费方案会保留。")}</p>
         </>}
-        <p className="text-sm text-ink/60">{t("无需创建 Bot 凭据；需要连接 Bot 时，可在「接入凭据」单独配置。")}</p>
         {error && <p role="alert" className="text-sm text-coral">{error}</p>}
         <div className="flex flex-wrap justify-between gap-3">
           <button type="button" className={button} onClick={() => step === 0 ? close() : setStep(0)}>{t(step === 0 ? "取消" : "上一步")}</button>
