@@ -65,7 +65,9 @@ type NeoBillingRule = {
   name: string;
   priority: number;
   matchDate?: { specificDates?: string[]; weekdays?: number[] } | null;
-  timeRange: { start: string; end: string };
+  timeRange:
+    | { start: string; end: string }
+    | { isDateTimeRange: true; start: string; end: string };
   pricing: { unitMinutes: number | string; unitPrice: number | string; priceCap: number | string; roundGraceMinutes: number | string };
 };
 type NeoBillingRecord = {
@@ -469,7 +471,16 @@ export function convertPrismNeoSnapshot(
         priority: parseLegacyNumber(rule.priority),
         ...(matchDate?.specificDates?.length ? { specificDates: matchDate.specificDates } : {}),
         ...(matchDate?.weekdays?.length ? { weekdays: matchDate.weekdays } : {}),
-        timeRange: { start: timeRange.start, end: timeRange.end },
+        // prism-neo stores holiday rules as absolute ranges; a bare clock
+        // range would crash the pricing timeline ("Invalid time value").
+        ...("isDateTimeRange" in timeRange && timeRange.isDateTimeRange
+          ? {
+              dateTimeRange: {
+                start: new Date(timeRange.start).toISOString(),
+                end: new Date(timeRange.end).toISOString(),
+              },
+            }
+          : { timeRange: { start: timeRange.start, end: timeRange.end } }),
         pricing: {
           unitMinutes: parseLegacyNumber(pricing.unitMinutes),
           unitPrice: cents(parseLegacyNumber(pricing.unitPrice)),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { convertPrismNeoSnapshot, normalizePrismNeoTimestamp } from "./prism-neo-convert";
+import { pricingPreview } from "./ui/merchant/pricing-preview";
 
 const snapshot = {
   exportedAt: "2026-06-01T00:00:00.000Z",
@@ -218,6 +219,53 @@ describe("convertPrismNeoSnapshot", () => {
       expect(table.length).toBeGreaterThan(0);
     }
     expect(Object.keys(backup.tables).length).toBe(39);
+  });
+
+  it("keeps absolute holiday ranges as dateTimeRange so the pricing page can render them", () => {
+    // prism-neo stores holiday rules as {isDateTimeRange:true,start,end};
+    // treating that as a clock range made the pricing timeline throw
+    // "Invalid time value" and took down the whole billing page.
+    const holiday = convertPrismNeoSnapshot(
+      {
+        billingRules: [
+          {
+            id: 9,
+            name: "春节",
+            priority: 3,
+            matchDate: null,
+            timeRange: {
+              isDateTimeRange: true,
+              start: "2026-02-17T00:00:21.735Z",
+              end: "2026-03-03T20:00:21.735Z",
+            },
+            pricing: { unitMinutes: 30, unitPrice: 3, priceCap: 30, roundGraceMinutes: 3 },
+          },
+        ],
+      },
+      { timeZone: "Asia/Shanghai" },
+    );
+    const provider = JSON.parse(String(holiday.tables.pricing_configs[0]!.provider_json));
+    expect(provider.rules[0].dateTimeRange).toEqual({
+      start: "2026-02-17T00:00:21.735Z",
+      end: "2026-03-03T20:00:21.735Z",
+    });
+    expect(provider.rules[0].timeRange).toBeUndefined();
+    // The imported config must produce a timeline instead of crashing.
+    expect(
+      pricingPreview(
+        {
+          id: "legacy:pricing-config:time-priority",
+          kind: "time.priority",
+          name: "Legacy time priority pricing",
+          enabled: false,
+          provider,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as never,
+        "2026-10-20",
+        "Asia/Shanghai",
+      ),
+    ).not.toBeNull();
   });
 
   it("parses bare legacy timestamps as UTC", () => {
