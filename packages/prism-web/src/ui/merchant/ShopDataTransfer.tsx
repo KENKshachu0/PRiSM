@@ -458,11 +458,15 @@ export function ShopDataTransfer() {
             <option value="prism-neo">{t("prism-neo 导出（pg_dump 文本或 JSON 快照）")}</option>
           </select>
         </Field>
-        <Field label="JSON 备份文件">
+        <Field label={importSource === "prism-neo" ? "备份文件（.sql 或 .json）" : "JSON 备份文件"}>
           <input
             className={input}
             type="file"
-            accept=".json,application/json,.sql,.txt"
+            accept={
+              importSource === "prism-neo"
+                ? ".sql,.txt,.json,application/json,text/plain"
+                : ".json,application/json"
+            }
             disabled={busy}
             onChange={selectFile}
           />

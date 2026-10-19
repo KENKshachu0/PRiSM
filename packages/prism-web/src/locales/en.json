@@ -976,6 +976,7 @@
   "导入到空店铺，先预检再确认。不会覆盖已有玩家、余额或账单；目标店铺的名称、位置、时区和管理员保持不变。": "Import into an empty shop after preview and confirmation. Existing players, balances and bills cannot be overwritten. The target shop retains its name, location, time zone and administrators.",
   "备份不含网页登录账号关联、登录凭据、Bot 凭据或设备连接；导入后需重新绑定和配置设备。文件包含玩家身份和财务数据，请妥善保管。": "Backups exclude web account links, login credentials, Bot credentials and device connections. Reconnect accounts and devices after import. Files contain player identities and financial data; keep them secure.",
   "JSON 备份文件": "JSON backup file",
+  "备份文件（.sql 或 .json）": "Backup file (.sql or .json)",
   "支持当前版本 PRiSM 导出的 JSON，最大 10 MiB。": "Supports JSON exported by this PRiSM version, up to 10 MiB.",
   "预检导入": "Preview import",
   "来源店铺": "Source shop",
