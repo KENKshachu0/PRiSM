@@ -288,7 +288,9 @@ Integration RPC 面向聊天机器人、自助入口、扫码入口等可信外�
 所有 Integration 路由共用一道检查（`guardIntegration`）：
 
 - `platform-binding/confirm`（身份绑定）只需要有效的 Bot 凭据，**不要求店铺启用计费**，不使用 PRiSM 计费的店铺也能让玩家通过 Bot 绑定身份（门锁等设备需要）。
-- 其它路由要求店铺启用计费（否则 `409 BILLING_DISABLED`），并且店铺没有把 Bot 设为「只负责绑定身份」（否则 `403 BOT_OPERATIONS_DISABLED`）。该选项存于 `app_settings` 的 `integration.settings`（`{ "operationsEnabled": false }`），通过店铺 `settings` 的 `botOperationsEnabled` 读写，默认 `true`，随店铺备份的 `app_settings` 行一起导出导入。
+- 其它路由要求店铺启用计费（否则 `409 BILLING_DISABLED`）。
+
+Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后台分不清一条请求是管理员还是玩家发的（管理员白名单只在 Bot 里），而凭据本身就在店家自己的 Bot 里。Koishi 插件的 `playerCommands: "readonly"` 让玩家只能绑定、查询和兑换，见插件 README。
 
 | 请求方法 | 路由路径 | 接口用途 |
 | --- | --- | --- |

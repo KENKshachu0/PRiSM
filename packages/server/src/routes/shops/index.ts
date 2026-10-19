@@ -101,7 +101,6 @@ export function publicSettings(shop: TenantShop) {
     machineGeo: !!shop.machine_geo,
     entryPricingIds,
     botContact: shop.bot_contact,
-    botOperationsEnabled: !!shop.bot_operations_enabled,
   };
 }
 
@@ -123,7 +122,6 @@ const settingsSchema = z.object({
   machineGeo: z.boolean().optional(),
   entryPricingIds: z.array(z.string().min(1)).max(30),
   botContact: bindingPromptSchema,
-  botOperationsEnabled: z.boolean().optional(),
 });
 
 export const shopRouter = new Hono<AppBindings>();
@@ -481,7 +479,6 @@ shopRouter.put("/settings", async (c) => {
       const machineGeo = body.locationEnabled ?? body.machineGeo ?? !!initialShop.machine_geo;
       const cashierEnabled = body.cashierEnabled ?? !!initialShop.cashier_enabled;
       const identityBindingRequired = body.identityBindingRequired ?? !!initialShop.identity_binding_required;
-      const botOperationsEnabled = body.botOperationsEnabled ?? !!initialShop.bot_operations_enabled;
       if (body.botContact && body.botContact !== initialShop.bot_contact && !body.botContact.includes("{code}")) {
         jsonError(400, "绑定提示需要包含 {code}，用来显示绑定码", "BINDING_PROMPT_CODE_REQUIRED");
       }
@@ -552,15 +549,6 @@ shopRouter.put("/settings", async (c) => {
           JSON.stringify({ enabled: cashierEnabled }),
           new Date().toISOString(),
         ),
-        c.env.DB.prepare(
-          `INSERT INTO app_settings(shop_id, key, value_json, updated_at)
-           VALUES (?, 'integration.settings', ?, ?)
-           ON CONFLICT(shop_id, key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
-        ).bind(
-          initialShop.id,
-          JSON.stringify({ operationsEnabled: botOperationsEnabled }),
-          new Date().toISOString(),
-        ),
       ]);
 
       return c.json({
@@ -571,7 +559,6 @@ shopRouter.put("/settings", async (c) => {
         machineGeo,
         cashierEnabled,
         identityBindingRequired,
-        botOperationsEnabled,
         billingConfiguration: configuration,
       });
     },

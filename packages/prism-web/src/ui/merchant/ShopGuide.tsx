@@ -727,9 +727,7 @@ function Optional({
     {
       icon: Bot,
       title: "接入 Bot",
-      description: status.botOperations
-        ? "Bot 负责绑定身份，也能让玩家在 Bot 里入场、结账、查余额和操作设备。也可以设为只负责绑定身份。"
-        : "Bot 当前只负责绑定身份，其它操作在网页或 App Clip 里完成。",
+      description: "玩家在群里绑定身份、查余额和账单；插件也可以设为只读，入场和结账都在网页或 App Clip 里完成。",
       state: status.botConnected ? "已连接" : status.botIssued ? "已创建凭据，未连接" : undefined,
       to: `${base}/settings?group=integrations`,
     },

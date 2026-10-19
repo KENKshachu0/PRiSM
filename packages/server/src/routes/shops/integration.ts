@@ -44,9 +44,9 @@ export async function requireIntegrationAuth(
 export const integrationRouter = new Hono<AppBindings>();
 
 /**
- * Every Bot route passes here. Binding a platform identity is the one thing a
- * Bot may do for any shop: it does not need billing, and it stays available
- * when the owner limits the Bot to identities.
+ * Every Bot route passes here. Binding a platform identity does not need
+ * billing: a shop that bills elsewhere still admits players to its doors.
+ * Which commands a bot offers its players is the bot's own configuration.
  */
 export async function guardIntegration(c: Context<AppBindings>): Promise<void> {
   const shop = getShop(c);
@@ -55,9 +55,6 @@ export async function guardIntegration(c: Context<AppBindings>): Promise<void> {
     jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
   }
   await requireIntegrationAuth(c, shop);
-  if (!identityOnly && !shop.bot_operations_enabled) {
-    jsonError(403, "店铺 Bot 只负责绑定身份，不能执行店铺操作", "BOT_OPERATIONS_DISABLED");
-  }
 }
 
 integrationRouter.use("*", async (c, next) => {

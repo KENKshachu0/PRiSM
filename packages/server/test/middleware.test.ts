@@ -272,7 +272,7 @@ describe("Middleware Test Suite", () => {
       const shop = {
         id: "cache-updated", public_id: "cache-updated", name: "First",
         latitude: 0, longitude: 0, radius_meters: 50,
-        billing_enabled: 1, cashier_enabled: 0, bot_operations_enabled: 1, auto_register: 0,
+        billing_enabled: 1, cashier_enabled: 0, auto_register: 0,
         identity_binding_required: 1, checkin_geo: 0, checkout_geo: 0, machine_geo: 0,
         entry_pricing_ids_json: "[]", bot_contact: "", time_zone: "Asia/Shanghai", hero_url: null,
       };
@@ -620,7 +620,7 @@ describe("Middleware Test Suite", () => {
           radius_meters: 80,
           billing_enabled: 1,
           cashier_enabled: 0,
-          bot_operations_enabled: 1,
+         
           auto_register: 1,
           identity_binding_required: 1,
           checkin_geo: 0,
@@ -708,7 +708,7 @@ describe("Middleware Test Suite", () => {
 describe("independent geofence flags", () => {
   const base = {
     id:"shop",public_id:"shop",name:"shop",latitude:35,longitude:139,radius_meters:80,
-    billing_enabled:1,cashier_enabled:0,bot_operations_enabled:1,auto_register:0,identity_binding_required:0,
+    billing_enabled:1,cashier_enabled:0,auto_register:0,identity_binding_required:0,
     checkin_geo:0,checkout_geo:0,machine_geo:0,entry_pricing_ids_json:"[]",bot_contact:"",
     time_zone:"Asia/Tokyo",hero_url:null
   };

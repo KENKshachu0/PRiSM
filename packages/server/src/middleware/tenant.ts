@@ -590,7 +590,6 @@ export const tenantMiddleware: MiddlewareHandler<AppBindings> = async (
       COALESCE(b.auto_register, 0) AS auto_register,
       COALESCE(b.identity_binding_required, 1) AS identity_binding_required,
       COALESCE((SELECT json_extract(value_json, '$.enabled') FROM app_settings WHERE shop_id = s.id AND key = 'cashier.settings'), 0) AS cashier_enabled,
-      COALESCE((SELECT json_extract(value_json, '$.operationsEnabled') FROM app_settings WHERE shop_id = s.id AND key = 'integration.settings'), 1) AS bot_operations_enabled,
       COALESCE(b.checkin_geo, 0) AS checkin_geo,
       COALESCE(b.checkout_geo, 0) AS checkout_geo,
       COALESCE(b.machine_geo, 0) AS machine_geo,

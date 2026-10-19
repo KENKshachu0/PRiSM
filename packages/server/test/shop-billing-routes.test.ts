@@ -1562,7 +1562,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     sqlite.close();
   });
 
-  it("keeps an identity-only bot to binding, and lets any bot bind without billing", async () => {
+  it("lets a bot bind identities for a shop that does not bill through PRiSM", async () => {
     const { db, sqlite, env } = createTestContext();
     const { publicId, shopId, botToken } = await setupShopFixture(db, sqlite);
     const app = createTestApp();
@@ -1582,22 +1582,14 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         method: "POST", headers, body: JSON.stringify({ code: code.code, provider: "onebot", subject: `qq-${user}` }),
       }), env);
     };
-    sqlite.run("INSERT INTO app_settings (shop_id, key, value_json, updated_at) VALUES (?, 'integration.settings', '{\"operationsEnabled\":false}', CURRENT_TIMESTAMP)", [shopId]);
-    clearShopDependenciesCache();
-    const refused = await wallet();
-    expect(refused.status).toBe(403);
-    expect(await refused.json()).toMatchObject({ error: { code: "BOT_OPERATIONS_DISABLED" } });
-    expect((await bind("user_identity_only")).status).toBe(200);
-
     sqlite.run("UPDATE shop_billing_settings SET billing_enabled=0 WHERE shop_id=?", [shopId]);
-    sqlite.run("UPDATE app_settings SET value_json='{\"operationsEnabled\":true}' WHERE shop_id=? AND key='integration.settings'", [shopId]);
     clearShopDependenciesCache();
     expect((await wallet()).status).toBe(409);
     expect((await bind("user_no_billing")).status).toBe(200);
     sqlite.close();
   });
 
-  it("saves the bot scope and only accepts a changed binding prompt that shows the code", async () => {
+  it("only accepts a changed binding prompt that shows the code", async () => {
     const { db, sqlite, env } = createTestContext();
     const { publicId, staffSessionToken } = await setupShopFixture(db, sqlite);
     const app = createTestApp();
@@ -1605,12 +1597,11 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     const headers = { Authorization: `Bearer ${staffSessionToken}`, "Content-Type": "application/json" };
     const current = await (await app.fetch(new Request(url, { headers }), env)).json() as Record<string, unknown>;
     // The fixture's legacy contact text has no {code}; untouched, it still saves.
-    expect(current).toMatchObject({ botContact: "bot-contact", botOperationsEnabled: true });
+    expect(current).toMatchObject({ botContact: "bot-contact" });
     const save = (patch: Record<string, unknown>) => app.fetch(new Request(url, {
       method: "PUT", headers, body: JSON.stringify({ ...current, ...patch }),
     }), env);
-    expect((await save({ botOperationsEnabled: false })).status).toBe(200);
-    expect(await (await app.fetch(new Request(url, { headers }), env)).json()).toMatchObject({ botOperationsEnabled: false });
+    expect((await save({ locationEnabled: false })).status).toBe(200);
     const missing = await save({ botContact: "加群 123456 后私聊 Bot" });
     expect(missing.status).toBe(400);
     expect(await missing.json()).toMatchObject({ error: { code: "BINDING_PROMPT_CODE_REQUIRED" } });

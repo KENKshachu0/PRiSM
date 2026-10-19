@@ -57,7 +57,7 @@
 - **要求绑定平台身份（推荐）**：玩家第一次进店前把绑定码发给店铺 Bot。店家因此知道每位玩家的 QQ 号等身份；Bot 只在店铺群里响应时，只有群成员能进店。其下的高级勾选项「只允许已有档案的玩家绑定」（`autoRegister: false`）只用于迁移来的店，任何情况下都不作为默认值。
 - **登录网页账号即可**：不需要 Bot，店家只知道玩家的 PRiSM 账号。
 
-新店铺默认要求绑定并自动建档（含不计费店铺）。绑定提示、Bot 用途见 [integrations-and-machines.md](integrations-and-machines.md) 的 Integration 一节。
+新店铺默认要求绑定并自动建档（含不计费店铺）。绑定提示、Bot 向玩家开放哪些命令见 [integrations-and-machines.md](integrations-and-machines.md) 的 Integration 一节。
 
 ## 计费图解
 

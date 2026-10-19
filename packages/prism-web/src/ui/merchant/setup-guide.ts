@@ -80,7 +80,6 @@ export type SetupStatus = {
   identityMatters: boolean;
   botIssued: boolean;
   botConnected: boolean;
-  botOperations: boolean;
   bindingPrompt: string;
   ttLockReady: boolean;
   players: number;
@@ -157,7 +156,6 @@ export function setupStatus(signals: SetupSignals): SetupStatus {
     identityMatters,
     botIssued: activeBots.length > 0,
     botConnected,
-    botOperations: settings.botOperationsEnabled ?? true,
     bindingPrompt: settings.botContact ?? "",
     ttLockReady,
     players: players.length,

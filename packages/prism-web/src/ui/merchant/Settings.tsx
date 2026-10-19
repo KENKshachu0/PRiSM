@@ -339,7 +339,6 @@ export function SettingsPage({
 function BotSettings({ shopCode }: { shopCode: string }) {
   const { t } = useI18n();
   const [settings, setSettings] = useState<ShopSettings | null>(null);
-  const [operations, setOperations] = useState(true);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -348,7 +347,6 @@ function BotSettings({ shopCode }: { shopCode: string }) {
     api<ShopSettings>(shopApi(shopCode, "settings"))
       .then((value) => {
         setSettings(value);
-        setOperations(value.botOperationsEnabled ?? true);
         setPrompt(value.botContact ?? "");
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : t("操作失败")));
@@ -365,7 +363,7 @@ function BotSettings({ shopCode }: { shopCode: string }) {
       const current = await api<ShopSettings>(shopApi(shopCode, "settings"));
       const result = await api<ShopSettings>(shopApi(shopCode, "settings"), {
         method: "PUT",
-        body: JSON.stringify({ ...current, botOperationsEnabled: operations, botContact: prompt.trim() }),
+        body: JSON.stringify({ ...current, botContact: prompt.trim() }),
       });
       setSettings({ ...current, ...result, botContact: prompt.trim() });
       setSaved(true);
@@ -384,24 +382,12 @@ function BotSettings({ shopCode }: { shopCode: string }) {
           {t("玩家把网页上的绑定码发给店铺 Bot 后，店家就能知道这位玩家在该平台的身份（例如 QQ 号），每位玩家都有迹可循。在 Koishi 里把绑定命令限制在店铺群内，就只有入群的玩家能完成绑定、进店游玩。")}
         </p>
       </div>
-      <fieldset className="grid gap-2">
-        <legend className="mb-2 text-sm font-medium">{t("Bot 负责什么")}</legend>
-        {([
-          [true, "绑定身份，并代玩家操作", "玩家可以在 Bot 里入场、结账、查余额、兑换和操作设备。"],
-          [false, "只负责绑定身份", "Bot 只完成身份绑定，其它操作一律拒绝；入场、结账和设备都在网页或 App Clip 里完成。"],
-        ] as const).map(([value, title, description]) => (
-          <label
-            key={String(value)}
-            className={`flex cursor-pointer gap-3 rounded-lg border p-3 text-sm ${operations === value ? "border-mint bg-mint/5" : "border-ink/15"}`}
-          >
-            <input className="mt-1" type="radio" name="bot-operations" checked={operations === value} onChange={() => { setOperations(value); setSaved(false); }} />
-            <span>
-              <strong className="block">{t(title)}</strong>
-              <span className="mt-1 block leading-relaxed text-ink/60">{t(description)}</span>
-            </span>
-          </label>
-        ))}
-      </fieldset>
+      <div className="grid gap-2 rounded-lg bg-ink/[0.03] p-3 text-sm">
+        <strong>{t("Bot 能做什么")}</strong>
+        <p className="leading-relaxed text-ink/60">
+          {t("在 Koishi 的 PRiSM 插件配置里设置。「玩家可用的命令」选「只读」后，玩家在 Bot 里只能绑定身份、查余额和账单、查人和兑换；入场、结账、上下桌和设备操作要在网页或 App Clip 里完成。管理员（插件配置的 staffUserIds）不受限制，仍可加减余额、替玩家入场和结账。")}
+        </p>
+      </div>
       <div className="grid gap-3 lg:grid-cols-2">
         <label className="grid content-start gap-2 text-sm font-medium">
           {t("绑定提示")}
@@ -426,7 +412,7 @@ function BotSettings({ shopCode }: { shopCode: string }) {
       </div>
       {error && <p role="alert" className="text-sm text-coral">{error}</p>}
       <div className="flex items-center gap-3">
-        <button className={primary} disabled={busy || missingCode}>{t(busy ? "处理中…" : "保存 Bot 设置")}</button>
+        <button className={primary} disabled={busy || missingCode}>{t(busy ? "处理中…" : "保存绑定提示")}</button>
         {saved && <span role="status" className="text-sm text-mint">{t("已保存")}</span>}
       </div>
     </form>

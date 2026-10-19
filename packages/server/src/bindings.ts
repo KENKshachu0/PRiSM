@@ -54,8 +54,6 @@ export type TenantShop = {
   radius_meters: number;
   billing_enabled: number;
   cashier_enabled: number;
-  /** 0 when the shop's bot only binds identities and must not run store operations. */
-  bot_operations_enabled: number;
   auto_register: number;
   identity_binding_required: number;
   checkin_geo: number;
