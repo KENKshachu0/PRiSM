@@ -119,26 +119,45 @@ type NeoCoinRecord = {
 
 type Row = Record<string, string | number | null>;
 type NeoTables = {
+  staff_users: Row[];
+  pricing_effects: Row[];
   asset_definitions: Row[];
-  players: Row[];
-  player_identities: Row[];
-  sessions: Row[];
-  asset_holdings: Row[];
-  asset_ledger_entries: Row[];
   pricing_configs: Row[];
+  presents: Row[];
+  business_items: Row[];
   pricing_config_versions: Row[];
   pricing_releases: Row[];
   pricing_release_heads: Row[];
+  players: Row[];
+  player_identities: Row[];
+  cashier_profiles: Row[];
+  sessions: Row[];
   session_pricing_releases: Row[];
-  presents: Row[];
+  asset_holdings: Row[];
+  asset_transactions: Row[];
+  asset_ledger_entries: Row[];
   redeem_codes: Row[];
   redeem_records: Row[];
+  player_checkouts: Row[];
+  checkout_timelines: Row[];
   settlements: Row[];
   settlement_charge_items: Row[];
   settlement_adjustments: Row[];
   pricing_history_entries: Row[];
+  pricing_cap_history_entries: Row[];
+  business_item_orders: Row[];
+  cashier_payments: Row[];
+  app_settings: Row[];
+  shop_billing_settings: Row[];
+  api_tokens: Row[];
+  machines: Row[];
+  device_capabilities: Row[];
+  mahjong_seats: Row[];
   device_operations: Row[];
   device_events: Row[];
+  device_state: Row[];
+  account_links: Row[];
+  checkout_report_states: Row[];
 };
 
 export type PrismNeoConvertOptions = {
@@ -270,27 +289,48 @@ export function convertPrismNeoSnapshot(
   const releaseId = "legacy:pricing-release:time-priority";
   const neoRules = snapshot.billingRules ?? [];
 
+  // The importer cross-checks the file's table keys against the full v3 list
+  // and rejects any missing key, so every table ships even when empty.
   const tables: NeoTables = {
+    staff_users: [],
+    pricing_effects: [],
     asset_definitions: [],
-    players: [],
-    player_identities: [],
-    sessions: [],
-    asset_holdings: [],
-    asset_ledger_entries: [],
     pricing_configs: [],
+    presents: [],
+    business_items: [],
     pricing_config_versions: [],
     pricing_releases: [],
     pricing_release_heads: [],
+    players: [],
+    player_identities: [],
+    cashier_profiles: [],
+    sessions: [],
     session_pricing_releases: [],
-    presents: [],
+    asset_holdings: [],
+    asset_transactions: [],
+    asset_ledger_entries: [],
     redeem_codes: [],
     redeem_records: [],
+    player_checkouts: [],
+    checkout_timelines: [],
     settlements: [],
     settlement_charge_items: [],
     settlement_adjustments: [],
     pricing_history_entries: [],
+    pricing_cap_history_entries: [],
+    business_item_orders: [],
+    cashier_payments: [],
+    app_settings: [],
+    shop_billing_settings: [],
+    api_tokens: [],
+    machines: [],
+    device_capabilities: [],
+    mahjong_seats: [],
     device_operations: [],
     device_events: [],
+    device_state: [],
+    account_links: [],
+    checkout_report_states: [],
   };
 
   for (const user of snapshot.users ?? []) {

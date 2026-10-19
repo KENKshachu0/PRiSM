@@ -183,15 +183,76 @@ export async function readShopBackup(
   }
 }
 
-export async function uploadShopBackup(path: string, file: Blob, progress: (count: number) => void) {
-  let jobId = "",
-    tables: string[] = [],
-    part = 0,
+export type ShopBackupDigest = {
+  header: Header;
+  counts: Record<string, number>;
+  /** The whole backup, already parsed client-side; upload just re-streams it. */
+  file: Blob;
+};
+
+/**
+ * Phase one, entirely client-side: parse the whole backup before the first
+ * request. A structurally invalid file never creates a job and never sends a
+ * part, so a bad file cannot consume Worker requests or import quota.
+ */
+export async function verifyShopBackup(
+  file: Blob,
+  progress: (count: number) => void,
+): Promise<ShopBackupDigest> {
+  const counts: Record<string, number> = {};
+  let header: Header | undefined;
+  let total = 0;
+  await readShopBackup(file.stream(), {
+    async header(value) {
+      header = value;
+    },
+    async row(table) {
+      counts[table] = (counts[table] ?? 0) + 1;
+      total++;
+    },
+    async tableEnd(table) {
+      counts[table] = counts[table] ?? 0;
+    },
+  });
+  if (!header) throw invalid();
+  progress(total);
+  return { header, counts, file };
+}
+
+/**
+ * Phase two: create the job once and send its parts. The table keys are
+ * checked against the server contract before any part is sent, so a file the
+ * importer would reject is abandoned after one small request.
+ */
+export async function uploadShopBackup(
+  path: string,
+  digest: ShopBackupDigest,
+  progress: (count: number) => void,
+): Promise<{ jobId: string; counts: Record<string, number>; parts: number }> {
+  const job = await api<{ jobId: string; tables: string[] }>(`${path}/imports`, {
+    method: "POST",
+    body: JSON.stringify(digest.header),
+  });
+  const jobId = job.jobId;
+  const tables = job.tables;
+  const counts = { ...digest.counts };
+  // v2 business backups created before report archiving have no metadata table.
+  if (
+    digest.header.version === 2 &&
+    digest.header.scope === "business" &&
+    tables.includes("checkout_report_states") &&
+    !Object.hasOwn(counts, "checkout_report_states")
+  )
+    counts.checkout_report_states = 0;
+  if (Object.keys(counts).sort().join(",") !== [...tables].sort().join(",")) {
+    await api(`${path}/imports/${jobId}`, { method: "DELETE" }).catch(() => {});
+    throw invalid();
+  }
+  let part = 0,
     total = 0,
     activeTable = "",
     rows: Row[] = [],
-    bytes = 2,
-    legacyV2Business = false;
+    bytes = 2;
   const flush = async () => {
     if (!rows.length) return;
     const body = JSON.stringify({ table: activeTable, part, rows });
@@ -211,18 +272,9 @@ export async function uploadShopBackup(path: string, file: Blob, progress: (coun
     progress(total);
   };
   try {
-    const counts = await readShopBackup(file.stream(), {
-      async header(header) {
-        legacyV2Business = header.version === 2 && header.scope === "business";
-        const job = await api<{ jobId: string; tables: string[] }>(`${path}/imports`, {
-          method: "POST",
-          body: JSON.stringify(header),
-        });
-        jobId = job.jobId;
-        tables = job.tables;
-      },
+    await readShopBackup(digest.file.stream(), {
+      async header() {},
       async row(table, row) {
-        if (!tables.includes(table)) throw invalid();
         if (activeTable !== table) {
           await flush();
           activeTable = table;
@@ -233,17 +285,13 @@ export async function uploadShopBackup(path: string, file: Blob, progress: (coun
         bytes += size;
         total++;
       },
-      async tableEnd(table) {
-        if (!tables.includes(table)) throw invalid();
+      async tableEnd() {
         await flush();
       },
     });
-    if (legacyV2Business && tables.includes("checkout_report_states") &&
-        !Object.hasOwn(counts, "checkout_report_states")) counts.checkout_report_states = 0;
-    if (Object.keys(counts).sort().join(",") !== [...tables].sort().join(",")) throw invalid();
     return { jobId, counts, parts: part };
   } catch (error) {
-    if (jobId) await api(`${path}/imports/${jobId}`, { method: "DELETE" }).catch(() => {});
+    await api(`${path}/imports/${jobId}`, { method: "DELETE" }).catch(() => {});
     throw error;
   }
 }

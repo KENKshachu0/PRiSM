@@ -1270,5 +1270,6 @@
   "任务状态不允许重新检查文件": "The task state does not allow re-checking the file.",
   "业务备份覆盖现有数据；仅配置备份保留玩家和账单。目标店铺编号和当前管理员保留。": "Business backups replace existing data; configuration backups retain players and bills. The target shop ID and current administrator are retained.",
   "数据损坏": "The data is corrupted.",
-  "传输失败，请重试": "Transfer failed. Try again."
+  "传输失败，请重试": "Transfer failed. Try again.",
+  "已处理记录": "Processed records"
 }
