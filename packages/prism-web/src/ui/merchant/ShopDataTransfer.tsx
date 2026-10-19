@@ -5,6 +5,7 @@ import {
   cancelShopExport,
   recoverInterruptedShopExport,
   uploadShopBackup,
+  convertPrismNeoFile,
   type ExportInfo,
 } from "../../shop-data-transfer";
 import { useI18n } from "../../i18n";
@@ -66,9 +67,10 @@ const labels: Record<string, string> = {
   account_links: "账号关联",
 };
 export function ShopDataTransfer() {
-  const { shopCode } = useMerchant();
+  const { shopCode, timeZone } = useMerchant();
   const { t, errorText } = useI18n();
   const [scope, setScope] = useState<"business" | "configuration">("business");
+  const [importSource, setImportSource] = useState<"prism" | "prism-neo">("prism");
   const [file, setFile] = useState<File>();
   const [jobId, setJobId] = useState("");
   const stagedImport = useRef<Awaited<
@@ -222,6 +224,7 @@ export function ShopDataTransfer() {
     setSuccess(false);
     setOperationId(crypto.randomUUID());
   }
+  /** prism-neo pg_dump/JSON 导出先在浏览器转成本店 v3 备份，再走同一条分片管线。 */
   async function preflight() {
     setBusy(true);
     setError("");
@@ -231,7 +234,13 @@ export function ShopDataTransfer() {
       setProgress(0);
       const upload =
         stagedImport.current ??
-        (await uploadShopBackup(path, file, setProgress));
+        (await uploadShopBackup(
+          path,
+          importSource === "prism-neo"
+            ? await convertPrismNeoFile(file, timeZone)
+            : file,
+          setProgress,
+        ));
       stagedImport.current = upload;
       setOverwriteConfirmed(false);
       setJobId(upload.jobId);
@@ -429,17 +438,41 @@ export function ShopDataTransfer() {
             "备份包含设备连接密钥、玩家身份和财务数据，请妥善保管。跨环境账号通过已验证的登录身份恢复关联，不复制 Passkey、OAuth 密钥或登录会话。",
           )}
         </p>
+        <Field label={t("备份来源")}>
+          <select
+            className={input}
+            value={importSource}
+            disabled={busy}
+            onChange={(event) => {
+              setImportSource(event.target.value as typeof importSource);
+              setFile(undefined);
+              setJobId("");
+              stagedImport.current = null;
+              setPreview(undefined);
+              setFilename("");
+              setError("");
+              setSuccess(false);
+            }}
+          >
+            <option value="prism">{t("PRiSM 备份（v1／v2／v3 JSON）")}</option>
+            <option value="prism-neo">{t("prism-neo 导出（pg_dump 文本或 JSON 快照）")}</option>
+          </select>
+        </Field>
         <Field label="JSON 备份文件">
           <input
             className={input}
             type="file"
-            accept=".json,application/json"
+            accept=".json,application/json,.sql,.txt"
             disabled={busy}
             onChange={selectFile}
           />
         </Field>
         <p className="text-xs text-ink/60">
-          {t("支持 PRiSM v1／v2 JSON 备份，分片传输，无 10 MiB 文件大小限制。")}
+          {t(
+            importSource === "prism-neo"
+              ? "支持 prism-neo 的 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照，上传前在浏览器转换为 PRiSM 备份；旧计费规则将以停用状态导入，请先在计费设置中核对时区再启用。"
+              : "支持 PRiSM v1／v2 JSON 备份，分片传输，无 10 MiB 文件大小限制。",
+          )}
         </p>
         <button
           className={`${button} justify-self-start`}

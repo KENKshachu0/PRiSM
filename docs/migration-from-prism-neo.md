@@ -5,6 +5,8 @@ PRiSM Next 提供了完整的历史数据平滑过渡方案。数据迁移过程
 1. **导出数据**：将旧版 `prism-neo` 数据库的数据导出为一个符合标准定义的 JSON 快照文件。
 2. **转换并导入**：通过 `@prism/migration` 包将 JSON 快照中的旧实体字段映射为 PRiSM Next 领域记录，并通过兼容的 SQL 执行器写入目标 SQLite 或远程 D1 数据库中。
 
+除了命令行流程，后台「店铺设置 → 数据管理 → 从 JSON 导入」也支持直接选择 prism-neo 的 `pg_dump` 备份（`.sql`）或 CLI 导出的 JSON 快照：浏览器会先在本地将其转换为 PRiSM v3 备份，再走与普通备份完全相同的分片上传、预检和覆盖导入流程（见 [店铺 JSON 数据备份与迁移](shop-data-transfer.md)）。网页导入同样遵守每月额度；旧计费规则以「Legacy time priority pricing」停用状态导入，启用前须在计费设置中核对时区（见下文第 E 节）。
+
 ---
 
 ## 1. 迁移导出命令行操作

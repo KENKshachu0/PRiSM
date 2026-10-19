@@ -1,4 +1,5 @@
 import { api, ApiError } from "./api";
+import { convertPrismNeoSnapshot } from "./prism-neo-convert";
 
 type Row = Record<string, string | number | null>;
 type Header = Record<string, unknown>;
@@ -240,9 +241,134 @@ export async function uploadShopBackup(path: string, file: Blob, progress: (coun
   }
 }
 
+/**
+ * A prism-neo export is either the CLI's JSON snapshot or a pg_dump text file
+ * with COPY blocks. Both are parsed in the browser and converted into a PRiSM
+ * v3 backup Blob so the import stays on the staged, quota-counted path.
+ */
+export async function convertPrismNeoFile(file: File, timeZone: string): Promise<File> {
+  const text = await file.text();
+  const snapshot = text.trimStart().startsWith("{")
+    ? JSON.parse(text)
+    : snapshotFromPgDump(text);
+  const backup = convertPrismNeoSnapshot(snapshot, {
+    shopName: file.name.replace(/\.(sql|txt|json)$/i, ""),
+    timeZone,
+  });
+  // `counts` is a client-side summary; the wire header carries only schema keys.
+  const { counts, tables, ...header } = backup;
+  const json = JSON.stringify({ ...header, tables });
+  return new File([json], `prism-${backup.source.publicId}-${backup.exportedAt.slice(0, 10)}.json`, {
+    type: "application/json",
+  });
+}
+
+type CopyTables = Map<string, { columns: string[]; rows: string[][] }>;
+
+function snapshotFromPgDump(sql: string): Record<string, unknown> {
+  const tables: CopyTables = new Map();
+  const lines = sql.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const copy = parseCopyHeader(lines[index]!);
+    if (!copy) continue;
+    const rows: string[][] = [];
+    index += 1;
+    for (; index < lines.length; index += 1) {
+      const line = lines[index]!;
+      if (line === "\\.") break;
+      rows.push(line.split("\t"));
+    }
+    tables.set(copy.tableName, { columns: copy.columns, rows });
+  }
+  const read = (table: string): Record<string, unknown>[] =>
+    (tables.get(table)?.rows ?? []).map((fields) => {
+      const columns = tables.get(table)!.columns;
+      if (fields.length !== columns.length) {
+        throw new Error(`prism-neo 备份的 ${table} 数据列数不符，文件可能不完整`);
+      }
+      return Object.fromEntries(columns.map((column, index) => [column, decodeCopyField(fields[index]!)]));
+    });
+  return {
+    exportedAt: new Date().toISOString(),
+    users: read("User"),
+    binds: read("Bind"),
+    assetDefinitions: read("Asset"),
+    userAssets: read("UserAsset"),
+    userAssetLogs: read("UserAssetLog"),
+    sessions: read("Session"),
+    billingRules: read("BillingRule"),
+    billingRecords: read("BillingRecord"),
+    presents: read("Present"),
+    redeems: read("Redeem"),
+    redeemRecords: read("RedeemRecord"),
+    coinRecords: read("CoinRecord"),
+  };
+}
+
+function parseCopyHeader(line: string): { tableName: string; columns: string[] } | null {
+  const match = /^COPY (?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\((.*)\)\s*FROM stdin;\s*$/.exec(line);
+  if (!match) return null;
+  return { tableName: match[1]!, columns: splitIdentifierList(match[2]!) };
+}
+
+function splitIdentifierList(input: string): string[] {
+  const columns: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const char of input) {
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      columns.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) columns.push(current.trim());
+  return columns;
+}
+
+function decodeCopyField(field: string): string | null {
+  if (field === "\\N") return null;
+  let decoded = "";
+  for (let index = 0; index < field.length; index += 1) {
+    const char = field[index]!;
+    if (char !== "\\") {
+      decoded += char;
+      continue;
+    }
+    const next = field[index + 1];
+    if (next === undefined) {
+      decoded += "\\";
+      continue;
+    }
+    index += 1;
+    if (next === "b") decoded += "\b";
+    else if (next === "f") decoded += "\f";
+    else if (next === "n") decoded += "\n";
+    else if (next === "r") decoded += "\r";
+    else if (next === "t") decoded += "\t";
+    else if (next >= "0" && next <= "7") {
+      let octal = next;
+      let endIndex = index;
+      for (let offset = 1; offset < 3; offset += 1) {
+        const digit = field[index + offset];
+        if (digit === undefined || digit < "0" || digit > "7") break;
+        octal += digit;
+        endIndex = index + offset;
+      }
+      decoded += String.fromCharCode(Number.parseInt(octal, 8));
+      index = endIndex;
+    } else decoded += next;
+  }
+  return decoded;
+}
+
 /** Each page request has bounded Worker memory and an independent subrequest budget. */
-const exportStorageKey = (path: string) => `prism.export:${path}`;
-export async function cancelShopExport(path: string, jobId: string) {
+const exportStorageKey = (path: string) => `prism.export:${path}`;export async function cancelShopExport(path: string, jobId: string) {
   try {
     await api(`${path}/exports/${encodeURIComponent(jobId)}`, { method: "DELETE", keepalive: true });
   } catch (error) {
