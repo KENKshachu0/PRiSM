@@ -5,6 +5,7 @@ import {
 } from "@prism/adapter-d1";
 import {
   migrateLegacyPricingToUtc,
+  normalizeImportedReleaseTimeZones,
   splitD1MigrationStatements,
   utcPricingMigrationId,
 } from "@prism/storage-sql";
@@ -324,13 +325,17 @@ export async function deploymentControl(
         now: new Date(),
         id: () => crypto.randomUUID(),
       });
+      const releases = await normalizeImportedReleaseTimeZones({
+        executor: createD1Executor(guardedDB),
+        now: new Date(),
+      });
       const locations = await migrateShopLocationTimeZones(guardedDB);
       await deploymentBatch(
         env.DB,
         owner,
         utcWriteGuards.map((sql) => env.DB.prepare(sql).bind()),
       );
-      return result({ ok: true, pricing, locations });
+      return result({ ok: true, pricing, releases, locations });
     }
     if (input.action === "check" && env.PRISM_DEPLOY_PHASE === "verify") {
       const markers = (
@@ -398,9 +403,15 @@ export async function deploymentControl(
       },
       409,
     );
-  } catch {
+  } catch (error) {
+    // The deploy token authenticates this endpoint; returning the specific
+    // invariant that failed is what makes a red CI log actionable.
     return result(
-      { error: "Deployment step failed; maintenance remains active" },
+      {
+        error: error instanceof Error
+          ? `Deployment step failed: ${error.message}; maintenance remains active`
+          : "Deployment step failed; maintenance remains active",
+      },
       500,
     );
   }

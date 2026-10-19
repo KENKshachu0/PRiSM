@@ -90,6 +90,7 @@ else await deployPlatform(steps);
 async function command(args: string[], capture = false): Promise<string> {
   const process = Bun.spawn(args, { cwd: root, stdout: capture ? "pipe" : "inherit", stderr: "inherit", stdin: "ignore" });
   const output = capture ? await new Response(process.stdout).text() : "";
-  if (await process.exited !== 0) throw new Error(`${args[0]} ${args[1]} failed`);
+  const status = await process.exited;
+  if (status !== 0) throw new Error(`${args.join(" ")} failed (exit ${status})`);
   return output;
 }

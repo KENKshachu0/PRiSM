@@ -170,7 +170,7 @@ describe("convertPrismNeoSnapshot", () => {
       timeRange: { start: "20:00", end: "04:00" },
       pricing: { unitPrice: 4000, priceCap: 16000 },
     });
-    expect(backup.tables.pricing_releases[0]!.time_zone).toBe("Asia/Shanghai");
+    expect(backup.tables.pricing_releases[0]!.time_zone).toBe("UTC");
     expect(backup.tables.session_pricing_releases).toEqual([
       { session_id: "legacy:session:52", release_id: "legacy:pricing-release:time-priority" },
     ]);

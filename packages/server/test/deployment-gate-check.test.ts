@@ -69,6 +69,8 @@ describe("deployment check with D1 first-row semantics", () => {
         return Response.json({ ok: true });
       });
       expect(response?.status).toBe(500);
+      const body = (await response?.json()) as { error?: string };
+      expect(body.error).toContain("UTC pricing verification failed");
       expect(healthCalled).toBe(false);
       expect(sqlite.query(
         "SELECT maintenance,permit,checked FROM prism_deployment_gate WHERE id='global'",

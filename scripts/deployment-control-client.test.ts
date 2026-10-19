@@ -54,6 +54,30 @@ test("authenticated SQL and ownership failures stop immediately without retrying
   }
 });
 
+test("terminal failures print the server reason and edge error snippet", async () => {
+  const structured = fixture(() =>
+    Response.json({ error: "D1 migration failed: no such table", revision }, { status: 500 }));
+  await expect(deploymentRequest(structured.options, { action: "schema" }))
+    .rejects.toThrow("D1 migration failed: no such table");
+
+  const edge = fixture(() => new Response("Error 1101: Worker threw exception", {
+    status: 500, headers: { "content-type": "text/html" },
+  }));
+  await expect(deploymentRequest(edge.options, { action: "probe" }, "verify"))
+    .rejects.toThrow("Error 1101: Worker threw exception");
+  await expect(deploymentRequest(edge.options, { action: "probe" }, "verify"))
+    .rejects.toThrow("verify phase");
+});
+
+test("a named step failure survives the rollout wrapper", async () => {
+  // Covered in deploy-platform-flow.test.ts; this guards the message shape
+  // operators rely on when the CI log stops mid-rollout.
+  const structured = fixture(() =>
+    Response.json({ code: "DEPLOYMENT_VERIFICATION_REQUIRED", error: "verify failed" }, { status: 409 }));
+  await expect(deploymentRequest(structured.options, { action: "resume" }, "live"))
+    .rejects.toThrow(/DEPLOYMENT_VERIFICATION_REQUIRED/);
+});
+
 test("a lost resume response can be retried against the idempotent control endpoint", async () => {
   const f = fixture(call => {
     if (call === 1) throw new TypeError("connection lost");

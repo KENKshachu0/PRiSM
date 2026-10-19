@@ -1271,5 +1271,7 @@
   "业务备份覆盖现有数据；仅配置备份保留玩家和账单。目标店铺编号和当前管理员保留。": "Business backups replace existing data; configuration backups retain players and bills. The target shop ID and current administrator are retained.",
   "数据损坏": "The data is corrupted.",
   "传输失败，请重试": "Transfer failed. Try again.",
-  "已处理记录": "Processed records"
+  "已处理记录": "Processed records",
+  "计费发布版本必须使用 UTC": "Pricing releases must use UTC.",
+  "分片数据校验失败": "A data chunk failed validation."
 }

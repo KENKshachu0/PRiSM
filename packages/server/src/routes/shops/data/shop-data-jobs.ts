@@ -138,6 +138,8 @@ async function stage(
         errors.push("计费方案内容无效");
       }
     }
+  if (table === "pricing_releases" && input.rows.some((row) => row.time_zone !== "UTC"))
+    errors.push("计费发布版本必须使用 UTC");
   if (errors.length) jsonError(400, "分片数据校验失败", "INVALID_BACKUP", { errors });
   // Store portable connections under the destination key before writing any real device record.
   const seal = (value: unknown) => {

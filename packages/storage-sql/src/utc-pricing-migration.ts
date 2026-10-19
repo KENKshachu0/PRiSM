@@ -184,6 +184,35 @@ export async function migrateLegacyPricingToUtc(input: { executor: SqlExecutor; 
   return { applied: true, versions: changedVersions, releases: changedReleases, snapshots };
 }
 
+export const importedReleaseUtcMigrationId = "imported-release-utc-v1";
+
+/**
+ * Backups imported before the converter fix could carry a shop time zone on
+ * `pricing_releases`. The storage contract requires UTC (the deployment check
+ * rejects anything else), so normalize stray rows once, before the check.
+ * Provider rules keep their own explicit `timeZone`, so this does not shift
+ * any clock.
+ */
+export async function normalizeImportedReleaseTimeZones(input: {
+  executor: SqlExecutor;
+  now: Date;
+}): Promise<{ applied: boolean; releases: number }> {
+  const { executor, now } = input;
+  await executor.run(utcPricingSchema.at(-1)!);
+  if (await executor.first("SELECT id FROM prism_data_migrations WHERE id=?", [importedReleaseUtcMigrationId])) {
+    return { applied: false, releases: 0 };
+  }
+  const rows = await executor.all<{ shop_id: string; id: string }>("SELECT shop_id,id FROM pricing_releases WHERE time_zone!='UTC'");
+  const statements: SqlStatement[] = [
+    { sql: "INSERT OR IGNORE INTO prism_data_migrations(id,applied_at) VALUES(?,?)", params: [importedReleaseUtcMigrationId, now.toISOString()] },
+    { sql: "DROP TRIGGER IF EXISTS pricing_releases_immutable_update" },
+    { sql: "UPDATE pricing_releases SET time_zone='UTC' WHERE time_zone!='UTC'" },
+  ];
+  for (const sql of pricingVersionSchema.filter(sql => sql.startsWith("CREATE TRIGGER IF NOT EXISTS pricing_releases_immutable_update"))) statements.push({ sql });
+  await executor.batch(statements);
+  return { applied: true, releases: rows.length };
+}
+
 function utcSnapshot(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(utcSnapshot);
   if (!value || typeof value !== "object") return value;

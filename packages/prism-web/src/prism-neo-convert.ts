@@ -516,7 +516,9 @@ export function convertPrismNeoSnapshot(
     tables.pricing_releases.push({
       id: releaseId,
       version_ids_json: JSON.stringify([versionId]),
-      time_zone: timeZone,
+      // Release zones are UTC by platform contract (the deployment check
+      // rejects anything else); the legacy clocks were stored as UTC above.
+      time_zone: "UTC",
       created_at: exportedAt,
     });
     tables.pricing_release_heads.push({ release_id: releaseId });

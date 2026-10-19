@@ -7,22 +7,32 @@ export type PlatformDeploymentSteps = {
   health(): Promise<void>;
 };
 
+/** Name the failing step so the CI log shows where the rollout stopped. */
+async function step<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Deployment step "${label}" failed: ${detail}`, { cause: error });
+  }
+}
+
 /** No finally/resume: a failed migration or rollout must leave the database fenced. */
 export async function deployPlatform(steps: PlatformDeploymentSteps): Promise<void> {
-  await steps.preflight();
+  await step("preflight", () => steps.preflight());
   let maintenanceInstalled = false;
   try {
-    await steps.deploy("maintenance");
+    await step("deploy maintenance", () => steps.deploy("maintenance"));
     maintenanceInstalled = true;
-    await steps.control("begin");
-    await steps.checkpoint();
-    await steps.migrate();
-    await steps.deploy("verify");
-    await steps.control("convert");
-    await steps.control("check");
-    await steps.deploy("live");
-    await steps.control("resume");
-    await steps.health();
+    await step("control begin", () => steps.control("begin"));
+    await step("checkpoint", () => steps.checkpoint());
+    await step("migrate", () => steps.migrate());
+    await step("deploy verify", () => steps.deploy("verify"));
+    await step("control convert", () => steps.control("convert"));
+    await step("control check", () => steps.control("check"));
+    await step("deploy live", () => steps.deploy("live"));
+    await step("control resume", () => steps.control("resume"));
+    await step("health", () => steps.health());
   } catch (error) {
     if (maintenanceInstalled) {
       try { await steps.control("block"); }
