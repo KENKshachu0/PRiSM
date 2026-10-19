@@ -42,7 +42,7 @@ const q = (key: string) => `json_extract(value,'$.${key}')`;
 const expiry = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 async function body(c: C): Promise<unknown> {
   const reader = c.req.raw.body?.getReader();
-  if (!reader) jsonError(400, "请选择有效的 JSON 备份文件", "INVALID_BACKUP");
+  if (!reader) jsonError(400, "传输失败，请重试", "INVALID_BACKUP");
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   for (;;) {
@@ -64,7 +64,9 @@ async function body(c: C): Promise<unknown> {
   try {
     return JSON.parse(new TextDecoder().decode(all));
   } catch {
-    jsonError(400, "请选择有效的 JSON 备份文件", "INVALID_BACKUP");
+    // A mangled request body is a transport failure, not a file problem; the
+    // client replays the same part id for free.
+    jsonError(400, "传输失败，请重试", "INVALID_BACKUP");
   }
 }
 function parse<T>(schema: z.ZodType<T>, raw: unknown): T {

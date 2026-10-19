@@ -34,15 +34,20 @@ describe("convertPrismNeoFile", () => {
     expect(backup.source.name).toBe("yg_prism");
   });
 
-  it("rejects a dump row whose column count does not match the header", async () => {
-    const broken = dump.replace("51\t7\t2026-01-03 10:00:00.000\t2026-01-03 11:30:00.000\t\\N\t120\t\\N\t90", "51\t7");
+  it("fails a dump whose rows cannot yield a complete conversion", async () => {
+    // A cut-short row means the snapshot cannot be complete: fail loudly
+    // instead of importing a silently partial shop.
+    const broken = dump.replace(
+      "51\t7\t2026-01-03 10:00:00.000\t2026-01-03 11:30:00.000\t\\N\t120\t\\N\t90",
+      "51\t7",
+    );
     const file = new File([broken], "broken.sql", { type: "text/plain" });
-    await expect(convertPrismNeoFile(file, "UTC")).rejects.toThrow("列数不符");
+    await expect(convertPrismNeoFile(file, "UTC")).rejects.toThrow("数据损坏");
   });
 
   it("rejects a file that is neither JSON nor a pg_dump with a clear message", async () => {
     const file = new File(["not a backup at all"], "notes.txt", { type: "text/plain" });
-    await expect(convertPrismNeoFile(file, "UTC")).rejects.toThrow("这不是 prism-neo 的备份文件");
+    await expect(convertPrismNeoFile(file, "UTC")).rejects.toThrow("数据损坏");
   });
 
   it("recognizes dumps whose first COPY block sits behind a long DDL preamble", async () => {
@@ -53,6 +58,17 @@ describe("convertPrismNeoFile", () => {
     const converted = await convertPrismNeoFile(file, "UTC");
     const backup = JSON.parse(await converted.text());
     expect(backup.tables.players).toHaveLength(1);
+  });
+
+  it("converts a dump whose final block ends exactly at a row boundary", async () => {
+    // A clean row boundary without the terminator is still complete data.
+    const cut = `COPY public."Session" (id, "userId", "createdAt", "closedAt", "isActive", "billingCost", "costOverwrite", "finalCost") FROM stdin;
+51\t7\t2026-01-03 10:00:00.000\t2026-01-03 11:30:00.000\t\\N\t120\t\\N\t90
+`;
+    const file = new File([dump + cut], "cut.sql", { type: "text/plain" });
+    const backup = JSON.parse(await (await convertPrismNeoFile(file, "UTC")).text());
+    expect(backup.tables.asset_definitions).toHaveLength(1);
+    expect(backup.tables.sessions).toHaveLength(1);
   });
 
   it("accepts a CLI JSON snapshot file as well", async () => {

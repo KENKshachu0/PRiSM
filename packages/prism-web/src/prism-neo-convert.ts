@@ -180,7 +180,7 @@ const iso = (value: string | number | undefined | null): string | null => {
     return normalizePrismNeoTimestamp(value);
   }
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new Error(`prism-neo 时间字段无效: ${value}`);
+  if (Number.isNaN(date.getTime())) throw new Error("数据损坏");
   return date.toISOString();
 };
 
@@ -217,14 +217,14 @@ export const parseLegacyBoolean = (value: unknown): boolean => {
     if (["true", "t", "1", "yes"].includes(normalized)) return true;
     if (["false", "f", "0", "no"].includes(normalized)) return false;
   }
-  throw new Error(`prism-neo 布尔字段无效: ${String(value)}`);
+  throw new Error("数据损坏");
 };
 
 /** COPY rows deliver every field as text; numbers need coercing before arithmetic. */
 export const parseLegacyNumber = (value: unknown): number => {
   if (typeof value === "number") return value;
   const parsed = typeof value === "string" ? Number(value) : Number.NaN;
-  if (!Number.isFinite(parsed)) throw new Error(`prism-neo 数值字段无效: ${String(value)}`);
+  if (!Number.isFinite(parsed)) throw new Error("数据损坏");
   return parsed;
 };
 
@@ -234,7 +234,7 @@ export const parseLegacyJson = (value: unknown): unknown => {
   try {
     return JSON.parse(value);
   } catch {
-    throw new Error(`prism-neo JSON 字段无效: ${value.slice(0, 60)}`);
+    throw new Error("数据损坏");
   }
 };
 
@@ -250,7 +250,7 @@ function resolveGrantAsset(
     const definition = definitionsById.get(Number(grant.id));
     if (definition) return { type: definition.type, assetId: parseLegacyNumber(definition.assetId) };
   }
-  throw new Error(`礼物 ${grant.name ?? grant.id ?? "?"} 引用了未知的资产定义，无法迁移`);
+  throw new Error("数据损坏");
 }
 
 function anchorOf(timestamp: number | string): string {

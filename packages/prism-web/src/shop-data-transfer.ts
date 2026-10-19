@@ -197,7 +197,14 @@ export async function uploadShopBackup(path: string, file: Blob, progress: (coun
     const body = JSON.stringify({ table: activeTable, part, rows });
     // One unusually large row still fits D1's per-value limit; all ordinary parts are small.
     if (encoder.encode(body).length > 2 * 1024 * 1024) throw new Error("单条记录超过数据库可支持的大小");
-    await api(`${path}/imports/${jobId}/parts`, { method: "POST", body });
+    // Mobile networks occasionally mangle a request body; the server accepts
+    // an identical part replay for free, so retry once before giving up.
+    try {
+      await api(`${path}/imports/${jobId}/parts`, { method: "POST", body });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 400) throw error;
+      await api(`${path}/imports/${jobId}/parts`, { method: "POST", body });
+    }
     part++;
     rows = [];
     bytes = 2;
@@ -256,7 +263,7 @@ export async function convertPrismNeoFile(file: File, timeZone: string): Promise
   const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   const looksLikeDump = /^COPY\s/m.test(text.slice(0, 512 * 1024));
   if (!looksLikeJson && !looksLikeDump) {
-    throw new Error("这不是 prism-neo 的备份文件：请选择 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照");
+    throw new Error("数据损坏");
   }
   const snapshot = looksLikeJson ? JSON.parse(text) : snapshotFromPgDump(text);
   const backup = convertPrismNeoSnapshot(snapshot, {
@@ -280,8 +287,7 @@ function snapshotFromPgDump(sql: string): Record<string, unknown> {
     const copy = parseCopyHeader(lines[index]!);
     if (!copy) continue;
     const rows: string[][] = [];
-    index += 1;
-    for (; index < lines.length; index += 1) {
+    for (index += 1; index < lines.length; index += 1) {
       const line = lines[index]!;
       if (line === "\\.") break;
       rows.push(line.split("\t"));
@@ -289,10 +295,11 @@ function snapshotFromPgDump(sql: string): Record<string, unknown> {
     tables.set(copy.tableName, { columns: copy.columns, rows });
   }
   const read = (table: string): Record<string, unknown>[] =>
-    (tables.get(table)?.rows ?? []).map((fields) => {
+    (tables.get(table)?.rows ?? []).filter((fields) => fields.length > 1 || fields[0] !== "").map((fields) => {
       const columns = tables.get(table)!.columns;
       if (fields.length !== columns.length) {
-        throw new Error(`prism-neo 备份的 ${table} 数据列数不符，文件可能不完整`);
+        // The file is cut short mid-row; the snapshot cannot be complete.
+        throw new Error("数据损坏");
       }
       return Object.fromEntries(columns.map((column, index) => [column, decodeCopyField(fields[index]!)]));
     });
