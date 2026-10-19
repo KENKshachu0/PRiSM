@@ -3,8 +3,9 @@ import type { AppBindings } from "../../bindings.js";
 import { jsonError } from "../../http.js";
 import { getShop, getShopDeps } from "../../middleware/tenant.js";
 import {
+  botRequest,
+  guardIntegration,
   integrationRouter,
-  requireIntegrationAuth,
 } from "../../routes/shops/integration.js";
 import {
   toDeviceCommandView,
@@ -15,11 +16,7 @@ export const legacyIntegrationRouter = new Hono<AppBindings>();
 
 // Enforce bot integration authentication and billing verification on all legacy integration routes
 legacyIntegrationRouter.use("*", async (c, next) => {
-  const shop = getShop(c);
-  if (!shop.billing_enabled) {
-    jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
-  }
-  await requireIntegrationAuth(c, shop);
+  await guardIntegration(c);
   await next();
 });
 
@@ -37,12 +34,7 @@ legacyIntegrationRouter.post(
       );
     }
     const result = await deps.integrationCommands.checkoutWithOverrideByIdentity({
-      ...body,
-      identity:
-        body.identity ??
-        (body.provider && body.subject
-          ? { provider: body.provider, subject: body.subject }
-          : undefined),
+      ...botRequest(c, body),
     });
     return c.json(toPlayerCheckoutResultView(result));
   },
@@ -54,12 +46,7 @@ legacyIntegrationRouter.post(
     const deps = getShopDeps(c);
     const body = await c.req.json<any>();
     const action = await deps.integrationCommands.requestDeviceActionByIdentity({
-      ...body,
-      identity:
-        body.identity ??
-        (body.provider && body.subject
-          ? { provider: body.provider, subject: body.subject }
-          : undefined),
+      ...botRequest(c, body),
     });
     return c.json({
       action: toDeviceCommandView(action),

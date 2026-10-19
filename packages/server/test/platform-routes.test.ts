@@ -536,6 +536,38 @@ describe("Platform & System Routes", () => {
       expect(res.status).toBe(401);
     });
 
+    it("lets a new shop's first binding create the player, with or without billing", async () => {
+      for (const billingSetup of [undefined, {
+        paidName: "余额", freeName: "赠送余额", hourlyPrice: 12, graceMinutes: 5, dailyCap: 60,
+      }]) {
+        const res = await app.request("https://prism.test/api/v1/shops", {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: ownerCookie },
+          body: JSON.stringify({ name: "Default Shop", latitude: 31.23, longitude: 121.47, billingSetup }),
+        }, env);
+        expect(res.status).toBe(201);
+        const { shop } = await res.json() as { shop: { id: string } };
+        const row = await env.DB.prepare(
+          "SELECT billing_enabled, auto_register, identity_binding_required FROM shop_billing_settings WHERE shop_id=?",
+        ).bind(shop.id).first();
+        expect(row).toEqual({ billing_enabled: billingSetup ? 1 : 0, auto_register: 1, identity_binding_required: 1 });
+      }
+    });
+
+    it("opens a front-desk shop with the cashier already enabled", async () => {
+      const res = await app.request("https://prism.test/api/v1/shops", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: ownerCookie },
+        body: JSON.stringify({ name: "Desk Shop", latitude: 31.23, longitude: 121.47, billingSetup: {
+          paidName: "余额", freeName: "赠送余额", hourlyPrice: 12, graceMinutes: 5, dailyCap: 60, cashierEnabled: true,
+        } }),
+      }, env);
+      expect(res.status).toBe(201);
+      const { shop } = await res.json() as { shop: { id: string } };
+      const row = await env.DB.prepare("SELECT value_json FROM app_settings WHERE shop_id=? AND key='cashier.settings'").bind(shop.id).first();
+      expect(row).toEqual({ value_json: '{"enabled":true}' });
+    });
+
     it("creates a shop with billing setup and bot integration token", async () => {
       const res = await app.request(
         "https://prism.test/api/v1/shops",

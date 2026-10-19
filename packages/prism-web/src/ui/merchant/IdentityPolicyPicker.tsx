@@ -1,25 +1,12 @@
+import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import type { IdentityPolicy } from "./setup-guide";
 
-const identityOptions: [IdentityPolicy, string, string][] = [
-  [
-    "web",
-    "登录网页账号即可",
-    "玩家用 MuNET 或 Passkey 登录后直接入场，不需要 Bot。适合大多数新店。",
-  ],
-  [
-    "bot",
-    "绑定 Bot 身份，自动建档",
-    "玩家先把网页上的绑定码发给店铺 Bot，首次绑定时自动创建玩家档案。需要先接入 Bot。",
-  ],
-  [
-    "existing",
-    "绑定 Bot 身份，只认已有档案",
-    "只有已有档案的平台身份能完成绑定，适合从旧系统迁移的店；没有档案的新玩家由店员确认绑定码后建档。",
-  ],
-];
-
-/** The two identity switches as the three policies they actually combine into. */
+/**
+ * Binding first, because it is what makes a player traceable and lets a shop
+ * admit only its group's members. "Existing profiles only" is a migration
+ * setting, so it sits under binding instead of beside it.
+ */
 export function IdentityPolicyPicker({
   value,
   change,
@@ -30,28 +17,55 @@ export function IdentityPolicyPicker({
   name?: string;
 }) {
   const { t } = useI18n();
+  const binding = value !== "web";
+  const option = (
+    checked: boolean,
+    select: () => void,
+    title: string,
+    description: string,
+    extra?: ReactNode,
+  ) => (
+    <div className={`rounded-lg border p-3 text-sm ${checked ? "border-mint bg-mint/5" : "border-ink/15"}`}>
+      <label className="flex cursor-pointer gap-3">
+        <input className="mt-1" type="radio" name={name} checked={checked} onChange={select} />
+        <span>
+          <strong className="block">{t(title)}</strong>
+          <span className="mt-1 block leading-relaxed text-ink/60">{t(description)}</span>
+        </span>
+      </label>
+      {extra}
+    </div>
+  );
   return (
     <div className="grid gap-2">
-      {identityOptions.map(([id, title, description]) => (
-        <label
-          key={id}
-          className={`flex cursor-pointer gap-3 rounded-lg border p-3 text-sm ${value === id ? "border-mint bg-mint/5" : "border-ink/15"}`}
-        >
-          <input
-            className="mt-1"
-            type="radio"
-            name={name}
-            checked={value === id}
-            onChange={() => change(id)}
-          />
-          <span>
-            <strong className="block">{t(title)}</strong>
-            <span className="mt-1 block leading-relaxed text-ink/60">
-              {t(description)}
+      {option(
+        binding,
+        () => change(value === "existing" ? "existing" : "bot"),
+        "要求绑定平台身份（推荐）",
+        "玩家第一次进店前，把网页上的绑定码发给店铺 Bot。店家因此知道每位玩家的 QQ 号等身份；Bot 只在店铺群里响应时，只有群成员能进店。需要接入 Bot。",
+        binding && (
+          <label className="ml-7 mt-3 flex cursor-pointer gap-2 border-t border-ink/10 pt-3">
+            <input
+              className="mt-0.5"
+              type="checkbox"
+              checked={value === "existing"}
+              onChange={(event) => change(event.target.checked ? "existing" : "bot")}
+            />
+            <span>
+              <span className="block">{t("只允许已有档案的玩家绑定")}</span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-ink/55">
+                {t("用于从旧系统迁移、玩家档案已导入的店。勾选后，没有档案的新玩家无法通过 Bot 绑定，需要店员确认绑定码。")}
+              </span>
             </span>
-          </span>
-        </label>
-      ))}
+          </label>
+        ),
+      )}
+      {option(
+        !binding,
+        () => change("web"),
+        "登录网页账号即可",
+        "玩家用 MuNET 或 Passkey 登录后直接进店，不需要 Bot。店家只知道玩家的 PRiSM 账号，不知道他在 QQ 等平台的身份。",
+      )}
     </div>
   );
 }

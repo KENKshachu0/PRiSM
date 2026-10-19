@@ -30,7 +30,7 @@ export const backupSchema = z.object({
   settings: z.object({
     billingEnabled: z.boolean(), cashierEnabled: z.boolean(), autoRegister: z.boolean(),
     identityBindingRequired: z.boolean(), checkinGeo: z.boolean(), checkoutGeo: z.boolean(), machineGeo: z.boolean(),
-    entryPricingIds: z.array(z.string().min(1)).max(30), botContact: z.string().max(160),
+    entryPricingIds: z.array(z.string().min(1)).max(30), botContact: z.string().max(500),
     coinCooldownMs: z.number().int().nonnegative(), defaultPresentId: z.string().min(1).nullable(),
   }).strict(),
   tables: z.record(z.array(z.record(primitive))),

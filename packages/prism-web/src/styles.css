@@ -648,6 +648,24 @@ button.credential-row:not(:disabled):active {
   font-size: 21px;
   overflow-wrap: anywhere;
 }
+.binding-code p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.binding-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.binding-copy {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #8882;
+  font-size: 14px;
+}
 .binding-code small,
 .door-password small {
   font-size: 12px;

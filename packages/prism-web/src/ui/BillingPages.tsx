@@ -21,7 +21,10 @@ export type Settings = {
   checkoutGeo: boolean;
   machineGeo: boolean;
   entryPricingIds: string[];
+  /** The binding instructions shown to players; the line with `{code}` is the command. */
   botContact: string;
+  /** False when the shop's bot only binds identities. */
+  botOperationsEnabled?: boolean;
   billingConfiguration?: {
     ready: boolean;
     balanceAssetsReady: boolean;

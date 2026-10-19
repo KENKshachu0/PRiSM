@@ -314,17 +314,36 @@ function StaffMembers({ shopId }: { shopId: string }) {
     </div>
   );
 }
+type OperatingMode = "devices" | "self" | "desk";
+const operatingModes: [OperatingMode, string, string][] = [
+  [
+    "self",
+    "自助计费（无前台）",
+    "玩家在手机上入场计时、离店自助结账，从预存余额扣款。余额来自你售卖的兑换码或店员手动充值。适合无人值守、在线上群里运营的店。",
+  ],
+  [
+    "desk",
+    "前台收银",
+    "玩家在前台刷实体卡入场，离店时在前台现场付款（微信、支付宝、现金）。也可以同时让玩家预存余额自助结账。",
+  ],
+  [
+    "devices",
+    "不使用计费",
+    "只用 PRiSM 的设备功能：扫码或碰 NFC 开机、刷卡、投币、开门。收费在你自己的其它经营平台完成。",
+  ],
+];
 function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
   const { t } = useI18n();
   const { refresh } = useAuth();
   const [step, setStep] = useState(0);
-  const [billing, setBilling] = useState(false);
+  const [mode, setMode] = useState<OperatingMode>("self");
+  const billing = mode !== "devices";
   const [setup, setSetup] = useState({
     ...defaultBillingSetup,
     createBotToken: false,
     botContact: "",
-    // The identity policy is chosen in the setup guide, where its effect is explained.
-    autoRegister: false,
+    // New shops require a bound identity and let the first binding create the player.
+    autoRegister: true,
   });
   const [created, setCreated] = useState<{ shop: Shop; token: string } | null>(
     null,
@@ -365,37 +384,31 @@ function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
         <div className="grid gap-3">
           <fieldset className="grid gap-3">
             <legend className="mb-4 text-lg font-semibold">
-              {t("是否使用入场计费？")}
+              {t("店里怎么收费？")}
             </legend>
-            {[
-              [false, "仅使用设备", "扫码开机、投币、刷卡或开门。"],
-              [
-                true,
-                "设备与入场计费",
-                "同时管理玩家余额、计费规则与离店结账。",
-              ],
-            ].map(([value, title, description]) => (
+            {operatingModes.map(([value, title, description]) => (
               <label
-                key={String(value)}
-                className={`flex cursor-pointer gap-3 rounded-lg border p-4 ${billing === value ? "border-mint bg-mint/5" : "border-ink/15"}`}
+                key={value}
+                className={`flex cursor-pointer gap-3 rounded-lg border p-4 ${mode === value ? "border-mint bg-mint/5" : "border-ink/15"}`}
               >
                 <input
                   className="mt-1"
                   type="radio"
                   name="mode"
-                  checked={billing === value}
-                  onChange={() => setBilling(value as boolean)}
+                  checked={mode === value}
+                  onChange={() => setMode(value)}
                 />
                 <span>
-                  <strong className="block text-sm">
-                    {t(title as string)}
-                  </strong>
-                  <span className="mt-1 block text-sm text-ink/60">
-                    {t(description as string)}
+                  <strong className="block text-sm">{t(title)}</strong>
+                  <span className="mt-1 block text-sm leading-relaxed text-ink/60">
+                    {t(description)}
                   </span>
                 </span>
               </label>
             ))}
+            <p className="text-xs leading-relaxed text-ink/50">
+              {t("之后可以在「设置 → 营业与计费」里切换。")}
+            </p>
           </fieldset>
           <button className={`${primary} mt-3`} onClick={() => setStep(1)}>
             {t("下一步")}
@@ -403,7 +416,7 @@ function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {
         </div>
       ) : step === finalStep ? (
         <ShopForm
-          billingSetup={billing ? setup : undefined}
+          billingSetup={billing ? { ...setup, cashierEnabled: mode === "desk" } : undefined}
           back={() => setStep(step - 1)}
           onSaved={async (shop, token) => {
             await refresh();

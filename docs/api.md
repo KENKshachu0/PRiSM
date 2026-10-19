@@ -285,6 +285,11 @@ curl -X POST http://localhost:8787/rpc/staff/pricing-configs \
 
 Integration RPC 面向聊天机器人、自助入口、扫码入口等可信外部入口。调用方只持有 `integration` API Token，可以通过 聊天平台、Aime、Telegram 等外部身份直接完成玩家动作；不需要再先调用员工接口拿玩家 ID，也不需要共享 Player Token。
 
+所有 Integration 路由共用一道检查（`guardIntegration`）：
+
+- `platform-binding/confirm`（身份绑定）只需要有效的 Bot 凭据，**不要求店铺启用计费**，不使用 PRiSM 计费的店铺也能让玩家通过 Bot 绑定身份（门锁等设备需要）。
+- 其它路由要求店铺启用计费（否则 `409 BILLING_DISABLED`），并且店铺没有把 Bot 设为「只负责绑定身份」（否则 `403 BOT_OPERATIONS_DISABLED`）。该选项存于 `app_settings` 的 `integration.settings`（`{ "operationsEnabled": false }`），通过店铺 `settings` 的 `botOperationsEnabled` 读写，默认 `true`，随店铺备份的 `app_settings` 行一起导出导入。
+
 | 请求方法 | 路由路径 | 接口用途 |
 | --- | --- | --- |
 | `POST` | `/rpc/integration/players/by-identity/resolve` | 按外部身份查找已绑定玩家。 |
@@ -324,7 +329,7 @@ Integration body 支持结构化身份和简写身份：
 }
 ```
 
-`autoRegister` 为 `false` 或未传时，身份不存在会返回 `PLAYER_IDENTITY_NOT_FOUND` 和 HTTP 404。`autoRegister: true` 会创建玩家并绑定外部身份，然后继续执行这次动作；如果后台配置了 `registration.defaultPresentId`，新玩家会按该礼物当前有效的内容自动获得资产。未配置、已归档、已过期或找不到的默认礼物只会跳过发放，不会阻断注册；后台手动创建玩家也使用同一规则。
+请求体里的 `autoRegister` 不再生效：每个按身份调用的 Integration 接口都以店铺设置的 `autoRegister` 为准（服务端统一覆盖，见 `routes/shops/integration.ts` 的 `botRequest`）。店铺不允许自动建档时，身份不存在会返回 `PLAYER_IDENTITY_NOT_FOUND` 和 HTTP 404；允许时会创建玩家并绑定外部身份，然后继续执行这次动作；如果后台配置了 `registration.defaultPresentId`，新玩家会按该礼物当前有效的内容自动获得资产。未配置、已归档、已过期或找不到的默认礼物只会跳过发放，不会阻断注册；后台手动创建玩家也使用同一规则。
 
 机器人或自助入口请求机器动作时，不需要先查玩家 ID。以 平台用户触发 maimai 投币为例：
 
@@ -397,6 +402,10 @@ HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请
 
 ### 店铺绑定要求与身份转换
 
+新店铺（无论是否启用计费）创建时写入 `identityBindingRequired: true`、`autoRegister: true`：要求绑定平台身份，第一次通过 Bot 绑定时自动建档。`autoRegister` 只影响 Bot 绑定与 Bot 命令的建档；不要求绑定时，网页账号第一次进店总会自动建档。
+
+`settings.botContact` 是玩家绑定身份时看到的**绑定提示**（最多 500 字）：逐行显示，包含 `{code}` 的那一行替换为绑定码并作为可复制的命令；为空时客户端显示「向店铺 Bot 发送 prism.bind 绑定码」。旧数据里不含 `{code}` 的联系文字照常保存与显示（客户端在其后补上标准命令）；修改为新的非空内容时必须包含 `{code}`，否则返回 `400 BINDING_PROMPT_CODE_REQUIRED`。`POST /api/v1/shops/:shopCode/platform-binding` 的响应同样带 `botContact`，网页和 App Clip 按同一规则渲染。
+
 店铺 `settings` 的 `identityBindingRequired` 默认 `true`，省略时保留原设置。开启后入场和设备操作须有任意一个已验证的平台绑定；关闭后登录网页账号即可创建店内玩家档案，之后可追加外部身份。已在店玩家仍可读取账单和结账，避免重新开启开关后无法离场。该开关独立于 Bot 的自动注册设置和店铺位置校验。
 
 仅店主可以调用 `POST /api/v1/shops/:shopCode/identity-conversion/preview`，输入 `{ sourceProvider, targetProvider }`。返回玩家数、身份数、网页绑定数、样例、冲突和数据 `fingerprint`。`apply` 接收同样标识及预览的 `fingerprint`、UUID `operationId`，检查预览未过期且无冲突后，在一笔 D1 事务内转换身份表和绑定表，保留身份值、玩家 ID、余额、会话及账单。相同玩家已拥有相同目标身份时去重；其他玩家／账号的冲突阻止整批写入。重复操作编号返回原结果，数据变化必须重新预览。
@@ -416,7 +425,7 @@ HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请
 
 ## React 店铺计费初始化
 
-已有非计费店铺可由 owner 调用 `POST /api/v1/shops/:shopCode/billing/setup`，通过一次事务补齐余额资产、创建标准入场方案并启用计费。请求带收费标准、可选的 `cashierEnabled` 和 UUID `operationId`，重试不会重复创建规则。新建店铺的 `billingSetup.createBotToken` 默认为 `false`，只有显式选择才创建 Bot 凭据；启用计费的设置校验不要求 Bot 凭据。向导操作、完整参数及数据保留策略见[店铺计费初始化](billing-setup.md)。
+已有非计费店铺可由 owner 调用 `POST /api/v1/shops/:shopCode/billing/setup`，通过一次事务补齐余额资产、创建标准入场方案并启用计费。请求带收费标准、可选的 `cashierEnabled` 和 UUID `operationId`，重试不会重复创建规则。新建店铺的 `billingSetup.createBotToken` 默认为 `false`，只有显式选择才创建 Bot 凭据；`billingSetup.cashierEnabled`（默认 `false`）为 `true` 时同时开启前台收银；`billingSetup.autoRegister` 默认 `true`；启用计费的设置校验不要求 Bot 凭据。向导操作、完整参数及数据保留策略见[店铺计费初始化](billing-setup.md)。
 
 设备状态接口的身份门控统一为 `gate: "binding"`，业务错误为 `PLATFORM_BINDING_REQUIRED`。React 与 Koishi 已同步采用新契约；其他调用旧 `qq-binding` 或旧门控名的客户端需一起更新。
 

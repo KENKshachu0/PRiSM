@@ -8,6 +8,7 @@ import { passkeyErrorMessage } from "../passkeys";
 import { useI18n } from "../i18n";
 import { useAuth } from "./AuthContext";
 import { post, shopApi } from "./BillingPages";
+import { bindingPromptLines, defaultBindingCommand } from "../binding-prompt";
 
 export function ShopHero({ name, heroUrl, subtitle }: { name: string; heroUrl?: string | null; subtitle: string }) {
   const [failed, setFailed] = useState(false);
@@ -57,14 +58,14 @@ export function SessionSignIn() {
 
 export function PlatformBinding({ code }: { code: string }) {
   const { t, errorText } = useI18n();
-  const [binding, setBinding] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [binding, setBinding] = useState<{ code: string; expiresAt: string; botContact?: string } | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     setBinding(null); setError("");
-    api<{ code: string; expiresAt: string }>(shopApi(code, "platform-binding"), post()).then(result => {
+    api<{ code: string; expiresAt: string; botContact?: string }>(shopApi(code, "platform-binding"), post()).then(result => {
       if (cancelled) return;
       setBinding(result);
       timer = setTimeout(() => setAttempt(value => value + 1), Math.max(1000, Date.parse(result.expiresAt) - Date.now()));
@@ -72,7 +73,30 @@ export function PlatformBinding({ code }: { code: string }) {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [code, attempt, errorText]);
   return <div className="grid gap-6"><h2>{t("绑定平台身份")}</h2><div className="binding-code">
-    <p>{t("向店铺 Bot 发送")}</p>
-    {binding ? <><code className="select-all">prism.bind {binding.code}</code><small>{t("有效期至")} {billTime(binding.expiresAt).time}</small></> : error ? <><p role="alert">{error}</p><button className="session-action" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button></> : <Loader2 className="animate-spin" />}
+    {binding ? <>
+      <BindingPrompt template={binding.botContact} code={binding.code} />
+      <small>{t("有效期至")} {billTime(binding.expiresAt).time}</small>
+    </> : error ? <><p role="alert">{error}</p><button className="session-action" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button></> : <Loader2 className="animate-spin" />}
   </div></div>;
+}
+
+/** The shop's own binding instructions, or the standard ones when it wrote none. */
+export function BindingPrompt({ template, code }: { template?: string | null; code: string }) {
+  const { t } = useI18n();
+  const lines = bindingPromptLines(template, code) ?? [
+    { text: t("向店铺 Bot 发送"), command: false },
+    { text: defaultBindingCommand(code), command: true },
+  ];
+  return <>{lines.map((line, index) => line.command
+    ? <div key={index} className="binding-command"><code className="select-all">{line.text}</code><CopyCommand value={line.text} /></div>
+    : <p key={index}>{line.text}</p>)}</>;
+}
+
+function CopyCommand({ value }: { value: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  return <button type="button" className="binding-copy" onClick={async () => {
+    try { await navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { /* The command stays selectable when the clipboard is denied. */ }
+  }}>{t(copied ? "已复制" : "复制")}</button>;
 }

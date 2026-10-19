@@ -43,14 +43,38 @@ export async function requireIntegrationAuth(
 
 export const integrationRouter = new Hono<AppBindings>();
 
-integrationRouter.use("*", async (c, next) => {
+/**
+ * Every Bot route passes here. Binding a platform identity is the one thing a
+ * Bot may do for any shop: it does not need billing, and it stays available
+ * when the owner limits the Bot to identities.
+ */
+export async function guardIntegration(c: Context<AppBindings>): Promise<void> {
   const shop = getShop(c);
-  if (!shop.billing_enabled) {
+  const identityOnly = c.req.path.endsWith("/integration/platform-binding/confirm");
+  if (!identityOnly && !shop.billing_enabled) {
     jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
   }
   await requireIntegrationAuth(c, shop);
+  if (!identityOnly && !shop.bot_operations_enabled) {
+    jsonError(403, "店铺 Bot 只负责绑定身份，不能执行店铺操作", "BOT_OPERATIONS_DISABLED");
+  }
+}
+
+integrationRouter.use("*", async (c, next) => {
+  await guardIntegration(c);
   await next();
 });
+
+/** A Bot request never decides registration: the shop's switch does. */
+export function botRequest<T extends Record<string, any>>(c: Context<AppBindings>, body: T) {
+  return {
+    ...body,
+    identity:
+      body.identity ??
+      (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    autoRegister: !!getShop(c).auto_register,
+  } as T & { identity?: { provider: string; subject: string }; autoRegister: boolean };
+}
 
 // Accept the nested { identity: { provider, subject } } envelope used by
 // koishi-plugin-prism as well as the historical flat { provider, subject }
@@ -98,8 +122,7 @@ integrationRouter.post("/players/by-identity/session/start", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const session = await deps.integrationCommands.startSessionByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
   });
   return c.json({ session: toSessionView(session) });
 });
@@ -109,8 +132,7 @@ integrationRouter.post("/players/by-identity/sessions/:sessionId/stop", async (c
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const session = await deps.integrationCommands.stopSessionByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
     sessionId: c.req.param("sessionId"),
   });
   return c.json(toStoppedSessionView(session));
@@ -121,8 +143,7 @@ integrationRouter.post("/players/by-identity/checkout/preview", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const result = await deps.integrationCommands.previewCheckoutByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
   });
   return c.json(toPlayerCheckoutPreviewView(result));
 });
@@ -132,8 +153,7 @@ integrationRouter.post("/players/by-identity/checkout/confirm", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const result = await deps.integrationCommands.confirmCheckoutByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
   });
   return c.json(toPlayerCheckoutResultView(result));
 });
@@ -143,8 +163,7 @@ integrationRouter.post("/players/by-identity/wallet", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const wallet = await deps.integrationCommands.getWalletByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
   });
   return c.json({
     wallet: (wallet ?? []).map((entry: any) => ({
@@ -159,8 +178,7 @@ integrationRouter.post("/players/by-identity/assets", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const assets = await deps.integrationCommands.getAssetsByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
   });
   return c.json(assets);
 });
@@ -170,8 +188,7 @@ integrationRouter.post("/players/by-identity/history", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const history = await deps.integrationCommands.getHistoryByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
   });
   return c.json(history);
 });
@@ -181,8 +198,7 @@ integrationRouter.post("/players/by-identity/redeem", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const result = await deps.integrationCommands.redeemByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
     code: body.code,
   });
   return c.json(toRedeemGiftView(result));
@@ -193,8 +209,7 @@ integrationRouter.post("/players/by-identity/assets/adjustments", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const result = await deps.integrationCommands.adjustAssetsByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
     adjustments: body.adjustments,
   });
   return c.json(result);
@@ -205,8 +220,7 @@ integrationRouter.post("/players/by-identity/wallet/adjustment", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
   const result = await deps.integrationCommands.adjustWalletByIdentity({
-    ...body,
-    identity: body.identity ?? (body.provider && body.subject ? { provider: body.provider, subject: body.subject } : undefined),
+    ...botRequest(c, body),
     amount: body.amount,
     reason: body.reason ?? "bot adjustment",
   });

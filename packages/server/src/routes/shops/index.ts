@@ -101,8 +101,16 @@ export function publicSettings(shop: TenantShop) {
     machineGeo: !!shop.machine_geo,
     entryPricingIds,
     botContact: shop.bot_contact,
+    botOperationsEnabled: !!shop.bot_operations_enabled,
   };
 }
+
+/**
+ * What players are told to do with a binding code; the line holding `{code}`
+ * is the command. Older shops stored free contact text here, which stays valid
+ * until it is edited.
+ */
+export const bindingPromptSchema = z.string().trim().max(500);
 
 const settingsSchema = z.object({
   billingEnabled: z.boolean(),
@@ -114,7 +122,8 @@ const settingsSchema = z.object({
   checkoutGeo: z.boolean().optional(),
   machineGeo: z.boolean().optional(),
   entryPricingIds: z.array(z.string().min(1)).max(30),
-  botContact: z.string().trim().max(160),
+  botContact: bindingPromptSchema,
+  botOperationsEnabled: z.boolean().optional(),
 });
 
 export const shopRouter = new Hono<AppBindings>();
@@ -472,6 +481,10 @@ shopRouter.put("/settings", async (c) => {
       const machineGeo = body.locationEnabled ?? body.machineGeo ?? !!initialShop.machine_geo;
       const cashierEnabled = body.cashierEnabled ?? !!initialShop.cashier_enabled;
       const identityBindingRequired = body.identityBindingRequired ?? !!initialShop.identity_binding_required;
+      const botOperationsEnabled = body.botOperationsEnabled ?? !!initialShop.bot_operations_enabled;
+      if (body.botContact && body.botContact !== initialShop.bot_contact && !body.botContact.includes("{code}")) {
+        jsonError(400, "绑定提示需要包含 {code}，用来显示绑定码", "BINDING_PROMPT_CODE_REQUIRED");
+      }
 
       if (cashierEnabled && !body.billingEnabled) {
         jsonError(409, "请先启用入场计费", "BILLING_DISABLED");
@@ -539,6 +552,15 @@ shopRouter.put("/settings", async (c) => {
           JSON.stringify({ enabled: cashierEnabled }),
           new Date().toISOString(),
         ),
+        c.env.DB.prepare(
+          `INSERT INTO app_settings(shop_id, key, value_json, updated_at)
+           VALUES (?, 'integration.settings', ?, ?)
+           ON CONFLICT(shop_id, key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
+        ).bind(
+          initialShop.id,
+          JSON.stringify({ operationsEnabled: botOperationsEnabled }),
+          new Date().toISOString(),
+        ),
       ]);
 
       return c.json({
@@ -549,6 +571,7 @@ shopRouter.put("/settings", async (c) => {
         machineGeo,
         cashierEnabled,
         identityBindingRequired,
+        botOperationsEnabled,
         billingConfiguration: configuration,
       });
     },

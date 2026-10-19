@@ -33,13 +33,13 @@ export const billingSetupSchema = z.object({
     .transform(quantizeMoney),
   graceMinutes: z.number().int().min(0).max(59),
   dailyCap: z.number().finite().min(0).max(100000).transform(quantizeMoney),
-  botContact: z.string().trim().max(160).default(""),
-  autoRegister: z.boolean(),
+  botContact: z.string().trim().max(500).default(""),
+  autoRegister: z.boolean().default(true),
 });
 
 export const createShopSchema = z.object({
   billingSetup: billingSetupSchema
-    .extend({ createBotToken: z.boolean().default(false) })
+    .extend({ createBotToken: z.boolean().default(false), cashierEnabled: z.boolean().default(false) })
     .optional(),
   name: z
     .string()
@@ -252,6 +252,23 @@ shopsRouter.post("/", async (c) => {
     statements.push(
       ...billingSetupStatements(c.env.DB, shopId, setup).statements,
     );
+  } else {
+    // New shops require a bound platform identity and let a first binding create
+    // the player; a shop that never had settings would otherwise refuse newcomers.
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required) VALUES (?,0,1,1)",
+      ).bind(shopId),
+    );
+  }
+  if (setup?.cashierEnabled) {
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,'cashier.settings','{\"enabled\":true}',?)",
+      ).bind(shopId, now),
+    );
+  }
+  if (setup) {
     if (botToken) {
       statements.push(
         c.env.DB.prepare(

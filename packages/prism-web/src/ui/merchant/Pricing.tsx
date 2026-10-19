@@ -3,7 +3,8 @@ import { BillingSimulator } from "./BillingSimulator";
 import { pricingInZone } from "./pricing-clock";
 import { billTime } from "../bill-time";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { BillingExplainer } from "./BillingExplainer";
 import { api } from "../../api";
 import { shopApi } from "../BillingPages";
 import { ChevronDown, Plus } from "lucide-react";
@@ -100,7 +101,9 @@ export function PricingPage() {
   const [edit, setEdit] = useState<Pricing | null>(null);
   const [archive, setArchive] = useState<Pricing | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [showSimulator, setShowSimulator] = useState(false);
+  const [params] = useSearchParams();
+  const [showSimulator, setShowSimulator] = useState(() => params.get("simulate") === "1");
+  const [explaining, setExplaining] = useState(false);
   const rows = resource.data?.pricingConfigs.filter(
     (row) => showArchived || row.status !== "archived",
   );
@@ -136,6 +139,10 @@ export function PricingPage() {
           />
           {t("显示已归档")}
         </label>
+        <div className="flex flex-wrap gap-2">
+        <button type="button" className={button} onClick={() => setExplaining(true)}>
+          {t("计费是怎么算的")}
+        </button>
         {canWrite && (
           <button
             type="button"
@@ -151,7 +158,13 @@ export function PricingPage() {
             />
           </button>
         )}
+        </div>
       </div>
+      {explaining && (
+        <Modal title="计费是怎么算的" close={() => setExplaining(false)} xl>
+          <BillingExplainer />
+        </Modal>
+      )}
       {showSimulator && resource.data && (
         <BillingSimulator pricingConfigs={resource.data.pricingConfigs} />
       )}

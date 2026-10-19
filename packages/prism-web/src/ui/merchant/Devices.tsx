@@ -274,6 +274,9 @@ function DeviceQR({ device }: { device: Machine }) {
           {t("测试扫码入口")}
         </a>
       </div>
+      <p className="max-w-sm text-center text-xs leading-relaxed text-ink/55">
+        {t("NFC：用任意 NFC 写入工具把这个链接写进标签，记录类型选网址（NDEF URI）。iPhone 碰一下会直接打开 PRiSM Link（App Clip，免安装），其它手机用浏览器打开。")}
+      </p>
     </div>
   );
 }

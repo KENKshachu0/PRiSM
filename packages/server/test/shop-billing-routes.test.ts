@@ -1543,6 +1543,82 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     expect(bindingRow?.subject).toBe("99887766");
   });
 
+  it("lets the shop, never the bot request, decide registration on every bot command", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { publicId, shopId, botToken } = await setupShopFixture(db, sqlite);
+    const app = createTestApp();
+    sqlite.run("UPDATE shop_billing_settings SET auto_register=0 WHERE shop_id=?", [shopId]);
+    const before = (sqlite.query("SELECT COUNT(*) AS n FROM players WHERE shop_id=?").get(shopId) as { n: number }).n;
+    for (const path of ["wallet", "redeem", "history", "assets"]) {
+      const res = await app.fetch(new Request(`https://prism.test/api/v1/shops/${publicId}/integration/players/by-identity/${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ identity: { provider: "onebot", subject: `stranger-${path}` }, autoRegister: true, code: "NOPE" }),
+      }), env);
+      expect(res.status).not.toBe(200);
+    }
+    const after = (sqlite.query("SELECT COUNT(*) AS n FROM players WHERE shop_id=?").get(shopId) as { n: number }).n;
+    expect(after).toBe(before);
+    sqlite.close();
+  });
+
+  it("keeps an identity-only bot to binding, and lets any bot bind without billing", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { publicId, shopId, botToken } = await setupShopFixture(db, sqlite);
+    const app = createTestApp();
+    const headers = { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" };
+    const wallet = () => app.fetch(new Request(`https://prism.test/api/v1/shops/${publicId}/integration/players/by-identity/wallet`, {
+      method: "POST", headers, body: JSON.stringify({ identity: { provider: "onebot", subject: "1" } }),
+    }), env);
+    const bind = async (user: string) => {
+      const token = `token_${user}`;
+      sqlite.run("INSERT INTO users (id, role, created_at, updated_at) VALUES (?, 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", [user]);
+      sqlite.run("INSERT INTO auth_sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, datetime('now','+1 day'), CURRENT_TIMESTAMP)",
+        [`sess_${user}`, user, await sha256(token)]);
+      const code = await (await app.fetch(new Request(`https://prism.test/api/v1/shops/${publicId}/platform-binding`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      }), env)).json() as { code: string };
+      return app.fetch(new Request(`https://prism.test/api/v1/shops/${publicId}/integration/platform-binding/confirm`, {
+        method: "POST", headers, body: JSON.stringify({ code: code.code, provider: "onebot", subject: `qq-${user}` }),
+      }), env);
+    };
+    sqlite.run("INSERT INTO app_settings (shop_id, key, value_json, updated_at) VALUES (?, 'integration.settings', '{\"operationsEnabled\":false}', CURRENT_TIMESTAMP)", [shopId]);
+    clearShopDependenciesCache();
+    const refused = await wallet();
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: { code: "BOT_OPERATIONS_DISABLED" } });
+    expect((await bind("user_identity_only")).status).toBe(200);
+
+    sqlite.run("UPDATE shop_billing_settings SET billing_enabled=0 WHERE shop_id=?", [shopId]);
+    sqlite.run("UPDATE app_settings SET value_json='{\"operationsEnabled\":true}' WHERE shop_id=? AND key='integration.settings'", [shopId]);
+    clearShopDependenciesCache();
+    expect((await wallet()).status).toBe(409);
+    expect((await bind("user_no_billing")).status).toBe(200);
+    sqlite.close();
+  });
+
+  it("saves the bot scope and only accepts a changed binding prompt that shows the code", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { publicId, staffSessionToken } = await setupShopFixture(db, sqlite);
+    const app = createTestApp();
+    const url = `https://prism.test/api/v1/shops/${publicId}/settings`;
+    const headers = { Authorization: `Bearer ${staffSessionToken}`, "Content-Type": "application/json" };
+    const current = await (await app.fetch(new Request(url, { headers }), env)).json() as Record<string, unknown>;
+    // The fixture's legacy contact text has no {code}; untouched, it still saves.
+    expect(current).toMatchObject({ botContact: "bot-contact", botOperationsEnabled: true });
+    const save = (patch: Record<string, unknown>) => app.fetch(new Request(url, {
+      method: "PUT", headers, body: JSON.stringify({ ...current, ...patch }),
+    }), env);
+    expect((await save({ botOperationsEnabled: false })).status).toBe(200);
+    expect(await (await app.fetch(new Request(url, { headers }), env)).json()).toMatchObject({ botOperationsEnabled: false });
+    const missing = await save({ botContact: "加群 123456 后私聊 Bot" });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toMatchObject({ error: { code: "BINDING_PROMPT_CODE_REQUIRED" } });
+    expect((await save({ botContact: "在 QQ 群 123456 里发送\n/绑定 {code}" })).status).toBe(200);
+    expect(await (await app.fetch(new Request(url, { headers }), env)).json()).toMatchObject({ botContact: "在 QQ 群 123456 里发送\n/绑定 {code}" });
+    sqlite.close();
+  });
+
   it("saves the unified location toggle despite stale legacy flags from the settings form", async () => {
     const { db, sqlite, env } = createTestContext();
     const { publicId, shopId, staffSessionToken } = await setupShopFixture(db, sqlite);
@@ -1624,7 +1700,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
           checkoutGeo: false,
           machineGeo: true,
           entryPricingIds: JSON.parse(config!.entry_pricing_ids_json),
-          botContact: "owner@example.test",
+          botContact: "联系 owner@example.test 发送 {code}",
         }),
       }),
       env,
