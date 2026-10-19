@@ -430,7 +430,7 @@ export function ShopDataTransfer() {
         )}
         <p className="text-sm leading-relaxed text-ink/60">
           {t(
-            "先预检再确认。业务备份覆盖现有数据；仅配置备份保留玩家和账单。目标店铺编号和当前管理员保留。",
+            "业务备份覆盖现有数据；仅配置备份保留玩家和账单。目标店铺编号和当前管理员保留。",
           )}
         </p>
         <p className="text-sm leading-relaxed text-ink/60">
@@ -462,11 +462,9 @@ export function ShopDataTransfer() {
           <input
             className={input}
             type="file"
-            accept={
-              importSource === "prism-neo"
-                ? ".sql,.txt,.json,application/json,text/plain"
-                : ".json,application/json"
-            }
+            // iOS filters unknown extensions like .sql out of the picker even
+            // with an explicit text/plain accept; only restrict PRiSM JSON.
+            accept={importSource === "prism-neo" ? undefined : ".json,application/json"}
             disabled={busy}
             onChange={selectFile}
           />
@@ -490,7 +488,7 @@ export function ShopDataTransfer() {
           }
           onClick={preflight}
         >
-          {t(busy ? "处理中…" : "预检导入")}
+          {t(busy ? "处理中…" : "开始导入")}
         </button>
         {preview && (
           <div className="grid gap-3 rounded-lg border border-ink/10 p-4">
@@ -526,8 +524,8 @@ export function ShopDataTransfer() {
             <p role="status" className="text-sm">
               {t(
                 preview.canImport
-                  ? "预检通过，可以确认导入。"
-                  : "预检未通过，请处理上述问题后重试。",
+                  ? "文件检查通过，确认后即可导入。"
+                  : "文件检查未通过，请处理上述问题后重试。",
               )}
             </p>
             {preview.canImport && (

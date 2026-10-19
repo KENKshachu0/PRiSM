@@ -430,7 +430,7 @@ React `/admin` 账号管理页提供删除入口。`DELETE /api/v1/admin/users/:
 
 ### 店铺 JSON 数据备份与迁移
 
-店主可以使用 `/api/v1/shops/:shopCode/data/export` 下载原始 JSON 文件，大文件通过 `data/exports` 任务分页下载，通过 `data/imports` 分片上传、预检并原子恢复到空店铺。新版后台导出 v3 文件，导入支持 v1／v2／v3，旧整文件接口仅为兼容保留。此附件保留数据库原始 UTC 时间、整数货币和历史计费版本，不进行展示时区转换。范围、权限、格式、限制及跨环境迁移注意事项见 [店铺数据导入导出](shop-data-transfer.md)。
+店主可以使用 `/api/v1/shops/:shopCode/data/export` 下载原始 JSON 文件，大文件通过 `data/exports` 任务分页下载，通过 `data/imports` 分片上传、检查并原子恢复到空店铺。新版后台导出 v3 文件，导入支持 v1／v2／v3，旧整文件接口仅为兼容保留。此附件保留数据库原始 UTC 时间、整数货币和历史计费版本，不进行展示时区转换。范围、权限、格式、限制及跨环境迁移注意事项见 [店铺数据导入导出](shop-data-transfer.md)。
 
 ### 店铺只读导出及月度额度
 

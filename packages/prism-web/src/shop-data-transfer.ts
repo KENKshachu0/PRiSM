@@ -248,9 +248,17 @@ export async function uploadShopBackup(path: string, file: Blob, progress: (coun
  */
 export async function convertPrismNeoFile(file: File, timeZone: string): Promise<File> {
   const text = await file.text();
-  const snapshot = text.trimStart().startsWith("{")
-    ? JSON.parse(text)
-    : snapshotFromPgDump(text);
+  // The picker does not restrict extensions (iOS hides .sql otherwise), so
+  // sniff the content: JSON snapshot or pg_dump COPY block, nothing else.
+  // CREATE TABLE preambles push the first COPY block well past 4 KB, so scan
+  // the first 512 KiB.
+  const trimmed = text.trimStart();
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  const looksLikeDump = /^COPY\s/m.test(text.slice(0, 512 * 1024));
+  if (!looksLikeJson && !looksLikeDump) {
+    throw new Error("这不是 prism-neo 的备份文件：请选择 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照");
+  }
+  const snapshot = looksLikeJson ? JSON.parse(text) : snapshotFromPgDump(text);
   const backup = convertPrismNeoSnapshot(snapshot, {
     shopName: file.name.replace(/\.(sql|txt|json)$/i, ""),
     timeZone,

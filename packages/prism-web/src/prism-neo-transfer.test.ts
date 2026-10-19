@@ -40,6 +40,21 @@ describe("convertPrismNeoFile", () => {
     await expect(convertPrismNeoFile(file, "UTC")).rejects.toThrow("列数不符");
   });
 
+  it("rejects a file that is neither JSON nor a pg_dump with a clear message", async () => {
+    const file = new File(["not a backup at all"], "notes.txt", { type: "text/plain" });
+    await expect(convertPrismNeoFile(file, "UTC")).rejects.toThrow("这不是 prism-neo 的备份文件");
+  });
+
+  it("recognizes dumps whose first COPY block sits behind a long DDL preamble", async () => {
+    // pg_dump 18 writes every CREATE TABLE before the data; the first COPY
+    // block can land well past 4 KB.
+    const preamble = "-- PostgreSQL database dump\n".repeat(400);
+    const file = new File([preamble + dump], "late.sql", { type: "text/plain" });
+    const converted = await convertPrismNeoFile(file, "UTC");
+    const backup = JSON.parse(await converted.text());
+    expect(backup.tables.players).toHaveLength(1);
+  });
+
   it("accepts a CLI JSON snapshot file as well", async () => {
     const file = new File(
       [JSON.stringify({ users: [{ id: 3, createdAt: "2026-01-01T00:00:00Z", isBanned: false }] })],

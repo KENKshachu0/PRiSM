@@ -112,7 +112,7 @@ async function stage(
     if (previous.request_hash !== hash) jsonError(409, "分片编号对应的数据已变化", "OPERATION_CONFLICT");
     return;
   }
-  if (job.status !== "uploading") jsonError(409, "任务已经完成预检，不能继续修改文件", "TRANSFER_LOCKED");
+  if (job.status !== "uploading") jsonError(409, "文件已上传完成，不能继续修改", "TRANSFER_LOCKED");
   const errors = validateRows(table, input.rows, header.version);
   if (
     header.version === 1 &&
@@ -191,7 +191,7 @@ async function previewJob(
   header: FullHeader,
   manifest: { counts: Record<string, number>; parts: number },
 ) {
-  if (!["uploading", "ready", "stale"].includes(job.status)) jsonError(409, "任务状态不允许预检", "TRANSFER_LOCKED");
+  if (!["uploading", "ready", "stale"].includes(job.status)) jsonError(409, "任务状态不允许重新检查文件", "TRANSFER_LOCKED");
   const errors: string[] = [],
     tables = fullTables(header),
     actual = await counts(c.env.DB as LegacyD1Database, job.id, tables);
@@ -436,7 +436,7 @@ async function previewJob(
       await (c.env.DB as LegacyD1Database).batch(statements);
     } catch (error) {
       if (String(error).includes("constraint failed"))
-        jsonError(409, "预检时上传状态发生变化，请重试", "TRANSFER_CHANGED");
+        jsonError(409, "文件检查时上传状态发生变化，请重试", "TRANSFER_CHANGED");
       throw error;
     }
   }
@@ -553,12 +553,12 @@ async function applyJob(
     .bind(shop.id, requireUser(c).id, operationId)
     .first();
   if (previous) jsonError(409, "请求编号已用于其他操作", "OPERATION_CONFLICT");
-  if (job.status === "stale") jsonError(409, "预检后店铺数据或文件已变化，请重新预检", "IMPORT_TARGET_CHANGED");
+  if (job.status === "stale") jsonError(409, "店铺数据或文件已变化，请重新导入", "IMPORT_TARGET_CHANGED");
   if (job.status !== "ready" || fingerprint !== job.fingerprint)
-    jsonError(409, "请先完成备份预检", "IMPORT_NOT_READY");
+    jsonError(409, "文件尚未上传完成", "IMPORT_NOT_READY");
   const state = await targetState(c, shop.id);
   if (snapshotKey(state) !== job.target_state)
-    jsonError(409, "预检后店铺数据或文件已变化，请重新预检", "IMPORT_TARGET_CHANGED");
+    jsonError(409, "店铺数据或文件已变化，请重新导入", "IMPORT_TARGET_CHANGED");
   if (header.scope === "business" && state.rows && !overwrite)
     jsonError(409, "请确认覆盖目标店铺现有数据", "IMPORT_OVERWRITE_REQUIRED");
   const db = c.env.DB as LegacyD1Database,
@@ -785,9 +785,9 @@ async function applyJob(
     await db.batch(statements);
   } catch (error) {
     if (String(error).includes("NOT NULL constraint failed: player_operations.id"))
-      jsonError(409, "预检后店铺数据或文件已变化，请重新预检", "IMPORT_TARGET_CHANGED");
+      jsonError(409, "店铺数据或文件已变化，请重新导入", "IMPORT_TARGET_CHANGED");
     if (String(error).includes("constraint failed") || String(error).includes("CASHIER_PROFILE_RESTRICTED"))
-      jsonError(409, "导入约束校验失败，数据已全部回滚，请重新预检", "IMPORT_CONSTRAINT_FAILED");
+      jsonError(409, "数据校验失败，导入已全部回滚，请重试", "IMPORT_CONSTRAINT_FAILED");
     throw error;
   }
   return result;
