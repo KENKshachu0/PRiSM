@@ -413,7 +413,7 @@ function BotSettings({ shopCode }: { shopCode: string }) {
             onChange={(event) => { setPrompt(event.target.value); setSaved(false); }}
           />
           <span className="text-xs font-normal leading-relaxed text-ink/55">
-            {t("玩家需要绑定身份时看到这段说明。写清楚去哪里、发什么；含 {code} 的那一行会显示成可复制的命令。留空则显示「向店铺 Bot 发送 prism.bind 绑定码」。")}
+            {t("玩家需要绑定身份时看到这段说明。写清楚去哪里、发什么；含 {code} 的那一行会显示成可复制的命令。留空则显示「向店铺 Bot 发送 bind 绑定码」。")}
           </span>
           {missingCode && <span className="text-xs font-normal text-coral">{t("需要有一行包含 {code}，玩家才看得到绑定码。")}</span>}
         </label>

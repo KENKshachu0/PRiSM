@@ -13,7 +13,7 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 - **绑定身份，并代玩家操作**（默认）：Bot 可以入场、结账、查余额、兑换和操作设备。
 - **只负责绑定身份**：只有 `platform-binding/confirm` 可用，其它 Integration 路由返回 `403 BOT_OPERATIONS_DISABLED`。适合 Bot 放在群里只做身份核验、操作都在网页或 App Clip 里完成的店。
 
-绑定确认不要求店铺启用计费。同一页面可编辑玩家看到的**绑定提示**（`settings.botContact`，含 `{code}` 的一行显示为可复制命令，并有实时预览），用来写明去哪个群、发什么命令，取代固定的「向店铺 Bot 发送 prism.bind 绑定码」。Bot 请求里的 `autoRegister` 一律被店铺设置覆盖。
+绑定确认不要求店铺启用计费。同一页面可编辑玩家看到的**绑定提示**（`settings.botContact`，含 `{code}` 的一行显示为可复制命令，并有实时预览），用来写明去哪个群、发什么命令，取代固定的「向店铺 Bot 发送 bind 绑定码」（插件命令为 `bind`，旧的 `prism.bind` 保留为同义命令）。Bot 请求里的 `autoRegister` 一律被店铺设置覆盖。
 
 **Token 要求：**
 

@@ -404,7 +404,7 @@ HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请
 
 新店铺（无论是否启用计费）创建时写入 `identityBindingRequired: true`、`autoRegister: true`：要求绑定平台身份，第一次通过 Bot 绑定时自动建档。`autoRegister` 只影响 Bot 绑定与 Bot 命令的建档；不要求绑定时，网页账号第一次进店总会自动建档。
 
-`settings.botContact` 是玩家绑定身份时看到的**绑定提示**（最多 500 字）：逐行显示，包含 `{code}` 的那一行替换为绑定码并作为可复制的命令；为空时客户端显示「向店铺 Bot 发送 prism.bind 绑定码」。旧数据里不含 `{code}` 的联系文字照常保存与显示（客户端在其后补上标准命令）；修改为新的非空内容时必须包含 `{code}`，否则返回 `400 BINDING_PROMPT_CODE_REQUIRED`。`POST /api/v1/shops/:shopCode/platform-binding` 的响应同样带 `botContact`，网页和 App Clip 按同一规则渲染。
+`settings.botContact` 是玩家绑定身份时看到的**绑定提示**（最多 500 字）：逐行显示，包含 `{code}` 的那一行替换为绑定码并作为可复制的命令；为空时客户端显示「向店铺 Bot 发送 bind 绑定码」（Koishi 插件的绑定命令是 `bind`，旧命令 `prism.bind` 仍可用）。旧数据里不含 `{code}` 的联系文字照常保存与显示（客户端在其后补上标准命令）；修改为新的非空内容时必须包含 `{code}`，否则返回 `400 BINDING_PROMPT_CODE_REQUIRED`。`POST /api/v1/shops/:shopCode/platform-binding` 的响应同样带 `botContact`，网页和 App Clip 按同一规则渲染。
 
 店铺 `settings` 的 `identityBindingRequired` 默认 `true`，省略时保留原设置。开启后入场和设备操作须有任意一个已验证的平台绑定；关闭后登录网页账号即可创建店内玩家档案，之后可追加外部身份。已在店玩家仍可读取账单和结账，避免重新开启开关后无法离场。该开关独立于 Bot 的自动注册设置和店铺位置校验。
 

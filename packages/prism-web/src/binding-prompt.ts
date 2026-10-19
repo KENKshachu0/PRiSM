@@ -6,7 +6,7 @@
  */
 export type BindingPromptLine = { text: string; command: boolean };
 
-export const defaultBindingCommand = (code: string) => `prism.bind ${code}`;
+export const defaultBindingCommand = (code: string) => `bind ${code}`;
 
 /** `null` means the shop wrote nothing and the standard wording applies. */
 export function bindingPromptLines(

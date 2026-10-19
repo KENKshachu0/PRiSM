@@ -1422,7 +1422,6 @@
   "Bot 只完成身份绑定，其它操作一律拒绝；入场、结账和设备都在网页或 App Clip 里完成。": "The bot only binds identities and refuses everything else; check-in, checkout and devices happen on the web or in the App Clip.",
   "绑定提示": "Binding instructions",
   "加入 QQ 群 123456789\n在群里发送：\n/绑定 {code}": "Join QQ group 123456789\nThen send in the group:\n/bind {code}",
-  "玩家需要绑定身份时看到这段说明。写清楚去哪里、发什么；含 {code} 的那一行会显示成可复制的命令。留空则显示「向店铺 Bot 发送 prism.bind 绑定码」。": "Players see this when they need to bind an identity. Say where to go and what to send; the line containing {code} is shown as a command they can copy. Leave it empty to show “Send prism.bind <code> to the store bot”.",
   "需要有一行包含 {code}，玩家才看得到绑定码。": "One line must contain {code}, or players will not see their code.",
   "玩家看到的样子": "What players see",
   "保存 Bot 设置": "Save bot settings",
@@ -1550,5 +1549,6 @@
   "扣充值余额": "From paid balance",
   "结账扣款顺序": "Checkout deduction order",
   "元": "yuan",
-  "消费封顶 80": "Total cap 80"
+  "消费封顶 80": "Total cap 80",
+  "玩家需要绑定身份时看到这段说明。写清楚去哪里、发什么；含 {code} 的那一行会显示成可复制的命令。留空则显示「向店铺 Bot 发送 bind 绑定码」。": "Players see this when they need to bind an identity. Say where to go and what to send; the line containing {code} is shown as a command they can copy. Leave it empty to show “Send bind <code> to the store bot”."
 }

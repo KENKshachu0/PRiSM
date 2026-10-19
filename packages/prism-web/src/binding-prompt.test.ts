@@ -18,7 +18,7 @@ describe("binding prompt", () => {
   it("keeps legacy contact text and adds the standard command after it", () => {
     expect(bindingPromptLines("@arcade_bot", "AB23CD45")).toEqual([
       { text: "@arcade_bot", command: false },
-      { text: "prism.bind AB23CD45", command: true },
+      { text: "bind AB23CD45", command: true },
     ]);
   });
 });
