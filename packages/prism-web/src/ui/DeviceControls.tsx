@@ -179,6 +179,26 @@ export function DeviceControls({
         );
     });
   }
+  /**
+   * Entry that also opens the door. Both come back in one response, so the
+   * page switches to the entered view and shows the code in the same render.
+   */
+  function enterAndOpenDoor(shop: ShopInfo["shop"]) {
+    return act("door.open", async () => {
+      const result = await playerOperation<{
+        door?: { temporaryPassword?: string; expiresAt?: string; error?: { message?: string } };
+      }>(shopApi(code, "player/session/start"), {
+        ticket,
+        consent,
+        openDoor: true,
+        location: await operationLocation(shop.locationEnabled ?? shop.checkinGeo),
+      });
+      setState((current) => (current ? { ...current, gate: "ready" } : current));
+      if (result.door?.temporaryPassword && result.door.expiresAt)
+        setPassword({ temporaryPassword: result.door.temporaryPassword, expiresAt: result.door.expiresAt });
+      else setError(errorText(result.door?.error?.message ?? "获取开门密码失败，请联系店员"));
+    });
+  }
   const cap = machine.capabilities;
   if (!Object.values(cap).some(Boolean)) return <p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p>;
   const powerBlocked = cap.power && power === "off";
@@ -260,7 +280,8 @@ export function DeviceControls({
                 disabled={
                   !!busy || cardBusy || (state.gate === "entry" && !consent)
                 }
-                onClick={() => operate("door.open")}
+                onClick={() =>
+                  state.gate === "entry" && info ? enterAndOpenDoor(info.shop) : operate("door.open")}
               >
                 {busy === "door.open" ? spinner : <DoorOpen size={22} />}{" "}
                 {t(

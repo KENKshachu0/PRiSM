@@ -10,6 +10,8 @@ import { jsonError } from "../../http.js";
 import { requireUser, staffPrincipal } from "../../middleware/auth.js";
 import { getShop, getShopDeps } from "../../middleware/tenant.js";
 import { checkShopLocation } from "../../middleware/geo.js";
+import { can, loadDevice, type Device } from "../../devices/device.js";
+import { createRuntimeBus } from "../../devices/runtime.js";
 import { resolveMachineSession } from "../platform/machine-session.js";
 import { runPlayerOperation } from "./player-operation.js";
 import {
@@ -249,10 +251,15 @@ playerRouter.get("/sessions/:sessionId/history", async (c) => {
 
 // Start Session — original contract requires a valid machine ticket,
 // consent and shop check-in location before any billing operation.
+//
+// `openDoor` makes entry also hand out the door code of the scanned device. The
+// two run side by side so the player waits for the slower one, not both; a code
+// is only returned when entry succeeded, and a lock failure does not undo entry
+// (the player can ask for the code again as an entered player).
 playerRouter.post("/session/start", async (c) => {
   const shop = getShop(c);
   const player = await requireShopPlayer(c, shop, false, true);
-  const body = (await c.req.json<{ ticket?: string; consent?: boolean; location?: unknown; operationId?: string }>().catch(() => ({}))) as { ticket?: string; consent?: boolean; location?: unknown; operationId?: string };
+  const body = (await c.req.json<SessionStartBody>().catch(() => ({}))) as SessionStartBody;
   const machine = await resolveMachineSession(c, body.ticket ?? "");
   if (machine.shop_id !== shop.id) {
     jsonError(403, "请扫描设备二维码", "DEVICE_QR_REQUIRED");
@@ -261,11 +268,50 @@ playerRouter.post("/session/start", async (c) => {
     jsonError(409, "请确认入场计费规则", "CHECKIN_CONSENT_REQUIRED");
   }
   checkShopLocation(shop, "checkin", body.location);
+  const door = body.openDoor === true ? await loadDevice(c.env.DB, shop.id, machine.id) : null;
+  if (body.openDoor === true && (!door || !can(door, "door.open"))) {
+    jsonError(409, "设备不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
+  }
   return runPlayerOperation(c, shop.id, "session/start", body, async () => {
-    const session = await getShopDeps(c).playerCommands.startSession({ playerId: player.id });
-    return c.json({ session: toSessionView(session) });
+    const opening = door ? openDoor(c, shop, door, player.id, body.operationId!) : null;
+    const [entry, code] = await Promise.allSettled([
+      getShopDeps(c).playerCommands.startSession({ playerId: player.id }),
+      opening ?? Promise.resolve(null),
+    ]);
+    // Without entry the code is dropped unseen; the error is entry's.
+    if (entry.status === "rejected") throw entry.reason;
+    const result: Record<string, unknown> = { session: toSessionView(entry.value) };
+    if (opening) {
+      result.door = code.status === "fulfilled" && code.value
+        ? code.value
+        : { error: { code: "DEVICE_UNAVAILABLE", message: "获取开门密码失败，请联系店员" } };
+    }
+    return c.json(result);
   });
 });
+
+type SessionStartBody = { ticket?: string; consent?: boolean; location?: unknown; operationId?: string; openDoor?: boolean };
+
+/** The door code, or null when the lock did not give one. */
+async function openDoor(
+  c: Context<AppBindings>,
+  shop: TenantShop,
+  device: Device,
+  playerId: string,
+  operationId: string,
+): Promise<{ temporaryPassword: string; expiresAt: string } | null> {
+  const bus = createRuntimeBus({ db: c.env.DB, env: c.env, shopId: shop.id });
+  const done = await bus.perform({
+    device,
+    action: "door.open",
+    actor: { type: "player", playerId },
+    operationId,
+    payload: { holder: playerId },
+  });
+  if (done.operation.status !== "succeeded") return null;
+  const { temporaryPassword, expiresAt } = done.result as { temporaryPassword?: unknown; expiresAt?: unknown };
+  return typeof temporaryPassword === "string" && typeof expiresAt === "string" ? { temporaryPassword, expiresAt } : null;
+}
 
 // Stop Session
 playerRouter.post("/sessions/:sessionId/stop", async (c) => {

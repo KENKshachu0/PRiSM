@@ -71,7 +71,7 @@ API 由 `packages/server-hono` 提供实现，本文档和服务端路由是客�
 | `GET` | `/rpc/player/assets` | 查询当前可用且可显示的资产持有及历史流水记录。 |
 | `GET` | `/rpc/player/sessions/history` | 查询历史结账场次。 |
 | `GET` | `/rpc/player/sessions/:sessionId/history` | 查询指定场次的收费明细项及折扣调整项。 |
-| `POST` | `/rpc/player/session/start` | 启动包时结算场次。 |
+| `POST` | `/rpc/player/session/start` | 启动包时结算场次。带 `openDoor: true` 时同时为扫码设备获取开门密码，响应为 `{session, door}`；只有入场成功才返回密码，门锁失败时 `door.error` 说明原因、入场仍然有效。 |
 | `POST` | `/rpc/player/device-commands` | 申请设备动作。动作使用明确类型：`door.open`、`power.on`、`power.off`、`ac.set_temperature`、`coin`、`aime.scan`，并通过 `target.kind` 区分设施设备和游戏机器。 |
 | `POST` | `/rpc/player/checkout/preview` | 预览当前场次结账费用，不关单。 |
 | `POST` | `/rpc/player/checkout/confirm` | 确认当前场次结账，扣减余额并关单。 |
