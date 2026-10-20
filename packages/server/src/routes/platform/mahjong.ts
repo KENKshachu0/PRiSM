@@ -114,7 +114,7 @@ export async function operateMahjong(
           .bind(now,JSON.stringify(config.pricingConfigIds),machine.name,JSON.stringify({mahjongDeviceId:machine.id}),machine.id,+!!shop.billing_enabled,machine.id,config.capacity,machine.id),
       ]);
       const seat=await db.prepare("SELECT machine_id FROM mahjong_seats WHERE shop_id=? AND player_id=?").bind(shop.id,player.id).first<{machine_id:string}>();
-      if (!seat) jsonError(409,"当前无法上桌，请刷新后重试","MAHJONG_TABLE_FULL");
+      if (!seat) jsonError(409,"已满桌","MAHJONG_TABLE_FULL");
       if (seat.machine_id!==machine.id) jsonError(409,"请先从当前麻将桌下桌","MAHJONG_ALREADY_SEATED");
     } else {
       await db.batch([

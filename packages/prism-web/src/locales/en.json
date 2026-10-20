@@ -1583,7 +1583,6 @@
   "温度": "Temperature",
   "登录成功": "Signed in",
   "登录失败": "Sign-in failed",
-  "未读卡": "Card not read",
   "游戏登录成功": "Game signed in",
   "游戏拒绝了卡片": "Game rejected the card",
   "获取开门密码失败，请联系店员": "Could not get the door code. Please ask the staff.",
@@ -1610,5 +1609,10 @@
   "从不自动关机": "Never switch off automatically",
   "延迟关机": "Keep on",
   "已闲置": "Idle",
-  "恢复使用": "In use again"
+  "恢复使用": "In use again",
+  "重新加载": "Reload",
+  "未读卡，请在刷卡界面重试": "Card not read. Retry on the card screen.",
+  "开门密码获取失败，请重试": "Could not get the door code. Retry.",
+  "定位获取失败，请重试": "Could not get location. Retry.",
+  "未检测到开机，请重试": "Power-on not detected. Retry."
 }

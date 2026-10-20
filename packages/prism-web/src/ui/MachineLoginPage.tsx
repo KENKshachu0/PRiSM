@@ -1,11 +1,11 @@
 import { SessionPasskeySetup } from "./SessionPasskeySetup";
 import { DeviceControls } from "./DeviceControls";
 import { useI18n } from "../i18n";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
 import { ShopHero, SessionSignIn } from "./SessionContent";
-import { Api, ApiError, type Card, type MachineLoginResult, type Notice, type PublicMachine } from "../api";
+import { Api, ApiError, InlineError, type Card, type MachineLoginResult, type Notice, type PublicMachine } from "../api";
 import { useNotice } from "./NoticeProvider";
 import { useAuth } from "./AuthContext";
 
@@ -13,7 +13,7 @@ type CardOutcome = NonNullable<MachineLoginResult["card"]>;
 const CARD_TEXT: Record<CardOutcome, string> = {
   ok: "登录成功",
   failed: "登录失败",
-  not_read: "未读卡",
+  not_read: "未读卡，请在刷卡界面重试",
   read: "已刷卡",
   sent: "已刷卡",
 };
@@ -123,8 +123,10 @@ function MachineSessionPage({
   const [cards, setCards] = useState<Card[]>([]);
   const [cardsLoading, setCardsLoading] = useState(true);
   const [cardsError, setCardsError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "locating" | "sending" | "done">("idle");
-  const [feedback, setFeedback] = useState<{ level: Notice["level"]; text: string } | null>(null);
+  const [status, setStatus] = useState<"idle" | "locating" | "sending">("idle");
+  /** A swipe's outcome on its card row: the card's part, then the coin's, each with its own level. */
+  const [feedback, setFeedback] = useState<{ cardId: string; parts: Pick<Notice, "level" | "body">[] } | null>(null);
+  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showNotice = useNotice();
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -144,8 +146,8 @@ function MachineSessionPage({
         const activeCards = result.cards.filter((card) => !card.disabledAt);
         setCards(activeCards);
       })
-      .catch(() => {
-        if (!cancelled) setCardsError("请检查网络后重试");
+      .catch((caught) => {
+        if (!cancelled) setCardsError(caught instanceof ApiError ? caught.message : "请检查网络后重试");
       })
       .finally(() => {
         if (!cancelled) setCardsLoading(false);
@@ -158,6 +160,7 @@ function MachineSessionPage({
   const loginWithCard = async (cardId: string) => {
     if (status !== "idle") return;
     setActiveCardId(cardId);
+    showFeedback(null);
     setStatus("locating");
     try {
       const position =
@@ -173,7 +176,7 @@ function MachineSessionPage({
       const notices = result.notices ?? fallbackNotices(result.card ?? "sent");
       const inline = notices.filter((notice) => notice.display === "inline");
       // The card row carries the outcome; only a problem that needs the player interrupts.
-      showFeedback(inline[0]?.level ?? "success", inline.map((notice) => notice.body).join(" · ") || t("已刷卡"));
+      showFeedback({ cardId, parts: inline.length ? inline : fallbackNotices(result.card ?? "sent") });
       for (const notice of notices) if (notice.display === "dialog") showNotice(notice);
     } catch (caught) {
       const notice = showNotice(caught instanceof ApiError ? caught : friendlyLoginError(caught), {
@@ -181,22 +184,20 @@ function MachineSessionPage({
         onRefresh: () => setReload((value) => value + 1),
         retry: () => void loginWithCard(cardId),
       });
-      if (notice.display === "inline") showFeedback(notice.level, notice.body);
-      else {
-        setStatus("idle");
-        setActiveCardId(null);
-      }
+      if (notice.display === "inline") showFeedback({ cardId, parts: [notice] });
+      else setActiveCardId(null);
+    } finally {
+      setStatus("idle");
     }
   };
 
-  const showFeedback = (level: Notice["level"], text: string) => {
-    setFeedback({ level, text });
-    setStatus("done");
-    window.setTimeout(() => {
-      setStatus("idle");
-      setFeedback(null);
-    }, level === "success" ? 1500 : 3500);
+  /** Shown for a few seconds; the page stays usable meanwhile. */
+  const showFeedback = (next: typeof feedback) => {
+    clearTimeout(feedbackTimer.current);
+    setFeedback(next);
+    if (next) feedbackTimer.current = setTimeout(() => setFeedback(null), next.parts[0]?.level === "success" ? 3000 : 6000);
   };
+  useEffect(() => () => clearTimeout(feedbackTimer.current), []);
 
   /** For a server that predates notices: the card result alone. */
   const fallbackNotices = (card: CardOutcome): Notice[] => [{
@@ -247,9 +248,11 @@ function MachineSessionPage({
             <div className="credential-list">
               {cards.map((card) => {
                 const active = activeCardId === card.id;
-                const done = active && status === "done" && feedback;
+                const done = feedback?.cardId === card.id ? feedback : null;
                 const detail =
-                  done ? feedback.text :
+                  done ? done.parts.map((part, index) => (
+                    <span key={index} className="credential-feedback-part" data-level={part.level}>{part.body}</span>
+                  )) :
                   active && status === "locating"
                     ? t("确认位置…")
                     : active && status === "sending"
@@ -263,7 +266,7 @@ function MachineSessionPage({
                     className="credential-row"
                     disabled={busy}
                     data-active={active}
-                    data-feedback={done ? feedback.level : undefined}
+                    data-feedback={done ? done.parts[0]?.level : undefined}
                     onClick={() => void loginWithCard(card.id)}
                   >
                     <span className="min-w-0">
@@ -276,7 +279,7 @@ function MachineSessionPage({
                       </span>
                     </span>
                     {done ? (
-                      <FeedbackIcon level={feedback.level} />
+                      <FeedbackIcon level={done.parts[0]?.level ?? "success"} />
                     ) : active && busy ? (
                       <Loader2 size={20} className="animate-spin text-mint" />
                     ) : (
@@ -356,13 +359,14 @@ function MachineExpiredPage() {
   );
 }
 
-function friendlyLoginError(err: unknown): string {
+/** Problems found on this device; a missing fix is retried by tapping the card again. */
+function friendlyLoginError(err: unknown): Error | string {
   if (err instanceof ApiError && err.code === "DEVICE_UNAVAILABLE") return err.message;
   if (err instanceof Error) {
     const msg = err.message;
     if (msg === "geo_denied") return "需要定位权限才能确认你在店内";
-    if (msg === "geo_unsupported" || msg === "geo_failed")
-      return "定位获取失败";
+    if (msg === "geo_failed") return new InlineError("定位获取失败，请重试");
+    if (msg === "geo_unsupported") return "定位获取失败";
     if (
       msg.includes("店内") ||
       msg.includes("距离") ||

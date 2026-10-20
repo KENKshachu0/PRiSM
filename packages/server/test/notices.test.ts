@@ -10,7 +10,8 @@ describe("player notices", () => {
   });
 
   it("interrupts only for what went wrong, and keeps normal outcomes inline", () => {
-    expect(notice("CARD_NOT_READ", "zh")).toMatchObject({ display: "inline", level: "warning", body: "未读卡", actions: [] });
+    expect(notice("CARD_NOT_READ", "zh")).toMatchObject({ display: "inline", level: "warning", body: "未读卡，请在刷卡界面重试", actions: [] });
+    for (const code of ["COIN_FAILED", "COIN_UNKNOWN", "COIN_SKIPPED"]) expect(notice(code, "zh").display).toBe("inline");
     expect(errorNotice({ code: "COIN_COOLDOWN", message: "请稍后再投币", status: 429 }, "zh").display).toBe("inline");
     const banned = errorNotice({ code: "ACCOUNT_BANNED", message: "这个账号暂时无法使用", status: 403 }, "zh");
     expect(banned).toMatchObject({ display: "dialog", level: "error", title: "账号已停用" });
@@ -23,13 +24,15 @@ describe("player notices", () => {
   });
 
   it("offers a retry only where trying again can help", () => {
+    const device = errorNotice({ code: "DEVICE_UNAVAILABLE", message: "设备连接失败", status: 502 }, "en");
+    expect(device.actions.map((action) => action.kind)).toEqual(["dismiss", "retry"]);
+    // A weak fix is retried by tapping again, right where the player is.
     const location = errorNotice({ code: "LOCATION_LOW_ACCURACY", message: "定位精度不足，请重试", status: 403 }, "en");
-    expect(location.actions.map((action) => action.kind)).toEqual(["dismiss", "retry"]);
-    expect(location.body).toBe("Your location is not precise enough. Please try again.");
+    expect(location).toMatchObject({ display: "inline", actions: [], body: "Location not precise enough. Retry." });
   });
 
   it("keeps a route's own Chinese wording but never shows developer text or faults", () => {
-    expect(errorNotice({ code: "SOMETHING_NEW", message: "请先在后台开通", status: 409 }, "zh").body).toBe("请先在后台开通");
+    expect(errorNotice({ code: "SOMETHING_NEW", message: "请先在后台开通", status: 409 }, "zh")).toMatchObject({ body: "请先在后台开通", display: "inline" });
     expect(errorNotice({ code: "REDEEM_THING", message: "Redeem code batch exhausted.", status: 400 }, "zh").body).toBe("操作失败，请稍后重试");
     expect(errorNotice({ code: "INTERNAL_ERROR", message: "数据库超时", status: 500 }, "zh").body).toBe("操作失败，请稍后重试");
   });

@@ -14,6 +14,7 @@ import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { vkFromKeyText } from "../../devices/key-text.js";
 import { createRuntimeBus, observeClimate, readPower, type ClimateState } from "../../devices/runtime.js";
 import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
+import { notice, requestLocale } from "../../notices.js";
 import type { ActionName } from "../../devices/capabilities.js";
 
 type C = Context<AppBindings, any, any>;
@@ -114,7 +115,7 @@ export async function executeDeviceAction(
           : null;
   if (action === "coin") {
     if (!staff && hinataConfigOf(device)?.coinAfterSwipe)
-      jsonError(409, "请通过刷卡投币", "DEVICE_ACTION_UNSUPPORTED");
+      jsonError(409, "请通过刷卡投币", "COIN_VIA_SWIPE");
     // Only an explicit "off" blocks: an unreadable switch must not lock players out.
     if (device.capabilities.has("power") && (await readPower({ db: c.env.DB, env: c.env, shopId: shop.id }, device)) === "off")
       jsonError(409, "请先开机", "DEVICE_POWER_OFF");
@@ -223,7 +224,9 @@ export async function executeDeviceAction(
             : done.result;
       // A player or staff action may start or end an idle countdown.
       touchShopHubAfter(c, shop.id);
-      return c.json({ operationId: body.operationId, ...result });
+      // A coin leaves no state to show, so the player is told it went in.
+      const notices = action === "coin" ? [notice("COIN_SENT", requestLocale(c.req.header("accept-language")))] : undefined;
+      return c.json({ operationId: body.operationId, ...result, ...(notices ? { notices } : {}) });
     },
   );
 }

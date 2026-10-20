@@ -4,7 +4,7 @@ import { pricingInZone } from "./merchant/pricing-clock";
 import type { Pricing } from "./merchant/Pricing";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, InlineError } from "../api";
 import { useI18n } from "../i18n";
 import { BillingConversionWizard } from "./merchant/BillingSetup";
 import { IdentityPolicyPicker } from "./merchant/IdentityPolicyPicker";
@@ -115,7 +115,9 @@ export async function operationLocation(required: boolean) {
   const position = await new Promise<GeolocationPosition>((resolve, reject) =>
     navigator.geolocation.getCurrentPosition(
       resolve,
-      () => reject(new Error("未能获取定位，请授权后重试；未结消费仍在计时")),
+      (error) => reject(error.code === error.PERMISSION_DENIED
+        ? new Error("需要定位权限才能确认你在店内")
+        : new InlineError("定位获取失败，请重试")),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
     ),
   );

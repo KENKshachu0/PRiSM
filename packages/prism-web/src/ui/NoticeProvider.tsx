@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { ApiError, type Notice } from "../api";
+import { ApiError, InlineError, type Notice } from "../api";
 import { useI18n } from "../i18n";
 import { PlayerDialog } from "./PlayerAccount";
 
@@ -8,6 +8,8 @@ export type NoticeHandlers = {
   onExpired?: () => void;
   onRefresh?: () => void;
   retry?: () => void;
+  /** A read the player did not ask for (polling, a reload after an action): run the flow, never open a dialog. */
+  quiet?: boolean;
 };
 
 type Show = (error: unknown, handlers?: NoticeHandlers) => Notice;
@@ -30,8 +32,8 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
         : {
             // Problems found on this device (no location, no network) have no server notice.
             code: "CLIENT",
-            level: "error",
-            display: "dialog",
+            level: error instanceof InlineError ? "warning" : "error",
+            display: error instanceof InlineError ? "inline" : "dialog",
             flow: error instanceof ApiError && error.sessionExpired ? "expired" : "none",
             title: null,
             body: errorText(error),
@@ -40,7 +42,7 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
     if (notice.flow === "expired") handlers.onExpired?.();
     else if (notice.flow === "refresh") handlers.onRefresh?.();
     else if (notice.flow === "signin") window.location.reload();
-    if (notice.display === "dialog") setOpen({ notice, retry: handlers.retry });
+    if (notice.display === "dialog" && !handlers.quiet) setOpen({ notice, retry: handlers.retry });
     return notice;
   }, [errorText, t]);
   const close = () => setOpen(null);

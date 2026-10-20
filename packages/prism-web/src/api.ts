@@ -206,6 +206,9 @@ export type Notice = {
   actions: { kind: "dismiss" | "retry"; label: string }[];
 };
 
+/** A problem found on this device that is part of normal use (no location fix yet): shown inline. */
+export class InlineError extends Error {}
+
 export class ApiError extends Error {
   constructor(
     message: string,

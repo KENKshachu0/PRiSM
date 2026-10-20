@@ -29,12 +29,12 @@ API 由 `packages/server-hono` 提供实现，本文档和服务端路由是客�
 
 - **语言**：按请求头 `Accept-Language` 选中文或英文（第一语言是英文才用英文）。网页按自己的语言设置发送，App Clip 用系统语言。
 - **`message`** 与 `notice.body` 相同，旧客户端原样显示它也能看到正确的提示。服务端原来的措辞（例如核心层的英文诊断）放在 **`reason`**，只给后台员工界面和排查用，玩家端不显示。
-- **`display`**：`dialog` 打断用户，只用于意外且需要玩家读完处理的情况（封号、余额不足、设备连不上、定位失败等）；`inline` 显示在玩家刚操作的地方（投币冷却、请先开机、兑换码无效等正常流程里的结果）；`none` 不显示，只执行 `flow`。
+- **`display`**：`dialog` 打断用户，只用于意外且需要玩家读完处理的情况（封号、余额不足、设备连不上、没有定位权限等）；`inline` 显示在玩家刚操作的地方（投币冷却、请先开机、兑换码无效、定位不准或不在店内、开门密码获取失败等正常流程里的结果）；`none` 不显示，只执行 `flow`。表里没有的错误码：路由写给玩家的中文 4xx 文案原样 `inline` 显示（按规则拒绝了刚才的操作），其余（5xx、开发者文案）换成通用文案并 `dialog`。设备操作的成功响应也可以带 `notices`：投币成功返回 `COIN_SENT`（「已投币」），显示在投币按钮下。
 - **`flow`**：客户端内置的几种后续动作。`expired`：会话失效，回到重新扫码；`refresh`：重新读取页面状态（如需要先入场、先绑定身份）；`signin`：重新登录；`none`：无。
 - **`actions`**：只在 `dialog` 时出现，`dismiss`（关闭）和 `retry`（重试，客户端能重试时才显示）。客户端不认识的动作当作关闭处理。
 - **`level`**：`success` / `info` / `warning` / `error`，决定颜色。
 - 表里没有的错误码：路由自己写的中文文案原样使用；英文开发者文本和服务器内部错误一律显示「操作失败，请稍后重试」，不让内部措辞出现在玩家面前。
-- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_OK` / `CARD_FAILED` / `CARD_NOT_READ` / `CARD_SENT` 和投币结果都是 `inline`，客户端把卡片那一行染成对应颜色；只有投币失败、投币结果未知是 `dialog`。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
+- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_OK` / `CARD_FAILED` / `CARD_NOT_READ` / `CARD_SENT` 和投币结果（含投币失败、未确认）全部是 `inline`：投币是刷卡的附带动作，不打断刷卡。客户端把每条提示按各自的 `level` 着色、用「 · 」拼在卡片那一行的说明文字里，并在行尾显示对应图标；不给整行染色，提示显示期间也不锁定任何操作。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
 - 错误码与状态码由一个共享的处理函数映射（`http-errors.ts`），所有路由一致。封号为 `ACCOUNT_BANNED`，封禁表限制为 `ACCESS_RESTRICTED`，玩家资格停用统一为 403 `PLAYER_DISABLED`。
 
 ## 身份认证 (Authentication)

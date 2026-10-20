@@ -58,17 +58,24 @@ const CATALOG: Record<string, Entry> = {
   PLAYER_DISABLED: { title: t("无法使用", "Not available"), body: t("你在本店的玩家资格已停用，请联系店员", "Your membership at this shop is suspended. Please ask the staff.") },
   PLAYER_NOT_ACTIVE: { title: t("无法使用", "Not available"), body: t("你在本店的玩家资格已停用，请联系店员", "Your membership at this shop is suspended. Please ask the staff.") },
   INSUFFICIENT_BALANCE: { title: t("余额不足", "Insufficient balance"), body: t("余额不足，请充值后再结账，计费会继续", "Not enough balance. Top up and check out again; billing continues."), level: "warning" },
-  CARD_NOT_FOUND: { body: t("卡片不可用或已失效", "This card is not available."), level: "warning" },
   DEVICE_UNAVAILABLE: { body: t("设备连接失败，请联系店员", "Could not reach the device. Please ask the staff."), retry: true },
   DEVICE_DISABLED: { body: t("这台设备已停用", "This device is disabled.") },
   DEVICE_NOT_FOUND: { body: t("没有找到这台设备", "Device not found.") },
   DEVICE_ACTION_UNSUPPORTED: { body: t("设备不支持此操作", "This device cannot do that.") },
   BILLING_DISABLED: { body: t("店铺未启用计费", "This shop does not bill visits.") },
-  CHECKIN_CONSENT_REQUIRED: { body: t("请确认入场计费规则", "Please accept the billing rules first."), level: "warning", display: "inline" },
   LOCATION_REQUIRED: { title: t("需要定位", "Location needed"), body: t("此操作需要获取当前位置，请允许定位", "This needs your location. Please allow location access."), level: "warning", retry: true },
-  LOCATION_LOW_ACCURACY: { title: t("定位不准", "Location not precise"), body: t("定位精度不足，请到开阔处再试", "Your location is not precise enough. Please try again."), level: "warning", retry: true },
-  LOCATION_OUT_OF_RANGE: { title: t("不在店内", "Not at the shop"), body: t("请到店后再操作", "Please do this at the shop."), level: "warning" },
-  LOCATION_STILL_INSIDE: { body: t("请离开店铺定位范围后再结账", "Please leave the shop before checking out."), level: "warning" },
+
+  // Expected in normal use: shown by the control the player touched.
+  DEVICE_POWER_OFF: { body: t("请先开机", "Turn the machine on first."), level: "warning", display: "inline" },
+  COIN_COOLDOWN: { body: t("请稍后再投币", "Please wait before adding another coin."), level: "info", display: "inline" },
+  RATE_LIMITED: { body: t("操作过于频繁，请稍后再试", "Too many attempts. Please wait a moment."), level: "info", display: "inline" },
+  OPERATION_PENDING: { body: t("上一次操作还在处理中", "The last request is still being processed."), level: "info", display: "inline" },
+  OPERATION_IN_PROGRESS: { body: t("上一次操作还在处理中", "The last request is still being processed."), level: "info", display: "inline" },
+  CARD_NOT_FOUND: { body: t("卡片不可用", "Card unavailable."), level: "warning", display: "inline" },
+  CHECKIN_CONSENT_REQUIRED: { body: t("请确认入场计费规则", "Please accept the billing rules first."), level: "warning", display: "inline" },
+  LOCATION_LOW_ACCURACY: { body: t("定位精度不足，请重试", "Location not precise enough. Retry."), level: "warning", display: "inline" },
+  LOCATION_OUT_OF_RANGE: { body: t("不在店铺范围内", "Not within the shop area."), level: "warning", display: "inline" },
+  LOCATION_STILL_INSIDE: { body: t("请离开店铺定位范围后再结账", "Please leave the shop before checking out."), level: "warning", display: "inline" },
   REDEEM_CODE_NOT_FOUND: { body: t("兑换码无效", "This code is not valid."), level: "warning", display: "inline" },
   REDEEM_CODE_EXPIRED: { body: t("兑换码已过期", "This code has expired."), level: "warning", display: "inline" },
   PRESENT_NOT_ACTIVE: { body: t("兑换码已失效", "This code is no longer valid."), level: "warning", display: "inline" },
@@ -77,23 +84,18 @@ const CATALOG: Record<string, Entry> = {
   ACTIVE_SESSION_NOT_FOUND: { body: t("没有进行中的场次", "No visit in progress."), level: "info", display: "inline" },
   SESSION_NOT_ACTIVE: { body: t("这个场次已经结束", "This visit has ended."), level: "info", display: "inline" },
 
-  // Expected in normal use: shown by the control the player touched.
-  DEVICE_POWER_OFF: { body: t("请先开机", "Turn the machine on first."), level: "warning", display: "inline" },
-  COIN_COOLDOWN: { body: t("请稍后再投币", "Please wait before adding another coin."), level: "info", display: "inline" },
-  RATE_LIMITED: { body: t("操作过于频繁，请稍后再试", "Too many attempts. Please wait a moment."), level: "info", display: "inline" },
-  OPERATION_PENDING: { body: t("上一次操作还在处理中", "The last request is still being processed."), level: "info", display: "inline" },
-  OPERATION_IN_PROGRESS: { body: t("上一次操作还在处理中", "The last request is still being processed."), level: "info", display: "inline" },
-
-  // Outcomes of a swipe, sent with a successful response.
+  // Outcomes of a swipe, sent with a successful response and shown on the card
+  // row, one short part each. The coin after a swipe is a side effect: whatever
+  // happens to it, it never interrupts the swipe.
   CARD_OK: { body: t("登录成功", "Signed in"), level: "success", display: "inline" },
   CARD_FAILED: { body: t("登录失败", "Sign-in failed"), level: "error", display: "inline" },
-  CARD_NOT_READ: { body: t("未读卡", "Card not read"), level: "warning", display: "inline" },
+  CARD_NOT_READ: { body: t("未读卡，请在刷卡界面重试", "Card not read. Retry on the card screen."), level: "warning", display: "inline" },
   CARD_SENT: { body: t("已刷卡", "Card sent"), level: "success", display: "inline" },
   COIN_SENT: { body: t("已投币", "Coin added"), level: "success", display: "inline" },
-  COIN_SKIPPED: { body: t("投币冷却中，本次未投币", "Coin cooling down; none added this time."), level: "info", display: "inline" },
-  COIN_FAILED: { title: t("投币失败", "Coin failed"), body: t("刷卡已完成，投币失败，请联系店员", "The card went through but the coin failed. Please ask the staff.") },
-  DOOR_CODE_FAILED: { title: t("开门密码", "Door code"), body: t("已入场，但获取开门密码失败，可以重新获取或联系店员", "You are checked in, but the door code failed. Get it again or ask the staff.") },
-  COIN_UNKNOWN: { title: t("投币结果待确认", "Coin not confirmed"), body: t("投币结果待确认，请检查机台，不要重复刷卡", "The coin was not confirmed. Check the machine before swiping again."), level: "warning" },
+  COIN_SKIPPED: { body: t("投币冷却中", "Coin cooling down"), level: "info", display: "inline" },
+  COIN_FAILED: { body: t("投币失败", "Coin failed"), level: "warning", display: "inline" },
+  COIN_UNKNOWN: { body: t("投币未确认", "Coin not confirmed"), level: "warning", display: "inline" },
+  DOOR_CODE_FAILED: { body: t("开门密码获取失败，请重试", "Could not get the door code. Retry."), level: "warning", display: "inline" },
 };
 
 const GENERIC: Entry = { body: t("操作失败，请稍后重试", "Something went wrong. Please try again."), retry: true };
@@ -133,13 +135,15 @@ export function notice(code: string, locale: Locale): Notice {
 
 /**
  * The notice for an error response. A known code uses the table. Otherwise a
- * message already written for players (Chinese text from a route) is kept,
- * and anything else — a developer message, a server fault — becomes the
- * generic text, so internal wording never reaches a player.
+ * message already written for players (Chinese text from a route) is kept and
+ * shown inline, since a route rejects what the player just tried by rule; a
+ * case that must interrupt goes in the table. Anything else — a developer
+ * message, a server fault — becomes the generic text, so internal wording
+ * never reaches a player.
  */
 export function errorNotice(input: { code: string; message: string; status: number }, locale: Locale): Notice {
   const entry = CATALOG[input.code];
   if (entry) return build(input.code, entry, locale);
-  if (input.status < 500 && CJK.test(input.message)) return build(input.code, { body: t(input.message, input.message) }, locale);
+  if (input.status < 500 && CJK.test(input.message)) return build(input.code, { body: t(input.message, input.message), level: "warning", display: "inline" }, locale);
   return build(input.code, GENERIC, locale);
 }

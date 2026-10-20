@@ -219,7 +219,7 @@ async function handleLogin(c:C,routePublicId?:string) {
     ).bind(JSON.stringify(response),shop.id,user.id,operationId).run();
   }
   touchShopHubAfter(c,shop.id);
-  // What the card row shows (and a dialog only when the coin went wrong).
+  // What the card row shows: the card's outcome, then the coin's.
   const locale=requestLocale(c.req.header("accept-language"));
   const notices=[
     ...(cardResult?[notice({ok:"CARD_OK",failed:"CARD_FAILED",not_read:"CARD_NOT_READ",read:"CARD_SENT",sent:"CARD_SENT"}[cardResult],locale)]:[]),

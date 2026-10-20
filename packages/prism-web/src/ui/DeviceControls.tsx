@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Power, DoorOpen, Coins, Loader2, Check } from "lucide-react";
+import { Power, DoorOpen, Coins, Loader2, Check, CheckCircle2, AlertCircle, XCircle, Info } from "lucide-react";
 import { api, invalidatePlayerReads, playerOperation, type Notice, type PublicMachine } from "../api";
 import { useI18n } from "../i18n";
 import {
@@ -22,6 +22,24 @@ import {
 } from "./BillingPages";
 import { useAuth } from "./AuthContext";
 import { useInlineNotice, useNotice } from "./NoticeProvider";
+
+/** Which control an action's outcome is shown under. */
+function anchorOf(action: string) {
+  if (action === "door.open") return "door";
+  if (action.startsWith("power.")) return "power";
+  if (action.startsWith("mahjong.")) return "mahjong";
+  if (action.startsWith("climate.")) return "climate";
+  return action;
+}
+
+/** A short outcome under a control: a coloured line with its icon. */
+function InlineNoticeLine({ note }: { note: Notice }) {
+  const Icon = note.level === "success" ? CheckCircle2 : note.level === "error" ? XCircle : note.level === "info" ? Info : AlertCircle;
+  return <p className="inline-notice" data-level={note.level} role="status"><Icon size={18} aria-hidden="true" />{note.body}</p>;
+}
+
+const localNote = (body: string, level: Notice["level"] = "warning"): Notice =>
+  ({ code: "CLIENT", level, display: "inline", flow: "none", title: null, body, actions: [] });
 
 type DeviceState = {
   gate: "ready" | "binding" | "entry";
@@ -71,15 +89,22 @@ export function DeviceControls({
   }, [live.watching, live.climate]);
   const showNotice = useNotice();
   const [note, showNote] = useInlineNotice();
-  /** Every problem goes through the shared notice entry; inline ones stay above the controls. */
+  const [noteAnchor, setNoteAnchor] = useState("");
+  const noteAt = (anchor: string) => note && noteAnchor === anchor ? <InlineNoticeLine note={note} /> : null;
+  const showNoteAt = useCallback((anchor: string, next: Notice) => { setNoteAnchor(anchor); showNote(next); }, [showNote]);
+  /**
+   * Every problem goes through the shared notice entry; inline ones are shown under the
+   * control named by `anchor`. A quiet one (a background read) only runs its flow.
+   */
   const failed = useCallback(
-    (e: unknown) => {
-      const notice = showNotice(e, { onExpired, onRefresh: () => invalidatePlayerReads() });
-      if (notice.display === "inline") showNote(notice);
+    (e: unknown, anchor = "page", quiet = false) => {
+      const notice = showNotice(e, { onExpired, onRefresh: () => invalidatePlayerReads(), quiet });
+      if (quiet) return;
+      if (notice.display === "inline") showNoteAt(anchor, notice);
       // Kept so a page that could not load offers its retry button.
       else if (notice.display === "dialog") setError(notice.body);
     },
-    [onExpired, showNotice, showNote],
+    [onExpired, showNotice, showNoteAt],
   );
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const current = await api<DeviceState>(
@@ -95,7 +120,8 @@ export function DeviceControls({
     catch (e) {
       if (!signal.aborted && (!isTransientReadFailure(e) || !state)) {
         refreshError.current = errorText(e instanceof Error ? e.message : "操作失败");
-        failed(e);
+        // Once the page has shown, a failed poll is retried quietly instead of interrupting.
+        failed(e, "page", !!state);
       }
       throw e;
     }
@@ -117,7 +143,7 @@ export function DeviceControls({
       if (current.power === "on") setWaitingPower(false);
       if (current.power === "unknown") throw new TypeError("Power state unavailable");
     } catch (error) {
-      if (!signal.aborted && !isTransientReadFailure(error)) failed(error);
+      if (!signal.aborted && !isTransientReadFailure(error)) failed(error, "power", true);
       throw error;
     }
   }, !!machine.capabilities.power && state?.gate === "ready" && !busy && !cardBusy, ticket,
@@ -131,25 +157,37 @@ export function DeviceControls({
     }
     return () => { cancelled = true; };
   }, [code, state?.gate, info?.shop.billingEnabled, info?.membership?.playerId, setBillingActive]);
+  /**
+   * Runs a player action. The page is read again afterwards in the background, so the
+   * controls come back as soon as the action answers; only entry, which changes what the
+   * page shows, waits for that read. A failed read is not the action's failure.
+   */
   async function act(action: string, fn: () => Promise<void>) {
     if (busy || cardBusy) return;
+    const anchor = anchorOf(action);
     setBusy(action);
+    if (noteAnchor === anchor) showNote(null);
     try {
       await fn();
-      await Promise.all([refresh(), api<ShopInfo>(shopApi(code)).then(setInfo)]);
     } catch (e) {
-      if (
-        e &&
-        typeof e === "object" &&
-        "code" in e &&
-        e.code === "COIN_ALREADY_USED"
-      )
-        await refresh().catch(failed);
-      else failed(e);
-    } finally {
+      failed(e, anchor);
       setBusy("");
+      return;
     }
+    const reread = Promise.all([refresh(), api<ShopInfo>(shopApi(code)).then(setInfo)])
+      .catch((e) => failed(e, "page", true));
+    if (action === "entry" || action === "load") await reread;
+    setBusy("");
   }
+  // The power button spins until the machine reports on; if it never does, it comes back.
+  useEffect(() => {
+    if (!waitingPower) return;
+    const timer = setTimeout(() => {
+      setWaitingPower(false);
+      showNoteAt("power", localNote(t("未检测到开机，请重试")));
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [waitingPower, showNoteAt, t]);
   function climate(action: string, extra?: Record<string, unknown>) {
     return act(action, async () => {
       const location = await operationLocation(!!(machine.shop.locationEnabled ?? machine.shop.machineGeo));
@@ -172,6 +210,7 @@ export function DeviceControls({
       const result = await playerOperation<{
         temporaryPassword?: string;
         expiresAt?: string;
+        notices?: Notice[];
       }>("/api/v1/devices/session/actions", {
         ticket,
         action,
@@ -188,6 +227,8 @@ export function DeviceControls({
         setState((current) =>
           current ? { ...current, coinUsed: true } : current,
         );
+      const done = result.notices?.find((notice) => notice.display === "inline");
+      if (done) showNoteAt(anchorOf(action), done);
     });
   }
   /**
@@ -207,7 +248,8 @@ export function DeviceControls({
       setState((current) => (current ? { ...current, gate: "ready" } : current));
       if (result.door?.temporaryPassword && result.door.expiresAt)
         setPassword({ temporaryPassword: result.door.temporaryPassword, expiresAt: result.door.expiresAt });
-      else showNotice(result.door?.notice ?? new Error("获取开门密码失败，请联系店员"));
+      else if (result.door?.notice?.display === "dialog") showNotice(result.door.notice);
+      else showNoteAt("door", result.door?.notice ?? localNote(t("开门密码获取失败，请重试")));
     });
   }
   const cap = machine.capabilities;
@@ -220,9 +262,7 @@ export function DeviceControls({
   const spinner = <Loader2 size={22} className="animate-spin" />;
   return (
     <div className="device-controls">
-      {note && (
-        <p className="inline-notice" data-level={note.level} role="status">{note.body}</p>
-      )}
+      {noteAt("page")}
       {!state || state.gate === "entry" && !info ? (
         error ? <button className="session-action" onClick={() => act("load", async () => { invalidatePlayerReads(); })}>{t("重试")}</button> : <div className="flex justify-center" role="status" aria-label={t("正在加载")}>{spinner}</div>
       ) : state.gate === "binding" ? (
@@ -267,6 +307,7 @@ export function DeviceControls({
                   {t("确认入场")}
                 </button>
               )}
+              {noteAt("entry")}
             </div>
           )}
           {cap.door && (
@@ -301,6 +342,7 @@ export function DeviceControls({
                       : "获取开门密码",
                 )}
               </button>
+              {noteAt("door")}
             </div>
           )}
           {state.gate === "ready" && cap.climate && (
@@ -311,6 +353,7 @@ export function DeviceControls({
               send={(action, extra) => void climate(action, extra)}
             />
           )}
+          {state.gate === "ready" && cap.climate && noteAt("climate")}
           {state.gate === "ready" &&
             (cap.power && power === "off" ? (
               <div className="grid gap-7 text-center">
@@ -327,6 +370,7 @@ export function DeviceControls({
                   )}{" "}
                   {t("开机")}
                 </button>
+                {noteAt("power")}
               </div>
             ) : (
               <>
@@ -350,6 +394,7 @@ export function DeviceControls({
                         onClick={()=>operate(state.mahjong!.seats.some(s=>s.mine) ? "mahjong.leave" : "mahjong.join")}>
                         {busy.startsWith("mahjong.") && spinner}{t(state.mahjong.seats.some(s=>s.mine) ? "下桌" : "上桌")}
                       </button>}
+                  {noteAt("mahjong")}
                 </section>}
                 {cap.card && (
                   <section>
@@ -375,6 +420,7 @@ export function DeviceControls({
                     {t("投币")}
                   </button>
                 )}
+                {noteAt("coin")}
               </>
             ))}
           {state.gate === "ready" && !hasReadyAction && <p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p>}

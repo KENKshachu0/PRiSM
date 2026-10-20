@@ -84,6 +84,8 @@ export function AccountContent({
   const [assets, setAssets] = useState<Assets | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
+  /** Why a code was not accepted, under the code field; the section itself loaded fine. */
+  const [redeemError, setRedeemError] = useState("");
   const [done, setDone] = useState(false);
   const [redeem, setRedeem] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -128,14 +130,14 @@ export function AccountContent({
   async function submit() {
     if (busy) return;
     setBusy(true);
-    setError("");
+    setRedeemError("");
     try {
       await playerOperation(shopApi(code, "player/redeem"), { code: redeem.trim() });
       setDone(true);
       setPreview(null);
     } catch (e) {
       const notice = showNotice(e);
-      if (notice.display === "inline") setError(notice.body);
+      if (notice.display === "inline") setRedeemError(notice.body);
     } finally {
       setBusy(false);
     }
@@ -155,7 +157,7 @@ export function AccountContent({
               className="ml-3 underline"
               onClick={() => setAttempt((v) => v + 1)}
             >
-              {t("重试")}
+              {t("重新加载")}
             </button>
           </div>
         )}
@@ -196,6 +198,7 @@ export function AccountContent({
                 {busy && <Loader2 className="animate-spin" size={20} />}{" "}
                 {t("兑换")}
               </button>
+              {redeemError && <p role="alert" className="inline-notice" data-level="warning">{redeemError}</p>}
             </form>
           ))}
         {section === "钱包" &&
