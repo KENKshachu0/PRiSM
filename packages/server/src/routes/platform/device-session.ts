@@ -13,6 +13,26 @@ import { mahjongState, operateMahjong } from "./mahjong.js";
 export const deviceSessionRouter=new Hono<AppBindings>();
 export const merchantMachineActionRouter=new Hono<AppBindings>();
 
+/**
+ * Live updates for a device page: the shop hub pushes this device's power and
+ * air-conditioner state as its watcher reports them. Tells the page whether
+ * anything is watching, so it keeps polling when nothing is.
+ */
+deviceSessionRouter.get("/session/ws", async c=>{
+  if(c.req.header("upgrade")?.toLowerCase()!=="websocket")jsonError(426,"需要 WebSocket 连接","UPGRADE_REQUIRED");
+  requireUser(c);
+  const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
+  const shop=await getShopForMachine(c,machine.shop_public_id);
+  const hub=c.env.SHOP_HUB as unknown as {getByName(name:string):{fetch(request:Request):Promise<Response>}}|undefined;
+  if(!hub)jsonError(503,"店铺连接服务尚未配置","SHOP_HUB_UNAVAILABLE");
+  const headers=new Headers(c.req.raw.headers);
+  headers.set("x-prism-hub-shop",shop.id);
+  headers.set("x-prism-hub-device",machine.id);
+  // Only the hub's page channel; the bot channel needs a bot token.
+  headers.delete("authorization");
+  return hub.getByName(shop.id).fetch(new Request(c.req.raw,{headers}));
+});
+
 deviceSessionRouter.get("/session/state", async c=>{
   const user=requireUser(c);
   const machine=await resolveMachineSession(c,c.req.query("ticket")??"");

@@ -164,7 +164,8 @@ export async function readClimate(
   return climateState(entity.state, entity.attributes);
 }
 
-function climateState(state: string, a: Record<string, unknown>): ClimateState {
+/** A climate state from a Home Assistant state and its attributes. */
+export function climateState(state: string, a: Record<string, unknown>): ClimateState {
   return {
     mode: state,
     modes: strings(a.hvac_modes),

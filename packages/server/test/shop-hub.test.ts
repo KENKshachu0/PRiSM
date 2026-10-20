@@ -47,6 +47,7 @@ async function fixture() {
     },
   };
   const state = new Map<string, unknown>();
+  const sockets: any[] = [];
   let alarm: number | null = null;
   const ctx = {
     storage: {
@@ -56,14 +57,15 @@ async function fixture() {
       async setAlarm(at: number) { alarm = at; },
       async deleteAlarm() { alarm = null; },
     },
-    getWebSockets() { return []; },
+    acceptWebSocket(ws: any, tags: string[] = []) { ws.tags = tags; sockets.push(ws); },
+    getWebSockets(tag?: string) { return tag ? sockets.filter((ws) => ws.tags?.includes(tag)) : sockets; },
   };
   const hub = new ShopHub(ctx as any, env as any);
   const power = () =>
     sqlite.query<{ device_id: string; value_json: string; changed_at: string }, []>(
       "SELECT device_id, value_json, changed_at FROM device_state WHERE key='power' ORDER BY device_id",
     ).all();
-  return { hub, watches, reachable, state, power, connectionId: connection.id, alarm: () => alarm };
+  return { hub, watches, reachable, state, power, sockets, connectionId: connection.id, alarm: () => alarm };
 }
 
 const states = (term: number, connection: string, list: Array<[string, string, string]>) => ({
@@ -144,5 +146,44 @@ describe("ShopHub watcher", () => {
     await hub.relayOnline(SHOP, "b", "chan-b");
     expect(watches.filter((entry) => entry.watch).map((entry) => entry.channel)).toEqual(["chan-a", "chan-b"]);
     expect((await hub.watcher())?.machineId).toBe("b");
+  });
+});
+
+describe("ShopHub device pages", () => {
+  class PageSocket {
+    readonly sent: any[] = [];
+    attachment: unknown = null;
+    tags: string[] = [];
+    send(data: string) { this.sent.push(JSON.parse(data)); }
+    close() {}
+    serializeAttachment(value: unknown) { this.attachment = value; }
+    deserializeAttachment() { return this.attachment; }
+  }
+  const open = async (hub: ShopHub, deviceId: string) => {
+    (globalThis as any).WebSocketPair = class { 0 = new PageSocket(); 1 = new PageSocket(); };
+    try {
+      const response = await hub.fetch(new Request("https://prism.test/api/v1/devices/session/ws", {
+        headers: { Upgrade: "websocket", "x-prism-hub-shop": SHOP, "x-prism-hub-device": deviceId },
+      }));
+      expect(response.status).toBe(101);
+    } finally {
+      delete (globalThis as any).WebSocketPair;
+    }
+  };
+
+  it("tells a page nothing is watched, then pushes the device's state once it is", async () => {
+    const { hub, sockets, connectionId } = await fixture();
+    await open(hub, "m1");
+    const page = sockets[0] as PageSocket;
+    expect(page.sent).toEqual([{ type: "hello", watching: false }]);
+    await hub.relayOnline(SHOP, "a", "chan-a");
+    expect(page.sent.at(-1)).toEqual({ type: "watching", watching: true });
+    await hub.haReport(SHOP, "a", states(1, connectionId, [["switch.a", "on", "2026-10-21T09:00:00.000Z"], ["switch.b", "off", "2026-10-21T09:00:00.000Z"]]));
+    // Only its own device.
+    expect(page.sent.filter((frame) => frame.type === "state")).toEqual([{ type: "state", power: "on" }]);
+    await open(hub, "m1");
+    expect((sockets[1] as PageSocket).sent).toEqual([{ type: "hello", watching: true, power: "on" }]);
+    await hub.relayOffline(SHOP, "a");
+    expect(page.sent.at(-1)).toEqual({ type: "watching", watching: false });
   });
 });

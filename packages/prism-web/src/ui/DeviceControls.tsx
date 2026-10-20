@@ -1,4 +1,5 @@
 import { isTransientReadFailure, usePagePolling } from "./use-page-polling";
+import { useDeviceLive } from "./use-device-live";
 import { billTime } from "./bill-time";
 import { PlatformBinding } from "./SessionContent";
 import { PlayerClimate, type ClimateState } from "./ClimateControls";
@@ -56,6 +57,18 @@ export function DeviceControls({
   const [busy, setBusy] = useState("");
   const [waitingPower, setWaitingPower] = useState(false);
   const refreshError = useRef("");
+  // Pushed state while the shop's Home Assistant is watched; polling covers the rest.
+  const live = useDeviceLive(ticket, !!(machine.capabilities.power || machine.capabilities.climate) && state?.gate === "ready");
+  const livePower = live.watching ? live.power : null;
+  useEffect(() => {
+    if (!livePower) return;
+    setPower(livePower);
+    if (livePower === "on") setWaitingPower(false);
+  }, [livePower]);
+  useEffect(() => {
+    if (!live.watching || !live.climate) return;
+    setState((current) => (current ? { ...current, climate: live.climate as ClimateState } : current));
+  }, [live.watching, live.climate]);
   const failed = useCallback(
     (e: unknown) => {
       const code =
@@ -110,7 +123,7 @@ export function DeviceControls({
       throw error;
     }
   }, !!machine.capabilities.power && state?.gate === "ready" && !busy && !cardBusy, ticket,
-    waitingPower || power === "unknown");
+    !livePower && (waitingPower || power === "unknown"));
   useEffect(() => {
     let cancelled = false;
     if (info?.shop.billingEnabled && info.membership) {

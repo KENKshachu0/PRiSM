@@ -276,6 +276,7 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 - **上报**（JSON-RPC 通知，无 `id`）：`ha.status {term, connection, connected, error?}`，订阅建立或断开时、以及每 30 秒一次作为心跳；`ha.states {term, connection, full, states:[{entity_id, state, last_changed, attributes}]}`，第一次是全量，之后只报变化；`last_changed` 是 HA 压缩状态里的 Unix 秒（也接受 ISO 文本），`attributes` 只带平台用到的空调属性。任何上报都给租约续期 90 秒；`term` 不是当前任期、或不是当前那台发的，一律丢弃，所以交接时两台短暂同时上报也无害。`connected: false` 且店里还有别的候选时立即换人。
 - **换人**：那台下线时立即改派；90 秒没有任何上报，Hub 的 alarm 把它排到后面并改派。新那台订阅后先报全量，期间漏掉的变化自动补齐。设备、连接或只读账号变化后，后台接口让 Hub 重新下发（`refresh`）。
 - **记录**：上报的状态存在 Hub 里；有设备用到的实体，电源的开关变化、空调的设定变化（模式、目标温度、风速）通过设备总线的 `report` 写入 `device_state` 并记 `change` 事件，**时间用 HA 的 `last_changed`**，所以在米家或物理按钮开机，也能知道真正的开机时间。
+- **扫码页实时推送**：`GET /api/v1/devices/session/ws?ticket=`（玩家登录态 + 设备二维码会话，WebSocket 升级）连到店铺 Hub。连上先收到 `{"type":"hello","watching":true|false,"power"?,"climate"?}`；之后这台设备的电源变化推 `{"type":"state","power":"on"|"off"}`，空调变化（含室温）推 `{"type":"state","climate":{…同 /session/state 的 climate}}`；有没有机台在盯 HA 变化时推 `{"type":"watching","watching":…}`。网页在有人盯着且已收到电源状态时停掉电源轮询，否则照旧轮询；`/session/state` 和 `/session/power` 两个轮询接口保留，旧版 App Clip 继续使用。
 - **读取**：电源读取先问 Hub。有人在盯、缓存是「开」就直接用；缓存是「关」或没人在盯，照旧现场问 HA——把玩家挡在一台其实开着的机器外面代价更大。空调状态有缓存就直接用。平台刚发出开关机或空调命令后的那一次读取（`observeAfter` 和操作响应）一律现场读，因为 Hub 可能还没收到变化。
 
 ### 闲置自动关机

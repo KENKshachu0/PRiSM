@@ -9,9 +9,12 @@ import type { HaWatch } from "./machine-relay.js";
 import { emptyIdleMemory, runIdleCheck, type IdleMemory, type IdleNotice } from "./shop-hub-idle.js";
 import { parseBotFrame, revokedCredentials, runBotRequest, type BotResponse } from "./shop-hub-bot.js";
 import { app } from "../app.js";
+import { climateState } from "../devices/runtime.js";
 
 /** A shop bot's connection, kept on the socket so it survives hibernation. */
 type BotAttachment = { kind: "bot"; token: string; shopCode: string; reminderLeadMs: number | null };
+/** A player's device page, listening for that device's state. */
+type PageAttachment = { kind: "page"; deviceId: string };
 /** A write a bot sent is answered from here if it arrives again (a resend after a lost reply). */
 const REPLAY_MS = 10 * 60_000;
 
@@ -81,6 +84,8 @@ export class ShopHub extends BaseDurableObject<Env> {
    */
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("Expected Upgrade: websocket", { status: 426 });
+    const pageDevice = request.headers.get("x-prism-hub-device");
+    if (pageDevice) return this.acceptPage(request, pageDevice);
     const shopId = request.headers.get("x-prism-hub-shop");
     const shopCode = request.headers.get("x-prism-hub-shop-code");
     const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
@@ -94,6 +99,60 @@ export class ShopHub extends BaseDurableObject<Env> {
 
   private bots(): WebSocket[] {
     return this.ctx.getWebSockets("bot");
+  }
+
+  /** A device page connecting; the Worker route has checked its user and ticket. */
+  private async acceptPage(request: Request, deviceId: string): Promise<Response> {
+    const shopId = request.headers.get("x-prism-hub-shop");
+    if (!shopId) return new Response("Missing page channel", { status: 400 });
+    await this.shopId(shopId);
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server!, [`page:${deviceId}`]);
+    server!.serializeAttachment({ kind: "page", deviceId } satisfies PageAttachment);
+    server!.send(JSON.stringify({ type: "hello", ...(await this.pageSnapshot(deviceId)) }));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Whether the device's state is being watched, and what it is now if so. */
+  private async pageSnapshot(deviceId: string): Promise<{ watching: boolean; power?: string; climate?: unknown }> {
+    if (!(await this.watcher())) return { watching: false };
+    const states = await this.load<Record<string, WatchedState>>("states", {});
+    const targets = await this.load<Targets>("targets", {});
+    const snapshot: { watching: boolean; power?: string; climate?: unknown } = { watching: true };
+    for (const [key, list] of Object.entries(targets)) {
+      const target = list.find((item) => item.deviceId === deviceId);
+      const state = states[key];
+      if (!target || !state) continue;
+      if (target.capability === "power" && (state.state === "on" || state.state === "off")) snapshot.power = state.state;
+      if (target.capability === "climate" && state.state !== "unavailable" && state.state !== "unknown")
+        snapshot.climate = climateState(state.state, state.attributes);
+    }
+    return snapshot;
+  }
+
+  private toPages(deviceId: string, frame: Record<string, unknown>) {
+    const encoded = JSON.stringify(frame);
+    for (const ws of this.ctx.getWebSockets(`page:${deviceId}`)) {
+      try {
+        ws.send(encoded);
+      } catch {
+        // A page that left is reaped by the runtime.
+      }
+    }
+  }
+
+  /** Tell every open page whether state is being watched, so they poll when not. */
+  private async announceWatching() {
+    const watching = !!(await this.watcher());
+    const frame = JSON.stringify({ type: "watching", watching });
+    for (const ws of this.ctx.getWebSockets()) {
+      if ((ws.deserializeAttachment() as PageAttachment | null)?.kind !== "page") continue;
+      try {
+        ws.send(frame);
+      } catch {
+        // Gone.
+      }
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -333,6 +392,7 @@ export class ShopHub extends BaseDurableObject<Env> {
     }
     await this.ctx.storage.delete("leader");
     await this.schedule();
+    await this.announceWatching();
   }
 
   /** Send the watch to one IO under a new term. False when it could not be told. */
@@ -366,6 +426,7 @@ export class ShopHub extends BaseDurableObject<Env> {
     // The IO has one lease period to report; its first report is the full state.
     await this.ctx.storage.put<Leader>("leader", { machineId, channel, term, leaseUntil: Date.now() + LEASE_MS });
     await this.schedule();
+    await this.announceWatching();
     return true;
   }
 
@@ -422,11 +483,14 @@ export class ShopHub extends BaseDurableObject<Env> {
         try {
           if (target.capability === "power") {
             if ((next.state === "on" || next.state === "off") && previous?.state !== next.state) {
+              this.toPages(target.deviceId, { type: "state", power: next.state });
               await bus.report({ device: { id: target.deviceId }, capability: "power", key: "power", value: next.state, at });
               // Switched on starts an idle countdown; switched off may end one.
               if (previous) await this.touch(shopId);
             }
           } else if (next.state !== "unavailable" && next.state !== "unknown") {
+            // Pages show room temperature too, so they get every change.
+            this.toPages(target.deviceId, { type: "state", climate: climateState(next.state, next.attributes) });
             const setting = climateSetting(next);
             if (!previous || JSON.stringify(climateSetting(previous)) !== JSON.stringify(setting))
               await bus.report({ device: { id: target.deviceId }, capability: "climate", key: "climate", value: setting, at });
