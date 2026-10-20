@@ -1,3 +1,4 @@
+import { errorResponse } from "../http-errors.js";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { PrismDomainError } from "@prism/core";
@@ -16,45 +17,7 @@ import { createLegacyRpcRouter } from "./rpc-fallback.js";
 export const legacyRouter = new Hono<AppBindings>();
 
 // Centralized error mapping for domain and HTTP exceptions
-legacyRouter.onError((err, c) => {
-  if (err instanceof HTTPException) {
-    return err.getResponse();
-  }
-  if (err instanceof PrismDomainError) {
-    const status =
-      err.code === "CHECKOUT_NOT_FOUND" ||
-      err.code === "SESSION_NOT_FOUND" ||
-      err.code === "PLAYER_NOT_FOUND" ||
-      err.code === "PLAYER_IDENTITY_NOT_FOUND" ||
-      err.code === "PRICING_CONFIG_NOT_FOUND" ||
-      err.code === "INTEGRATION_SESSION_NOT_FOUND"
-        ? 404
-        : err.code === "INSUFFICIENT_BALANCE" ||
-          err.code === "CHECKIN_CONSENT_REQUIRED" ||
-          err.code === "PRISM_ALREADY_INSTALLED"
-        ? 409
-        : 400;
-    return c.json(
-      {
-        error: {
-          code: err.code,
-          message: err.message,
-        },
-      },
-      status as any,
-    );
-  }
-  console.error("[legacyRouter] unhandled error:", err);
-  return c.json(
-    {
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "An unexpected error occurred.",
-      },
-    },
-    500,
-  );
-});
+legacyRouter.onError((err, c) => errorResponse(c, err, "legacyRouter"));
 
 // Middleware stack for all legacy endpoints
 legacyRouter.use("*", attachUser);

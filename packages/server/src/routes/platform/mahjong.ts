@@ -47,7 +47,7 @@ async function staffTargetPlayer(c: C, shopId: string, playerId: string) {
   ).bind(shopId, playerId).first<{id:string;status:string}>();
   if (!player) jsonError(404, "没有找到这个玩家", "PLAYER_NOT_FOUND");
   if (player.status !== "active")
-    jsonError(409, "该玩家已停用", "PLAYER_DISABLED");
+    jsonError(403, "店铺玩家资格已停用", "PLAYER_DISABLED");
   return player;
 }
 

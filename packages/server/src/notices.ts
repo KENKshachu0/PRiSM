@@ -1,0 +1,145 @@
+/**
+ * What a player is told, and how. One table keyed by error or outcome code, so
+ * the wording, its language and whether it interrupts are decided here rather
+ * than in each client: a new case needs a server change, not an App Clip review.
+ *
+ * `display` is the important choice:
+ * - `dialog` interrupts. Only for things that went wrong unexpectedly and need
+ *   the player to read and act (an iOS alert cannot be dismissed by tapping
+ *   outside it, so this must be rare).
+ * - `inline` is shown where the player just acted, such as the card row they
+ *   tapped. Normal outcomes of a normal flow belong here.
+ * - `none` shows nothing; the client only runs `flow`.
+ *
+ * `flow` names one of a few behaviours every client has built in.
+ */
+export type NoticeLevel = "success" | "info" | "warning" | "error";
+export type NoticeDisplay = "dialog" | "inline" | "none";
+/** expired: the QR session is gone, scan again. refresh: reload the page state. signin: sign in again. */
+export type NoticeFlow = "none" | "expired" | "refresh" | "signin";
+export type NoticeAction = { kind: "dismiss" | "retry"; label: string };
+
+export type Notice = {
+  code: string;
+  level: NoticeLevel;
+  display: NoticeDisplay;
+  flow: NoticeFlow;
+  title: string | null;
+  body: string;
+  actions: NoticeAction[];
+};
+
+export type Locale = "zh" | "en";
+
+type Text = { zh: string; en: string };
+type Entry = {
+  body: Text;
+  title?: Text;
+  level?: NoticeLevel;
+  display?: NoticeDisplay;
+  flow?: NoticeFlow;
+  /** Offer a retry; a client without a way to retry shows only the dismiss button. */
+  retry?: boolean;
+};
+
+const t = (zh: string, en: string): Text => ({ zh, en });
+
+const CATALOG: Record<string, Entry> = {
+  // The page itself moves on; nothing to read.
+  TICKET_EXPIRED: { body: t("本次会话已失效，请重新扫码", "This session has ended. Please scan again."), display: "none", flow: "expired" },
+  PLATFORM_BINDING_REQUIRED: { body: t("请先绑定平台身份", "Please link your platform account first."), display: "none", flow: "refresh" },
+  CHECKIN_REQUIRED: { body: t("请先确认入场", "Please check in first."), display: "none", flow: "refresh" },
+  AUTHENTICATION_REQUIRED: { body: t("请先登录", "Please sign in."), display: "none", flow: "signin" },
+  UNAUTHORIZED: { body: t("请先登录", "Please sign in."), display: "none", flow: "signin" },
+
+  // Unexpected and needs reading.
+  ACCOUNT_BANNED: { title: t("账号已停用", "Account suspended"), body: t("这个账号暂时无法使用，如有疑问请联系店员", "This account cannot be used for now. Please ask the staff.") },
+  ACCESS_RESTRICTED: { body: t("当前无法进行此操作，如有疑问请联系店员", "This cannot be done right now. Please ask the staff.") },
+  PLAYER_DISABLED: { title: t("无法使用", "Not available"), body: t("你在本店的玩家资格已停用，请联系店员", "Your membership at this shop is suspended. Please ask the staff.") },
+  PLAYER_NOT_ACTIVE: { title: t("无法使用", "Not available"), body: t("你在本店的玩家资格已停用，请联系店员", "Your membership at this shop is suspended. Please ask the staff.") },
+  INSUFFICIENT_BALANCE: { title: t("余额不足", "Insufficient balance"), body: t("余额不足，请充值后再结账，计费会继续", "Not enough balance. Top up and check out again; billing continues."), level: "warning" },
+  CARD_NOT_FOUND: { body: t("卡片不可用或已失效", "This card is not available."), level: "warning" },
+  DEVICE_UNAVAILABLE: { body: t("设备连接失败，请联系店员", "Could not reach the device. Please ask the staff."), retry: true },
+  DEVICE_DISABLED: { body: t("这台设备已停用", "This device is disabled.") },
+  DEVICE_NOT_FOUND: { body: t("没有找到这台设备", "Device not found.") },
+  DEVICE_ACTION_UNSUPPORTED: { body: t("设备不支持此操作", "This device cannot do that.") },
+  BILLING_DISABLED: { body: t("店铺未启用计费", "This shop does not bill visits.") },
+  CHECKIN_CONSENT_REQUIRED: { body: t("请确认入场计费规则", "Please accept the billing rules first."), level: "warning", display: "inline" },
+  LOCATION_REQUIRED: { title: t("需要定位", "Location needed"), body: t("此操作需要获取当前位置，请允许定位", "This needs your location. Please allow location access."), level: "warning", retry: true },
+  LOCATION_LOW_ACCURACY: { title: t("定位不准", "Location not precise"), body: t("定位精度不足，请到开阔处再试", "Your location is not precise enough. Please try again."), level: "warning", retry: true },
+  LOCATION_OUT_OF_RANGE: { title: t("不在店内", "Not at the shop"), body: t("请到店后再操作", "Please do this at the shop."), level: "warning" },
+  LOCATION_STILL_INSIDE: { body: t("请离开店铺定位范围后再结账", "Please leave the shop before checking out."), level: "warning" },
+  REDEEM_CODE_NOT_FOUND: { body: t("兑换码无效", "This code is not valid."), level: "warning", display: "inline" },
+  REDEEM_CODE_EXPIRED: { body: t("兑换码已过期", "This code has expired."), level: "warning", display: "inline" },
+  PRESENT_NOT_ACTIVE: { body: t("兑换码已失效", "This code is no longer valid."), level: "warning", display: "inline" },
+  PRESENT_EXPIRED: { body: t("兑换码已过期", "This code has expired."), level: "warning", display: "inline" },
+  PLAYER_HAS_NO_UNSETTLED_SESSIONS: { body: t("没有需要结账的场次", "Nothing to check out."), level: "info", display: "inline" },
+  ACTIVE_SESSION_NOT_FOUND: { body: t("没有进行中的场次", "No visit in progress."), level: "info", display: "inline" },
+  SESSION_NOT_ACTIVE: { body: t("这个场次已经结束", "This visit has ended."), level: "info", display: "inline" },
+
+  // Expected in normal use: shown by the control the player touched.
+  DEVICE_POWER_OFF: { body: t("请先开机", "Turn the machine on first."), level: "warning", display: "inline" },
+  COIN_COOLDOWN: { body: t("请稍后再投币", "Please wait before adding another coin."), level: "info", display: "inline" },
+  RATE_LIMITED: { body: t("操作过于频繁，请稍后再试", "Too many attempts. Please wait a moment."), level: "info", display: "inline" },
+  OPERATION_PENDING: { body: t("上一次操作还在处理中", "The last request is still being processed."), level: "info", display: "inline" },
+  OPERATION_IN_PROGRESS: { body: t("上一次操作还在处理中", "The last request is still being processed."), level: "info", display: "inline" },
+
+  // Outcomes of a swipe, sent with a successful response.
+  CARD_OK: { body: t("登录成功", "Signed in"), level: "success", display: "inline" },
+  CARD_FAILED: { body: t("登录失败", "Sign-in failed"), level: "error", display: "inline" },
+  CARD_NOT_READ: { body: t("未读卡", "Card not read"), level: "warning", display: "inline" },
+  CARD_SENT: { body: t("已刷卡", "Card sent"), level: "success", display: "inline" },
+  COIN_SENT: { body: t("已投币", "Coin added"), level: "success", display: "inline" },
+  COIN_SKIPPED: { body: t("投币冷却中，本次未投币", "Coin cooling down; none added this time."), level: "info", display: "inline" },
+  COIN_FAILED: { title: t("投币失败", "Coin failed"), body: t("刷卡已完成，投币失败，请联系店员", "The card went through but the coin failed. Please ask the staff.") },
+  DOOR_CODE_FAILED: { title: t("开门密码", "Door code"), body: t("已入场，但获取开门密码失败，可以重新获取或联系店员", "You are checked in, but the door code failed. Get it again or ask the staff.") },
+  COIN_UNKNOWN: { title: t("投币结果待确认", "Coin not confirmed"), body: t("投币结果待确认，请检查机台，不要重复刷卡", "The coin was not confirmed. Check the machine before swiping again."), level: "warning" },
+};
+
+const GENERIC: Entry = { body: t("操作失败，请稍后重试", "Something went wrong. Please try again."), retry: true };
+const DISMISS: Text = t("知道了", "OK");
+const RETRY: Text = t("重试", "Retry");
+const CJK = /[\u3400-\u9fff]/;
+
+/** The player's language from `Accept-Language`; Chinese unless English comes first. */
+export function requestLocale(header: string | null | undefined): Locale {
+  const first = (header ?? "").split(",")[0]?.trim().toLowerCase() ?? "";
+  return first.startsWith("en") ? "en" : "zh";
+}
+
+export function hasNotice(code: string): boolean {
+  return Object.hasOwn(CATALOG, code);
+}
+
+function build(code: string, entry: Entry, locale: Locale, body?: string): Notice {
+  const display = entry.display ?? "dialog";
+  return {
+    code,
+    level: entry.level ?? "error",
+    display,
+    flow: entry.flow ?? "none",
+    title: entry.title?.[locale] ?? null,
+    body: body ?? entry.body[locale],
+    actions: display === "dialog"
+      ? [{ kind: "dismiss", label: DISMISS[locale] }, ...(entry.retry ? [{ kind: "retry" as const, label: RETRY[locale] }] : [])]
+      : [],
+  };
+}
+
+/** A notice for a known code, e.g. a swipe outcome. */
+export function notice(code: string, locale: Locale): Notice {
+  return build(code, CATALOG[code] ?? GENERIC, locale);
+}
+
+/**
+ * The notice for an error response. A known code uses the table. Otherwise a
+ * message already written for players (Chinese text from a route) is kept,
+ * and anything else — a developer message, a server fault — becomes the
+ * generic text, so internal wording never reaches a player.
+ */
+export function errorNotice(input: { code: string; message: string; status: number }, locale: Locale): Notice {
+  const entry = CATALOG[input.code];
+  if (entry) return build(input.code, entry, locale);
+  if (input.status < 500 && CJK.test(input.message)) return build(input.code, { body: t(input.message, input.message) }, locale);
+  return build(input.code, GENERIC, locale);
+}

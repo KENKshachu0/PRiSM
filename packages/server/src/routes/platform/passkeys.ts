@@ -264,7 +264,7 @@ passkeysRouter.post("/", async (c) => {
     .bind(userId)
     .first<{ banned_at: string | null }>();
   if (!user || user.banned_at) {
-    jsonError(403, "这个账号暂时无法使用", "FORBIDDEN");
+    jsonError(403, "这个账号暂时无法使用", "ACCOUNT_BANNED");
   }
   await createSession(c, userId);
   return c.json({ ok: true });

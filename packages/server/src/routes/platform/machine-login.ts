@@ -6,6 +6,7 @@ import type { AppBindings, TenantShop } from "../../bindings.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
 import type { CardLoginResult } from "../../durable-objects/machine-relay.js";
 import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
+import { notice, requestLocale } from "../../notices.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { createRuntimeBus, readPower } from "../../devices/runtime.js";
 import { clientIp, jsonError, nowIso } from "../../http.js";
@@ -42,7 +43,7 @@ export async function assertNotBanned(c: C, entries: Array<[string, string]>) {
     const found = await c.env.DB.prepare(
       "SELECT id FROM bans WHERE subject_type=? AND subject_value=? AND (expires_at IS NULL OR expires_at>?)",
     ).bind(subjectType,subjectValue,nowIso()).first();
-    if (found) jsonError(403,"当前无法进行此操作","FORBIDDEN");
+    if (found) jsonError(403,"当前无法进行此操作","ACCESS_RESTRICTED");
   }
 }
 
@@ -218,7 +219,16 @@ async function handleLogin(c:C,routePublicId?:string) {
     ).bind(JSON.stringify(response),shop.id,user.id,operationId).run();
   }
   touchShopHubAfter(c,shop.id);
-  return c.json({ok:true,...response});
+  // What the card row shows (and a dialog only when the coin went wrong).
+  const locale=requestLocale(c.req.header("accept-language"));
+  const notices=[
+    ...(cardResult?[notice({ok:"CARD_OK",failed:"CARD_FAILED",not_read:"CARD_NOT_READ",read:"CARD_SENT",sent:"CARD_SENT"}[cardResult],locale)]:[]),
+    ...(response.coin?.status==="sent"?[notice("COIN_SENT",locale)]
+      :response.coin?.status==="skipped"&&response.coin.reason==="COIN_COOLDOWN"?[notice("COIN_SKIPPED",locale)]
+      :response.coin?.status==="failed"?[notice("COIN_FAILED",locale)]
+      :response.coin?.status==="unknown"?[notice("COIN_UNKNOWN",locale)]:[]),
+  ];
+  return c.json({ok:true,...response,notices});
 }
 
 machineLoginRouter.post("/login",c=>handleLogin(c));

@@ -1,3 +1,4 @@
+import { errorResponse } from "../../http-errors.js";
 import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -199,43 +200,7 @@ shopRouter.use("*", async (c, next) => {
 
 
 // Centralized error mapping for direct domain errors
-shopRouter.onError((err, c) => {
-  if (err instanceof HTTPException) {
-    return err.getResponse();
-  }
-  if (err instanceof PrismDomainError) {
-    const status =
-      err.code === "CHECKOUT_NOT_FOUND" ||
-      err.code === "SESSION_NOT_FOUND" ||
-      err.code === "PLAYER_NOT_FOUND" ||
-      err.code === "PLAYER_IDENTITY_NOT_FOUND" ||
-      err.code === "PRICING_CONFIG_NOT_FOUND"
-        ? 404
-        : err.code === "INSUFFICIENT_BALANCE" ||
-          err.code === "CHECKIN_CONSENT_REQUIRED"
-        ? 409
-        : 400;
-    return c.json(
-      {
-        error: {
-          code: err.code,
-          message: err.message,
-        },
-      },
-      status as any,
-    );
-  }
-  console.error("[shopRouter] unhandled error:", err);
-  return c.json(
-    {
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "An unexpected error occurred.",
-      },
-    },
-    500,
-  );
-});
+shopRouter.onError((err, c) => errorResponse(c, err, "shopRouter"));
 
 // Mount modular sub-routers
 shopRouter.route("/player", playerRouter);

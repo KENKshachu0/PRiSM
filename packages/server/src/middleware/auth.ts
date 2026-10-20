@@ -65,7 +65,7 @@ export const attachUser: MiddlewareHandler<AppBindings> = async (c, next) => {
 export function requireUser(c: Context<AppBindings>): AuthUser {
   const user = c.get("user");
   if (!user) jsonError(401, "请先登录", "AUTHENTICATION_REQUIRED");
-  if (user.bannedAt) jsonError(403, "这个账号暂时无法使用", "FORBIDDEN");
+  if (user.bannedAt) jsonError(403, "这个账号暂时无法使用", "ACCOUNT_BANNED");
   return user;
 }
 

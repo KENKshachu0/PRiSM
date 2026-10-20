@@ -1,3 +1,4 @@
+import { errorResponse } from "./http-errors.js";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -38,65 +39,7 @@ export function createApp(): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
 
   // Centralized error handler
-  app.onError((err, c) => {
-    if (err instanceof Response) {
-      return err;
-    }
-    if (err instanceof HTTPException) {
-      return err.getResponse();
-    }
-    if (err instanceof PrismDomainError) {
-      const status =
-        err.code === "CHECKOUT_NOT_FOUND" ||
-        err.code === "SESSION_NOT_FOUND" ||
-        err.code === "PLAYER_NOT_FOUND" ||
-        err.code === "PLAYER_IDENTITY_NOT_FOUND" ||
-        err.code === "PRICING_CONFIG_NOT_FOUND" ||
-        err.code === "INTEGRATION_SESSION_NOT_FOUND" ||
-        err.code === "SHOP_NOT_FOUND"
-          ? 404
-          : err.code === "UNAUTHORIZED"
-          ? 401
-          : err.code === "FORBIDDEN"
-          ? 403
-          : err.code === "INSUFFICIENT_BALANCE" ||
-            err.code === "CHECKIN_CONSENT_REQUIRED" ||
-            err.code === "PRISM_ALREADY_INSTALLED"
-          ? 409
-          : 400;
-      return c.json(
-        {
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        },
-        status as any,
-      );
-    }
-    if (err instanceof z.ZodError) {
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION_FAILED",
-            message: err.issues?.[0]?.message || "Validation failed",
-            details: err.issues,
-          },
-        },
-        422,
-      );
-    }
-    console.error("[app] unhandled error:", err);
-    return c.json(
-      {
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "An unexpected error occurred.",
-        },
-      },
-      500,
-    );
-  });
+  app.onError((err, c) => errorResponse(c, err, "app"));
 
   // Preserve original universal-link and Android-app-link association endpoints.
   app.get("/.well-known/apple-app-site-association", (c) => {

@@ -149,6 +149,10 @@ describe("direct-connect card login result",()=>{
     const {res,reply,cards,presses}=await embedded("ok");
     expect(res.status).toBe(200);
     expect(reply.card).toBe("ok");
+    // The row shows both outcomes; neither interrupts.
+    expect((reply as any).notices.map((n:any)=>[n.code,n.display,n.body])).toEqual([
+      ["CARD_OK","inline","登录成功"],["COIN_SENT","inline","已投币"],
+    ]);
     expect(cards[0]?.wait).toEqual({readMs:4500,resultMs:15_000});
     // Coins follow a confirmed sign-in.
     expect(reply.coin?.status).toBe("sent");

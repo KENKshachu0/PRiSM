@@ -12,6 +12,7 @@ import { getShop, getShopDeps } from "../../middleware/tenant.js";
 import { checkShopLocation } from "../../middleware/geo.js";
 import { can, loadDevice, type Device } from "../../devices/device.js";
 import { createRuntimeBus } from "../../devices/runtime.js";
+import { notice, requestLocale } from "../../notices.js";
 import { resolveMachineSession } from "../platform/machine-session.js";
 import { runPlayerOperation } from "./player-operation.js";
 import {
@@ -284,7 +285,10 @@ playerRouter.post("/session/start", async (c) => {
     if (opening) {
       result.door = code.status === "fulfilled" && code.value
         ? code.value
-        : { error: { code: "DEVICE_UNAVAILABLE", message: "获取开门密码失败，请联系店员" } };
+        : {
+            error: { code: "DEVICE_UNAVAILABLE", message: "获取开门密码失败，请联系店员" },
+            notice: notice("DOOR_CODE_FAILED", requestLocale(c.req.header("accept-language"))),
+          };
     }
     return c.json(result);
   });

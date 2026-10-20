@@ -1,3 +1,4 @@
+import { errorNotice, requestLocale, type Locale } from "../notices.js";
 import type { MiddlewareHandler } from "hono";
 import {
   formatOffsetTimestamp,
@@ -104,6 +105,7 @@ export function apiErrorCode(status: number): string {
 export async function wrapApiResponse(
   response: Response,
   timeZone?: string | (() => Promise<string>),
+  locale: Locale = "zh",
 ): Promise<Response> {
   if (response.status === 204 || response.status === 304) return response;
   // Downloadable JSON is a storage artifact: keep its bytes, UTC clocks and root shape intact.
@@ -146,23 +148,31 @@ export async function wrapApiResponse(
         : null;
     const structured =
       error && typeof error === "object" ? (error as Partial<ApiError>) : null;
+    const code =
+      typeof structured?.code === "string"
+        ? structured.code
+        : apiErrorCode(response.status);
+    const reason =
+      typeof structured?.message === "string"
+        ? structured.message
+        : typeof error === "string"
+          ? error
+          : response.statusText || "Request failed";
+    // What the player reads, and how, comes from one table; `message` carries
+    // the same text so clients that predate `notice` show it too. The original
+    // wording stays in `reason` for staff tools and logs.
+    const shown = errorNotice({ code, message: reason, status: response.status }, locale);
     body = {
       error: {
-        code:
-          typeof structured?.code === "string"
-            ? structured.code
-            : apiErrorCode(response.status),
-        message:
-          typeof structured?.message === "string"
-            ? structured.message
-            : typeof error === "string"
-              ? error
-              : response.statusText || "Request failed",
+        code,
+        message: shown.body,
+        notice: shown,
+        ...(reason !== shown.body ? { reason } : {}),
         ...(structured?.details !== undefined
           ? { details: structured.details }
           : {}),
       },
-    };
+    } as ApiResponse<unknown>;
   }
   return Response.json(body, { status: response.status, headers });
 }
@@ -192,5 +202,5 @@ export const responseTimeMiddleware: MiddlewareHandler<AppBindings> = async (
 ) => {
   await next();
   const zone = c.get("responseTimeZone") || c.get("shop")?.time_zone || "UTC";
-  c.res = await wrapApiResponse(c.res, zone);
+  c.res = await wrapApiResponse(c.res, zone, requestLocale(c.req.header("accept-language")));
 };
