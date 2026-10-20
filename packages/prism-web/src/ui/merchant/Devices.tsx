@@ -715,7 +715,6 @@ function DeviceActions({
                   disabled={!device.enabled}
                   send={(action, extra) => void send(action, extra)}
                   powerClass={`${button} min-h-11 justify-self-start`}
-                  showSummary={false}
                 />
               )}
               {id === "hinata_io" && actionNames.includes("aime.scan") && (

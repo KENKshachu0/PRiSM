@@ -158,7 +158,8 @@ await client.requestScanByIdentity(
 
 - 动作对应 Home Assistant 的 `climate/turn_on`、`turn_off`、`set_hvac_mode`（`mode`）、`set_temperature`（`temperature`）、`set_fan_mode`（`fanMode`）。可选的模式、风速、温度范围和步长不写死，每次从实体的 `hvac_modes`、`fan_modes`、`min_temp`、`max_temp`、`target_temp_step` 读取；实体不接受的值由 Home Assistant 拒绝，操作记为失败。
 - 状态读取：`GET /api/v1/merchant/machines/:id/state` 与玩家页 `GET /api/v1/devices/session/state` 都返回 `climate`（`{ mode, modes, temperature, currentTemperature, minTemperature, maxTemperature, temperatureStep, fanMode, fanModes }`，读不到为 `null`）。只把**设定**（模式、目标温度、风速）记为 `change` 事件；室温会自己漂移，记下来每次读取都会多一条。
-- 玩家扫码后能做全部空调操作（含关空调）；计费店铺要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。
+- 玩家扫码后能做全部空调操作（含关空调）；计费店铺要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。开启位置校验后，每个空调动作都和机台操作一样要求在店内（`checkShopLocation(…, "machine")`），后台店员操作不校验。
+- 玩家页是独立的空调卡片（`PlayerClimate`）：关着时只有「开空调」；开着时中间是大号设定温度和 −/+，下面是带图标的模式分段和风速分段，卡片颜色随模式变化（制冷蓝、制热橙等）。选择立即显示，Home Assistant 回报后以实际状态为准，6 秒内未回报则回到实际状态；连续按 −/+ 会在停下 0.7 秒后合并成一次 `climate.set_temperature`，避免每一步都重新定位、都调用一次 Home Assistant。后台操作面板沿用同一套逻辑，样式更紧凑。
 - **「全部开/关机」（`target.ref: "all"` 的 `power.on/off`）同时开/关所有空调**，每台空调记一条 `climate.on/off` 操作，与电源操作共用一个父操作 ID。Bot 的 `off all` 与 Koishi 的无人自动关机都走这条路径，因此也会关空调。
 - 保存设备时 `climate: { url, entityId, token? }`，实体必须是 `climate.*`；令牌留空时沿用已有的空调令牌，或在地址与电源相同时沿用电源的令牌。
 

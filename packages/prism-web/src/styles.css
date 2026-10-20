@@ -921,22 +921,153 @@ button.credential-row:not(:disabled):active {
   outline: 3px solid var(--color-mint);
   outline-offset: 2px;
 }
-.device-controls .climate-chip {
-  min-height: 48px;
-  min-width: 48px;
-  padding: 0 18px;
-  font-size: 16px;
+/* The player's air conditioner card. The running mode tints it. */
+.player-climate {
+  --climate-accent: var(--color-mint);
+  display: grid;
+  gap: 22px;
+  padding: 22px;
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--climate-accent) 7%, var(--color-panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--climate-accent) 14%, transparent);
+  transition: background-color 240ms ease, box-shadow 240ms ease;
 }
-.device-controls .climate-temperature {
-  justify-content: center;
+.player-climate[data-mode="off"] {
+  --climate-accent: rgb(var(--color-ink) / 0.5);
+  background: color-mix(in srgb, rgb(var(--color-ink)) 4%, var(--color-panel));
+  box-shadow: inset 0 0 0 1px rgb(var(--color-ink) / 0.06);
 }
-.device-controls .climate-temperature output {
+.player-climate[data-mode="heat"] { --climate-accent: #e8702a; }
+.player-climate[data-mode="dry"] { --climate-accent: #1a9a8a; }
+.player-climate[data-mode="fan_only"] { --climate-accent: #5f7488; }
+.player-climate[data-mode="auto"],
+.player-climate[data-mode="heat_cool"] { --climate-accent: #7a5ad6; }
+.player-climate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.player-climate-head h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-align: left;
+}
+.player-climate-head p {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  color: rgb(var(--color-ink) / 0.6);
+}
+.player-climate-off {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgb(var(--color-ink) / 0.07);
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.player-climate-power {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.player-climate-temp {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 12px;
+}
+.player-climate-temp > button {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: var(--color-panel);
+  color: var(--climate-accent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), inset 0 0 0 1px rgb(var(--color-ink) / 0.06);
+  transition: transform 120ms ease;
+}
+.player-climate-temp > button:not(:disabled):active { transform: scale(0.92); }
+.player-climate-temp > button:disabled { opacity: 0.35; cursor: not-allowed; }
+.player-climate-temp > div {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+.player-climate-temp output {
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 300;
+  letter-spacing: -2px;
+  font-variant-numeric: tabular-nums;
+  color: var(--climate-accent);
+}
+.player-climate-temp output span {
   font-size: 32px;
+  vertical-align: top;
+  margin-left: 2px;
 }
-.device-controls .climate-options {
-  justify-content: center;
+.player-climate-temp small {
+  font-size: 0.8125rem;
+  color: rgb(var(--color-ink) / 0.55);
 }
-.device-controls .climate-label {
-  text-align: center;
-  font-size: 13px;
+.player-climate-group {
+  display: grid;
+  gap: 8px;
+}
+.player-climate-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: rgb(var(--color-ink) / 0.55);
+}
+.player-climate-segments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 18px;
+  background: rgb(var(--color-ink) / 0.06);
+}
+.player-climate-segments button {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  min-height: 60px;
+  padding: 6px 4px;
+  border-radius: 14px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: rgb(var(--color-ink) / 0.7);
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+.player-climate-segments.is-text button {
+  min-height: 44px;
+  font-size: 0.9375rem;
+}
+.player-climate-segments button[aria-pressed="true"] {
+  background: var(--color-panel);
+  color: var(--climate-accent);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+}
+.player-climate-segments button:disabled { cursor: not-allowed; }
+.player-climate-segments button:disabled:not([aria-pressed="true"]) { opacity: 0.55; }
+@media (max-width: 360px) {
+  .player-climate { padding: 18px 14px; gap: 18px; }
+  .player-climate-temp { grid-template-columns: 48px minmax(0, 1fr) 48px; }
+  .player-climate-temp > button { width: 48px; height: 48px; }
+  .player-climate-temp output { font-size: 56px; }
+  .player-climate-segments { padding: 3px; gap: 2px; }
+  .player-climate-segments button { font-size: 0.75rem; padding: 6px 2px; }
+}
+.player-climate :is(button):focus-visible {
+  outline: 3px solid var(--climate-accent);
+  outline-offset: 2px;
 }

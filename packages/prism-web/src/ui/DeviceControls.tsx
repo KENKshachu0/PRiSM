@@ -1,7 +1,7 @@
 import { isTransientReadFailure, usePagePolling } from "./use-page-polling";
 import { billTime } from "./bill-time";
 import { PlatformBinding } from "./SessionContent";
-import { ClimateControls, type ClimateState } from "./ClimateControls";
+import { PlayerClimate, type ClimateState } from "./ClimateControls";
 import {
   useCallback,
   useEffect,
@@ -274,16 +274,12 @@ export function DeviceControls({
             </div>
           )}
           {state.gate === "ready" && cap.climate && (
-            <section className="grid gap-4">
-              <h2>{t("空调")}</h2>
-              <ClimateControls
-                state={state.climate ?? null}
-                busy={busy.startsWith("climate.") ? busy : ""}
-                disabled={!!busy || cardBusy}
-                send={(action, extra) => void climate(action, extra)}
-                powerClass={`session-action${state.climate && state.climate.mode !== "off" ? "" : " primary"}`}
-              />
-            </section>
+            <PlayerClimate
+              state={state.climate ?? null}
+              busy={busy.startsWith("climate.") ? busy : ""}
+              blocked={!!busy || cardBusy}
+              send={(action, extra) => void climate(action, extra)}
+            />
           )}
           {state.gate === "ready" &&
             (cap.power && power === "off" ? (
