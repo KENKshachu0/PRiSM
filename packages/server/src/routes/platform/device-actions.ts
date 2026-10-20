@@ -12,7 +12,7 @@ import type { Machine as MachineRow } from "./machine-session.js";
 import type { AppBindings } from "../../bindings.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { vkFromKeyText } from "../../devices/key-text.js";
-import { createRuntimeBus, readPower } from "../../devices/runtime.js";
+import { createRuntimeBus, observeClimate, readPower, type ClimateState } from "../../devices/runtime.js";
 import type { ActionName } from "../../devices/capabilities.js";
 
 type C = Context<AppBindings, any, any>;
@@ -22,6 +22,7 @@ export const actionSchema=z.object({
   operationId:z.string().uuid(),
   action:z.enum([
     "power.on","power.off","aime.scan","coin","door.open",
+    "climate.on","climate.off","climate.set_mode","climate.set_temperature","climate.set_fan_mode",
     "mahjong.join","mahjong.leave","mahjong.seat","mahjong.unseat",
   ]),
   /** Staff act on behalf of a chosen player for mahjong seats, or send a raw card. */
@@ -30,6 +31,10 @@ export const actionSchema=z.object({
   cardNumber:z.string().regex(/^\d{20}$/).optional(),
   /** A key staff typed for the coin press; the configured key is the fallback. */
   key:z.string().trim().min(1).max(12).optional(),
+  /** Climate settings. Which values an entity accepts is its own; Home Assistant rejects the rest. */
+  mode:z.string().regex(/^[a-z_]{1,32}$/).optional(),
+  temperature:z.number().finite().min(-20).max(60).optional(),
+  fanMode:z.string().trim().min(1).max(40).optional(),
   consent:z.boolean().optional(),
   location:z.unknown().optional(),
 });
@@ -42,6 +47,30 @@ export async function devicePowerState(c: C, machine: MachineRow): Promise<"on" 
   // Reading through the bus also records a change when power moved outside the platform.
   const live = await bus.observe(device, "power", "power").catch(() => null);
   return live === "on" || live === "off" ? live : "unknown";
+}
+
+/** Live climate state for a device page; null when it has no climate binding or HA cannot be read. */
+export async function deviceClimateState(c: C, machine: MachineRow): Promise<ClimateState | null> {
+  const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
+  if (!device?.capabilities.has("climate")) return null;
+  return observeClimate({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device);
+}
+
+/** The setting a climate action changes, checked before anything is recorded. */
+function climatePayload(body: z.infer<typeof actionSchema>): Record<string, unknown> {
+  if (body.action === "climate.set_mode") {
+    if (!body.mode) jsonError(400, "请选择空调模式", "CLIMATE_MODE_REQUIRED");
+    return { mode: body.mode };
+  }
+  if (body.action === "climate.set_temperature") {
+    if (body.temperature === undefined) jsonError(400, "请设置温度", "CLIMATE_TEMPERATURE_REQUIRED");
+    return { temperature: body.temperature };
+  }
+  if (body.action === "climate.set_fan_mode") {
+    if (!body.fanMode) jsonError(400, "请选择风速", "CLIMATE_FAN_MODE_REQUIRED");
+    return { fanMode: body.fanMode };
+  }
+  return {};
 }
 
 export async function executeDeviceAction(
@@ -62,6 +91,8 @@ export async function executeDeviceAction(
   if (!device || !can(device, action))
     jsonError(409, "设备不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
   const isDoor = action === "door.open";
+  const isClimate = action.startsWith("climate.");
+  const climate = isClimate ? climatePayload(body) : {};
   if (!staff)
     checkShopLocation(shop, isDoor ? "checkin" : "machine", body.location);
   const player = staff
@@ -150,7 +181,7 @@ export async function executeDeviceAction(
         action,
         actor: player ? { type: "player", playerId: player.id } : { type: "staff", staffId: `user:${user.id}` },
         operationId: body.operationId,
-        payload: { holder: player?.id ?? user.id },
+        payload: { holder: player?.id ?? user.id, ...climate },
         ...(accessCode || coinKey !== null
           ? {
               transient: {
@@ -179,7 +210,9 @@ export async function executeDeviceAction(
       const result =
         action === "power.on" || action === "power.off"
           ? { power: await devicePowerState(c, machine) }
-          : done.result;
+          : isClimate
+            ? { climate: await deviceClimateState(c, machine) }
+            : done.result;
       return c.json({ operationId: body.operationId, ...result });
     },
   );

@@ -31,9 +31,26 @@ const machine = (over: Partial<Machine> = {}): Machine => ({
 });
 
 describe("device capability view", () => {
+  it("treats a climate entity as its own capability with its own action group", () => {
+    const ac = machine({
+      climate: { url: "https://ha", entityId: "climate.room" },
+      actions: [
+        { name: "climate.on", capability: "climate" },
+        { name: "climate.set_temperature", capability: "climate" },
+      ],
+    });
+    expect(deviceCapabilities(ac)).toMatchObject({ power: false, climate: true });
+    expect(isUnconfigured(ac)).toBe(false);
+    expect(deviceActionGroups(ac)).toEqual([
+      { capability: "climate", actions: ["climate.on", "climate.set_temperature"] },
+    ]);
+    expect(deviceActionGroups({ ...ac, actions: undefined })[0]!.actions).toContain("climate.set_fan_mode");
+  });
+
   it("derives one capability per bound binding", () => {
     expect(deviceCapabilities(machine())).toEqual({
       power: false,
+      climate: false,
       hinata_io: false,
       door: false,
       mahjong: false,
@@ -47,7 +64,7 @@ describe("device capability view", () => {
           relayConnection: "embedded",
         }),
       ),
-    ).toEqual({ power: true, hinata_io: true, door: true, mahjong: true });
+    ).toEqual({ power: true, climate: false, hinata_io: true, door: true, mahjong: true });
   });
 
   it("treats a direct connection as HINATA IO even without an external URL", () => {

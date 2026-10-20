@@ -44,14 +44,24 @@ function actorOf(input: RequestDeviceActionInput): DeviceEventActor {
     : { type: "staff", staffId: input.actor.staffId };
 }
 
-/** Find the devices a reference names. `all` is only valid for power. */
-function resolveTargets(devices: Device[], input: RequestDeviceActionInput, action: ActionName): Device[] {
+type Target = { device: Device; action: ActionName };
+
+/**
+ * Find the devices a reference names. `all` is only valid for power, and
+ * switches air conditioners along with machine power: turning a whole shop
+ * off should leave nothing running.
+ */
+function resolveTargets(devices: Device[], input: RequestDeviceActionInput, action: ActionName): Target[] {
   const target = input.target as { kind: string; ref?: string; id?: string };
   if (target.ref?.trim().toLowerCase() === "all") {
     if (action !== "power.on" && action !== "power.off") {
       throw new PrismDomainError("All-device targets only support power actions.", "DEVICE_ACTION_TARGET_MISMATCH");
     }
-    const all = devices.filter((device) => device.enabled && can(device, action));
+    const climateAction: ActionName = action === "power.on" ? "climate.on" : "climate.off";
+    const all = devices.filter((device) => device.enabled).flatMap((device) => [
+      ...(can(device, action) ? [{ device, action }] : []),
+      ...(can(device, climateAction) ? [{ device, action: climateAction }] : []),
+    ]);
     if (!all.length) throw new PrismDomainError("Device was not found.", "DEVICE_NOT_FOUND");
     return all;
   }
@@ -65,7 +75,7 @@ function resolveTargets(devices: Device[], input: RequestDeviceActionInput, acti
   if (!can(device, action)) {
     throw new PrismDomainError("Device does not support this action.", "DEVICE_ACTION_UNSUPPORTED");
   }
-  return [device];
+  return [{ device, action }];
 }
 
 async function scanAccessCode(
@@ -147,11 +157,11 @@ export function createDeviceActionService(deps: DeviceActionDependencies): Devic
       const all = targets.length > 1;
       const parentId = all ? deps.id() : undefined;
       const outcomes = [];
-      for (const device of targets) {
+      for (const { device, action: targetAction } of targets) {
         outcomes.push(
           await bus.perform({
             device,
-            action,
+            action: targetAction,
             actor,
             parentOperationId: parentId,
             payload: { ...payload, deviceLabel: device.name },
@@ -167,6 +177,7 @@ export function createDeviceActionService(deps: DeviceActionDependencies): Devic
         ...(all
           ? {
               id: parentId!,
+              action,
               deviceId: null,
               status: failures.length ? "failed" : outcomes.some((o) => o.operation.status === "pending") ? "pending" : "succeeded",
               failure: failures.length

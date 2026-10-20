@@ -214,6 +214,7 @@ export function matchesRef(device: Device, ref: string): boolean {
 export function publicCapabilities(device: Device) {
   return {
     power: has(device, "power"),
+    climate: has(device, "climate"),
     card: can(device, "aime.scan"),
     coin: can(device, "coin"),
     door: can(device, "door.open"),

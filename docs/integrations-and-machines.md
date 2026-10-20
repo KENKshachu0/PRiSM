@@ -148,10 +148,19 @@ await client.requestScanByIdentity(
 
 | 能力 | 配置（`config_json`） | 密钥（`secret_json`，每个值单独加密） | 动作 | 设备回报 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| `power` | — | `binding`（HA 地址、实体、令牌） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
+| `power` | — | `binding`（HA 地址、`switch.*`/`input_boolean.*` 实体、令牌） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
+| `climate` | — | `binding`（HA 地址、`climate.*` 实体、令牌） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威，实时读取 |
 | `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`led.set`（不存） | `link`，平台权威 |
 | `door` | `lockId` | — | `door.open` | — | — |
 | `mahjong` | `capacity`、`pricingConfigIds` | — | —（上下桌走麻将流程） | — | — |
+
+**空调（`climate`）单列一个能力，不并入电源**：它的状态是模式和温度而不是开/关；用空调不算「玩过」机台（所有空调动作 `countsAsPlay: false`，不会取消入场的免费宽限）；空调关着也不应该挡住机台投币、刷卡（那只看 `power`）。一台设备可以同时带电源和空调（例如包间：灯电源 + 空调）。
+
+- 动作对应 Home Assistant 的 `climate/turn_on`、`turn_off`、`set_hvac_mode`（`mode`）、`set_temperature`（`temperature`）、`set_fan_mode`（`fanMode`）。可选的模式、风速、温度范围和步长不写死，每次从实体的 `hvac_modes`、`fan_modes`、`min_temp`、`max_temp`、`target_temp_step` 读取；实体不接受的值由 Home Assistant 拒绝，操作记为失败。
+- 状态读取：`GET /api/v1/merchant/machines/:id/state` 与玩家页 `GET /api/v1/devices/session/state` 都返回 `climate`（`{ mode, modes, temperature, currentTemperature, minTemperature, maxTemperature, temperatureStep, fanMode, fanModes }`，读不到为 `null`）。只把**设定**（模式、目标温度、风速）记为 `change` 事件；室温会自己漂移，记下来每次读取都会多一条。
+- 玩家扫码后能做全部空调操作（含关空调）；计费店铺要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。
+- **「全部开/关机」（`target.ref: "all"` 的 `power.on/off`）同时开/关所有空调**，每台空调记一条 `climate.on/off` 操作，与电源操作共用一个父操作 ID。Bot 的 `off all` 与 Koishi 的无人自动关机都走这条路径，因此也会关空调。
+- 保存设备时 `climate: { url, entityId, token? }`，实体必须是 `climate.*`；令牌留空时沿用已有的空调令牌，或在地址与电源相同时沿用电源的令牌。
 
 能力目录写在 `packages/server/src/devices/capabilities.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
 
@@ -170,9 +179,9 @@ await client.requestScanByIdentity(
 
 商户后台的设备页按「设备是身份、能力是配置」组织，与服务端能力目录一一对应：
 
-- 设备卡片只陈述三件事：设备身份（名称、别名、启用状态）、已绑定的能力徽章、实时状态（电源、直连在线）。卡片底部是「操作」（主按钮）、「编辑」、「操作记录」和二维码入口；有可执行能力的设备才显示「操作」，只读账号不显示。
+- 设备卡片只陈述三件事：设备身份（名称、别名、启用状态）、已绑定的能力徽章、实时状态（电源、空调模式与温度、直连在线）。卡片底部是「操作」（主按钮）、「编辑」、「操作记录」和二维码入口；有可执行能力的设备才显示「操作」，只读账号不显示。
 - **下发操作与历史记录是两个入口**：`操作` 打开只含开机/关机/投币/开门密码的确认面板，`操作记录` 打开只读的事件时间线。两者混在一个弹窗里会让有后果的按钮看起来像记录的一部分。
-- 编辑器分两段：**设备身份**（名称、别名、启用）和**设备能力**。每项能力是一张带开关的卡片——电源、刷卡（外部中继或直连）、开门密码、麻将桌；关闭的能力不渲染其表单，避免四种凭据同时铺开。提交按钮吸底，长表单无需滚到末尾才能保存。
+- 编辑器分两段：**设备身份**（名称、别名、启用）和**设备能力**。每项能力是一张带开关的卡片——电源、空调、刷卡（外部中继或直连）、开门密码、麻将桌；关闭的能力不渲染其表单，避免四种凭据同时铺开。提交按钮吸底，长表单无需滚到末尾才能保存。
 - 直连模式（`transport: "embedded"`）的令牌是**显式签发的**：面板里只有「签发设备令牌 / 轮换设备令牌」按钮，普通保存不会顺手创建凭据；未签发就保存会被拒绝并提示先签发或改用外部中继。签发成功后弹窗切换为一次性交付步骤，显示令牌、可复制的两行 INI 片段（`serverUrl=` / `deviceToken=`），在点击「我已写入机台」之前关闭按钮禁用。轮换前明确提示机台现有令牌会立即失效。
 - 空设备页说明「设备」对应店里一样玩家扫码就能用的东西；`/merchant/:shop/devices?add=1` 直接打开添加设备弹窗（开店指引使用）。二维码弹窗提供「打印」（新窗口只含二维码和设备名）、带「已复制」反馈的复制链接和测试扫码入口。NFC 入口就是把同一个链接写进标签的 NDEF URI 记录：iPhone 碰一下会唤起 hinata_go 里的 PRiSM Link App Clip（免安装），其它手机用浏览器或 HINATA Go 打开；弹窗下方写明了这一点。
 - 编辑器里开门密码能力会检查店铺 TTLock 账号：未连接时红字提示并链接到「设置 → 位置与设备」；麻将桌没有可选计费规则时链接到「计费」页（未启用计费时链接到转换向导）；外部中继缺连接密码时说明投币为何不可设置。
@@ -182,6 +191,7 @@ await client.requestScanByIdentity(
 ### 「操作」面板
 
 - `GET /api/v1/merchant/machines` 的每台设备带 `actions`：能力目录里当前可用的动作，形如 `{ name: "power.on", capability: "power" }`。后台「操作」面板按 `capability` 分组渲染（电源控制 / 刷卡·HINATA IO / 开门密码 / 麻将桌），**新增能力不需要改前端**；前端只在接口没有 `actions` 时退回本地推导。
+- 空调分组（`ClimateControls`，与玩家扫码页共用）：开/关空调，以及按实体上报的模式、温度加减（按步长、限制在最低/最高温度之间）和风速，单击即下发；标题右侧显示「模式 · 设定温度 · 室温」。
 - 每个分组标题右侧显示与该组操作相关的状态：电源为实时 `power`（已开机/已关机/未知），直连刷卡为链路在线状态（外部中继则显示连接方式），门锁显示 `lockId`，麻将桌显示 `已入座 / 容量`。
 - 麻将上桌的候选人来自 `staff/live-players`（已入场在店玩家），已入座的人不重复出现；上桌要求该玩家有进行中的入场，所以全量玩家列表里大多数人本来就会失败。
 - 刷卡由店员直接输入 **20 位卡号**（`cardNumber`）发送；也兼容传 `playerId`，平台读取该玩家绑定的卡号（优先 `aime` provider）。卡号只作为临时参数交给执行器，不落库；卡号格式不合法返回 400，玩家没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。

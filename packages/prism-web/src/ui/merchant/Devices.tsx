@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
+  AirVent,
   ChevronRight,
   CreditCard,
   DoorOpen,
@@ -14,6 +15,7 @@ import {
   Ungroup,
 } from "lucide-react";
 import { Api, api, playerOperation, type DeviceEvent, type Machine } from "../../api";
+import { ClimateControls, climateModeName, climateSummary, type ClimateState } from "../ClimateControls";
 import { useI18n } from "../../i18n";
 import {
   date,
@@ -47,6 +49,7 @@ const capabilityChips: Record<
   { icon: typeof Power; label: string }
 > = {
   power: { icon: Power, label: "电源" },
+  climate: { icon: AirVent, label: "空调" },
   hinata_io: { icon: CreditCard, label: "刷卡" },
   door: { icon: DoorOpen, label: "门锁" },
   mahjong: { icon: Ungroup, label: "麻将桌" },
@@ -377,9 +380,9 @@ function DeviceCard({
           </button>
         </div>
       )}
-      {(caps.power || isDirectConnect(device)) && (
+      {(caps.power || caps.climate || isDirectConnect(device)) && (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 px-5 text-xs">
-          {caps.power && <PowerStatus device={device} />}
+          {(caps.power || caps.climate) && <LiveStatus device={device} power={caps.power} climate={caps.climate} />}
           {isDirectConnect(device) && (
             <span className="flex items-center gap-1.5 text-ink/60">
               <span
@@ -447,40 +450,62 @@ function DeviceCard({
   );
 }
 
-function PowerStatus({ device }: { device: Machine }) {
+/** Live power and air conditioner state, read with one request per card. */
+function LiveStatus({
+  device,
+  power: hasPower,
+  climate: hasClimate,
+}: {
+  device: Machine;
+  power: boolean;
+  climate: boolean;
+}) {
   const { t } = useI18n();
-  const [power, setPower] = useState("loading");
+  const [state, setState] = useState<{ power: string; climate: ClimateState | null } | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let current = true;
-    api<{ power: string }>(`/api/v1/merchant/machines/${device.id}/state`)
+    api<{ power: string; climate?: ClimateState | null }>(`/api/v1/merchant/machines/${device.id}/state`)
       .then((r) => {
-        if (current) setPower(r.power);
+        if (current) setState({ power: r.power, climate: r.climate ?? null });
       })
       .catch(() => {
-        if (current) setPower("unknown");
+        if (current) setFailed(true);
       });
     return () => {
       current = false;
     };
   }, [device]);
+  const power = failed ? "unknown" : state?.power ?? "loading";
+  const running = !!state?.climate && state.climate.mode !== "off";
   return (
-    <span
-      className={`flex items-center gap-1.5 ${power === "on" ? "text-mint" : "text-ink/50"}`}
-    >
-      <span
-        className={`size-1.5 rounded-full ${power === "on" ? "bg-mint" : "bg-ink/30"}`}
-        aria-hidden="true"
-      />
-      {t(
-        power === "on"
-          ? "已开机"
-          : power === "off"
-            ? "已关机"
-            : power === "loading"
-              ? "读取电源状态…"
-              : "电源状态未知",
+    <>
+      {hasPower && (
+        <span className={`flex items-center gap-1.5 ${power === "on" ? "text-mint" : "text-ink/50"}`}>
+          <span
+            className={`size-1.5 rounded-full ${power === "on" ? "bg-mint" : "bg-ink/30"}`}
+            aria-hidden="true"
+          />
+          {t(
+            power === "on"
+              ? "已开机"
+              : power === "off"
+                ? "已关机"
+                : power === "loading"
+                  ? "读取电源状态…"
+                  : "电源状态未知",
+          )}
+        </span>
       )}
-    </span>
+      {hasClimate && (
+        <span className={`flex items-center gap-1.5 ${running ? "text-mint" : "text-ink/50"}`}>
+          <AirVent size={13} aria-hidden="true" />
+          {!state && !failed
+            ? t("读取空调状态…")
+            : t("空调：{mode}", { mode: climateSummary(state?.climate ?? null, t) })}
+        </span>
+      )}
+    </>
   );
 }
 /**
@@ -500,16 +525,28 @@ function timeline(events: DeviceEvent[]) {
     }));
 }
 
-function changeLabel(event: DeviceEvent): string {
+function changeLabel(event: DeviceEvent, t: (message: string, values?: Record<string, string | number>) => string): string {
   const to = event.payload.to;
-  if (event.name === "power") return to === "on" ? "电源已开启" : "电源已关闭";
-  if (event.name === "link") return to === "online" ? "机台已连接" : "机台已断开";
+  if (event.name === "power") return t(to === "on" ? "电源已开启" : "电源已关闭");
+  if (event.name === "link") return t(to === "online" ? "机台已连接" : "机台已断开");
+  if (event.name === "climate" && to && typeof to === "object") {
+    const setting = to as { mode?: string; temperature?: number | null };
+    const mode = t(climateModeName(String(setting.mode ?? "")));
+    return setting.mode !== "off" && typeof setting.temperature === "number"
+      ? t("空调：{mode} {value}°", { mode, value: setting.temperature })
+      : t("空调：{mode}", { mode });
+  }
   return event.name;
 }
 
 const actionLabels: Record<string, string> = {
   "power.on": "开机",
   "power.off": "关机",
+  "climate.on": "开空调",
+  "climate.off": "关空调",
+  "climate.set_mode": "切换空调模式",
+  "climate.set_temperature": "设定温度",
+  "climate.set_fan_mode": "调整风速",
   coin: "投币",
   "door.open": "获取开门密码",
   "aime.scan": "刷卡",
@@ -526,6 +563,7 @@ const capabilityMeta: Record<
   { icon: typeof Power; title: string }
 > = {
   power: { icon: Power, title: "电源控制" },
+  climate: { icon: AirVent, title: "空调" },
   hinata_io: { icon: CreditCard, title: "刷卡 · HINATA IO" },
   door: { icon: DoorOpen, title: "开门密码" },
   mahjong: { icon: Ungroup, title: "麻将桌" },
@@ -556,16 +594,18 @@ function DeviceActions({
   const [cardNumber, setCardNumber] = useState("");
   const [coinKey, setCoinKey] = useState("");
   const [power, setPower] = useState<string | null>(null);
+  const [climate, setClimate] = useState<ClimateState | null>(null);
   const [table, setTable] = useState<MahjongTable | null>(null);
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const refreshState = useCallback(() => {
-    api<{ power: string; mahjong: MahjongTable | null }>(
+    api<{ power: string; climate?: ClimateState | null; mahjong: MahjongTable | null }>(
       `/api/v1/merchant/machines/${device.id}/state`,
     )
       .then((r) => {
         setPower(r.power);
+        setClimate(r.climate ?? null);
         setTable(r.mahjong);
       })
       .catch(() => {});
@@ -580,6 +620,7 @@ function DeviceActions({
       const r = await playerOperation<{
         temporaryPassword?: string;
         mahjong?: MahjongTable;
+        climate?: ClimateState | null;
       }>(`/api/v1/merchant/machines/${device.id}/actions`, {
         action,
         ...extra,
@@ -590,7 +631,9 @@ function DeviceActions({
           : t("已发送"),
       );
       if (r?.mahjong) setTable(r.mahjong);
-      refreshState();
+      if (r?.climate) setClimate(r.climate);
+      // Home Assistant can take a moment to report the new setting.
+      else refreshState();
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("操作失败"));
@@ -613,6 +656,7 @@ function DeviceActions({
         : power === "off"
           ? t("已关机")
           : t("未知");
+    if (id === "climate") return climateSummary(climate, t);
     if (id === "hinata_io")
       return device.relayOnline === true
         ? t("已连接")
@@ -663,6 +707,16 @@ function DeviceActions({
                     </button>
                   ))}
                 </div>
+              )}
+              {id === "climate" && (
+                <ClimateControls
+                  state={climate}
+                  busy={busy}
+                  disabled={!device.enabled}
+                  send={(action, extra) => void send(action, extra)}
+                  powerClass={`${button} min-h-11 justify-self-start`}
+                  showSummary={false}
+                />
               )}
               {id === "hinata_io" && actionNames.includes("aime.scan") && (
                 <div className="flex flex-wrap items-center gap-2">
@@ -844,11 +898,9 @@ function DeviceHistory({ device }: { device: Machine }) {
                         {inbound ? "←" : "→"}
                       </span>
                     )}
-                    {t(
-                      e.kind === "change"
-                        ? changeLabel(e)
-                        : (actionLabels[e.name] ?? e.name),
-                    )}
+                    {e.kind === "change"
+                      ? changeLabel(e, t)
+                      : t(actionLabels[e.name] ?? e.name)}
                   </span>
                   <p className="mt-1 text-xs text-ink/50">{date(e.at)}</p>
                 </div>

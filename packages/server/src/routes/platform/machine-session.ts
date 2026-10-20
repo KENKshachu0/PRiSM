@@ -92,14 +92,14 @@ async function publicMachine(c: Context<AppBindings>, m: Machine) {
   const device = await loadDevice(c.env.DB, m.shop_id, m.id);
   const capabilities = device
     ? publicCapabilities(device)
-    : { power: false, card: false, coin: false, door: false, mahjong: false };
+    : { power: false, climate: false, card: false, coin: false, door: false, mahjong: false };
   const io = device ? hinataConfigOf(device) : null;
   return {
     publicId: m.public_id, name: m.name, kind: m.kind, coinAfterSwipe: !!io?.coinAfterSwipe,
     capabilities,
     // Native apps render the full device flow only for a plain card cabinet.
     webOnly: !!io?.coinAfterSwipe || !!m.billing_enabled || !capabilities.card ||
-      capabilities.door || capabilities.power,
+      capabilities.door || capabilities.power || capabilities.climate,
     shop: {
       name: m.shop_name, publicId: m.shop_public_id,
       locationEnabled: !!m.machine_geo, machineGeo: !!m.machine_geo,

@@ -14,10 +14,20 @@
  */
 import { z } from "zod";
 
-export type CapabilityId = "power" | "hinata_io" | "door" | "mahjong";
+export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong";
 
 /** What a player or staff member asks a device to do. Names are the public action names. */
-export type ActionName = "power.on" | "power.off" | "aime.scan" | "coin" | "door.open";
+export type ActionName =
+  | "power.on"
+  | "power.off"
+  | "climate.on"
+  | "climate.off"
+  | "climate.set_mode"
+  | "climate.set_temperature"
+  | "climate.set_fan_mode"
+  | "aime.scan"
+  | "coin"
+  | "door.open";
 
 export type ActionSpec = {
   /** Billing treats a player who requested this as having used the device. */
@@ -95,6 +105,32 @@ export const power: CapabilitySpec<z.infer<typeof powerConfig>> = {
   available: (_action, _config, secrets) => secrets.has("binding"),
 };
 
+const climateAction: ActionSpec = { countsAsPlay: false, requiresEntry: true, observeAfter: "climate" };
+
+/**
+ * A Home Assistant `climate.*` entity, such as an air conditioner. Kept apart
+ * from power: its state is a mode and temperatures rather than on/off, using
+ * it is not playing a machine, and an air conditioner being off must not stop
+ * a machine from taking coins.
+ */
+export const climate: CapabilitySpec<z.infer<typeof powerConfig>> = {
+  id: "climate",
+  legacyExecutor: "home_assistant",
+  legacyTargetKind: "facility",
+  config: powerConfig,
+  secrets: ["binding"],
+  actions: {
+    "climate.on": climateAction,
+    "climate.off": climateAction,
+    "climate.set_mode": climateAction,
+    "climate.set_temperature": climateAction,
+    "climate.set_fan_mode": climateAction,
+  },
+  signals: {},
+  state: { climate: { authority: "external" } },
+  available: (_action, _config, secrets) => secrets.has("binding"),
+};
+
 export const hinataIo: CapabilitySpec<HinataConfig> = {
   id: "hinata_io",
   legacyExecutor: "hinata_io",
@@ -151,7 +187,7 @@ export const mahjong: CapabilitySpec<MahjongConfig> = {
   available: () => false,
 };
 
-export const capabilities = { power, hinata_io: hinataIo, door, mahjong } as const;
+export const capabilities = { power, climate, hinata_io: hinataIo, door, mahjong } as const;
 
 export function capabilitySpec(id: string): CapabilitySpec<unknown> | null {
   return (capabilities as Record<string, CapabilitySpec<unknown>>)[id] ?? null;

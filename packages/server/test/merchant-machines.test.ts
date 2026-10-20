@@ -130,6 +130,34 @@ describe("pre-fork merchant machine lifecycle",()=>{
     expect(unbound.status).toBe(200);
     expect(rows()).toEqual([]);
   });
+  it("binds an air conditioner as its own capability and reuses the power token for the same Home Assistant",async()=>{
+    const {app,env,sqlite}=fixture();
+    const send=(method:string,path:string,body:unknown)=>app.fetch(new Request(`https://prism.test/api/v1/merchant${path}`,{
+      method,headers:{"content-type":"application/json"},body:JSON.stringify(body),
+    }),env);
+    // A switch is power, not an air conditioner; the schema refuses it.
+    const wrong=await send("POST","/machines",{shopId:"shop-1",name:"包间",climate:{url:"https://ha.example",entityId:"switch.ac",token:"t"}});
+    expect(wrong.status).not.toBe(201);
+    expect(sqlite.query("SELECT COUNT(*) AS n FROM machines").get()).toEqual({n:0});
+    const missing=await send("POST","/machines",{shopId:"shop-1",name:"包间",climate:{url:"https://ha.example",entityId:"climate.room"}});
+    expect(missing.status).toBe(400);
+    const created=await send("POST","/machines",{
+      shopId:"shop-1",name:"包间",
+      homeAssistant:{url:"https://ha.example",entityId:"switch.room",token:"ha-token"},
+      climate:{url:"https://ha.example",entityId:"climate.lumi_cn_974741205_mcn02"},
+    });
+    expect(created.status).toBe(201);
+    const {machine}=await created.json() as {machine:Record<string,unknown>&{id:string;actions:{name:string;capability:string}[]}};
+    expect(machine).toMatchObject({climate:{url:"https://ha.example",entityId:"climate.lumi_cn_974741205_mcn02"}});
+    expect(machine.actions.filter(a=>a.capability==="climate").map(a=>a.name)).toEqual([
+      "climate.on","climate.off","climate.set_mode","climate.set_temperature","climate.set_fan_mode",
+    ]);
+    const rows=sqlite.query("SELECT capability FROM device_capabilities ORDER BY capability").all();
+    expect(rows).toEqual([{capability:"climate"},{capability:"power"}]);
+    expect(JSON.stringify(sqlite.query("SELECT secret_json FROM device_capabilities").all())).not.toContain("ha-token");
+    await send("PATCH",`/machines/${machine.id}`,{climate:null});
+    expect(sqlite.query("SELECT capability FROM device_capabilities").all()).toEqual([{capability:"power"}]);
+  });
   it("does not delete machines that have historical commands",async()=>{
     const {app,env,sqlite}=fixture();
     sqlite.run("INSERT INTO machines(shop_id,id,public_id,name) VALUES ('shop-1','machine-old','m-old','Archived Machine')");

@@ -26,7 +26,7 @@ export type Card = {
 export type PublicMachine = {
   coinAfterSwipe: boolean;
   kind: "machine" | "door";
-  capabilities: { power: boolean; coin: boolean; card: boolean; door: boolean; mahjong?: boolean };
+  capabilities: { power: boolean; climate?: boolean; coin: boolean; card: boolean; door: boolean; mahjong?: boolean };
   webOnly?: boolean;
   publicId: string;
   name: string;
@@ -98,6 +98,8 @@ export type Machine = {
   kind: "machine" | "door";
   hinataUrl: string | null;
   homeAssistant: { url: string; entityId: string } | null;
+  /** A Home Assistant `climate.*` entity, such as an air conditioner. */
+  climate?: { url: string; entityId: string } | null;
   ttlockLockId: number | null;
   coinKey: number;
   coinEnabled?: boolean;

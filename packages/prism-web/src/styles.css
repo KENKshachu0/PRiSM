@@ -856,3 +856,87 @@ button.credential-row:not(:disabled):active {
   .player-dialog:has(.account-bill) .player-dialog-content { height: 100%; padding-top: max(24px, env(safe-area-inset-top)); }
   .account-bill { flex: 1; }
 }
+
+/* Air conditioner controls: the staff action panel and the player device page. */
+.climate-controls {
+  display: grid;
+  gap: 12px;
+}
+.climate-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: rgb(var(--color-ink) / 0.7);
+}
+.climate-options,
+.climate-temperature {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.climate-options,
+.climate-temperature {
+  align-items: center;
+}
+.climate-label {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: rgb(var(--color-ink) / 0.55);
+}
+.climate-temperature output {
+  min-width: 4.5rem;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.climate-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--color-ink) / 0.15);
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.climate-chip:not(:disabled):hover {
+  background: rgb(var(--color-ink) / 0.05);
+}
+.climate-chip[aria-pressed="true"] {
+  border-color: var(--color-mint);
+  background: color-mix(in srgb, var(--color-mint) 12%, transparent);
+  color: var(--color-mint);
+  font-weight: 600;
+}
+.climate-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.climate-chip:focus-visible {
+  outline: 3px solid var(--color-mint);
+  outline-offset: 2px;
+}
+.device-controls .climate-chip {
+  min-height: 48px;
+  min-width: 48px;
+  padding: 0 18px;
+  font-size: 16px;
+}
+.device-controls .climate-temperature {
+  justify-content: center;
+}
+.device-controls .climate-temperature output {
+  font-size: 32px;
+}
+.device-controls .climate-options {
+  justify-content: center;
+}
+.device-controls .climate-label {
+  text-align: center;
+  font-size: 13px;
+}

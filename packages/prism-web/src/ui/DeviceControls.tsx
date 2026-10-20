@@ -1,6 +1,7 @@
 import { isTransientReadFailure, usePagePolling } from "./use-page-polling";
 import { billTime } from "./bill-time";
 import { PlatformBinding } from "./SessionContent";
+import { ClimateControls, type ClimateState } from "./ClimateControls";
 import {
   useCallback,
   useEffect,
@@ -25,6 +26,7 @@ type DeviceState = {
   gate: "ready" | "binding" | "entry";
   power: "on" | "off" | "unknown" | "unmanaged";
   coinUsed: boolean;
+  climate?: ClimateState | null;
   mahjong?: {capacity:number;seats:{name:string;mine:boolean;playing:boolean}[]} | null;
 };
 export function DeviceControls({
@@ -137,6 +139,18 @@ export function DeviceControls({
       setBusy("");
     }
   }
+  function climate(action: string, extra?: Record<string, unknown>) {
+    return act(action, async () => {
+      const location = await operationLocation(!!(machine.shop.locationEnabled ?? machine.shop.machineGeo));
+      const result = await playerOperation<{ climate?: ClimateState | null }>("/api/v1/devices/session/actions", {
+        ticket,
+        action,
+        location,
+        ...extra,
+      });
+      if (result.climate) setState((current) => (current ? { ...current, climate: result.climate } : current));
+    });
+  }
   function operate(action: "power.on" | "coin" | "door.open" | "mahjong.join" | "mahjong.leave") {
     return act(action, async () => {
       const location = await operationLocation(
@@ -168,7 +182,7 @@ export function DeviceControls({
   const cap = machine.capabilities;
   if (!Object.values(cap).some(Boolean)) return <p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p>;
   const powerBlocked = cap.power && power === "off";
-  const hasReadyAction = cap.door || powerBlocked
+  const hasReadyAction = cap.door || cap.climate || powerBlocked
     || (!powerBlocked && (cap.card || (cap.coin && !machine.coinAfterSwipe)
       || (cap.mahjong && state?.mahjong && (state.mahjong.seats.some(seat => seat.mine)
         || state.mahjong.seats.length < state.mahjong.capacity))));
@@ -258,6 +272,18 @@ export function DeviceControls({
                 )}
               </button>
             </div>
+          )}
+          {state.gate === "ready" && cap.climate && (
+            <section className="grid gap-4">
+              <h2>{t("空调")}</h2>
+              <ClimateControls
+                state={state.climate ?? null}
+                busy={busy.startsWith("climate.") ? busy : ""}
+                disabled={!!busy || cardBusy}
+                send={(action, extra) => void climate(action, extra)}
+                powerClass={`session-action${state.climate && state.climate.mode !== "off" ? "" : " primary"}`}
+              />
+            </section>
           )}
           {state.gate === "ready" &&
             (cap.power && power === "off" ? (

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
+  AirVent,
   ChevronDown,
   CreditCard,
   DoorOpen,
@@ -44,6 +45,7 @@ export function DeviceEditor({
   const initial = deviceCapabilities(
     value ?? {
       homeAssistant: null,
+      climate: null,
       ttlockLockId: null,
       mahjong: null,
       hasHinata: false,
@@ -65,6 +67,14 @@ export function DeviceEditor({
   const [haUrl, setHaUrl] = useState(value?.homeAssistant?.url ?? "");
   const [haEntity, setHaEntity] = useState(value?.homeAssistant?.entityId ?? "");
   const [haToken, setHaToken] = useState("");
+
+  const [acUrl, setAcUrl] = useState(value?.climate?.url ?? "");
+  const [acEntity, setAcEntity] = useState(value?.climate?.entityId ?? "");
+  const [acToken, setAcToken] = useState("");
+  // The server reuses the power binding's token for the same Home Assistant.
+  const acSharesPowerToken =
+    caps.power && !!acUrl.trim() && acUrl.trim() === haUrl.trim() &&
+    (!!value?.homeAssistant || !!haToken.trim());
 
   const [embedded, setEmbedded] = useState(
     value?.relayConnection === "embedded",
@@ -119,6 +129,13 @@ export function DeviceEditor({
       if (!haUrl.trim()) return t("请填写 Home Assistant 地址");
       if (!haEntity.trim()) return t("请填写电源实体");
       if (!value?.homeAssistant && !haToken.trim())
+        return t("请填写长期访问令牌");
+    }
+    if (id === "climate") {
+      if (!acUrl.trim()) return t("请填写 Home Assistant 地址");
+      if (!/^climate\.[a-z0-9_]+$/.test(acEntity.trim()))
+        return t("请填写 climate. 开头的空调实体");
+      if (!value?.climate && !acToken.trim() && !acSharesPowerToken)
         return t("请填写长期访问令牌");
     }
     if (id === "hinata_io" && !embedded && !hinataUrl.trim())
@@ -225,7 +242,7 @@ export function DeviceEditor({
       submit={async (f) => {
         const issuing = f.get("intent") === "issue";
         if (!name.trim()) throw new Error(t("请填写设备名称"));
-        for (const id of ["power", "hinata_io", "door", "mahjong"] as const) {
+        for (const id of ["power", "climate", "hinata_io", "door", "mahjong"] as const) {
           const reason = incomplete(id);
           if (reason) {
             // Open the card so the precise message lands next to the field
@@ -291,6 +308,13 @@ export function DeviceEditor({
                   url: haUrl.trim(),
                   entityId: haEntity.trim(),
                   ...(haToken.trim() ? { token: haToken.trim() } : {}),
+                }
+              : null,
+            climate: caps.climate
+              ? {
+                  url: acUrl.trim(),
+                  entityId: acEntity.trim(),
+                  ...(acToken.trim() ? { token: acToken.trim() } : {}),
                 }
               : null,
             coinKey: caps.hinata_io && canCoin ? Number(coinKey || 0) : 0,
@@ -430,6 +454,63 @@ export function DeviceEditor({
                 />
               </Field>
             </div>
+          </div>
+        </CapabilityCard>
+
+        <CapabilityCard
+          id="climate"
+          icon={AirVent}
+          title="空调"
+          description="通过 Home Assistant 控制空调：开关、模式、温度和风速。"
+          summary={acEntity.trim()}
+          on={caps.climate}
+          open={open === "climate"}
+          toggle={(on) => {
+            // Usually the same Home Assistant as the power switch.
+            if (on && !acUrl.trim() && haUrl.trim()) setAcUrl(haUrl.trim());
+            toggle("climate", on);
+          }}
+          select={() => setOpen(open === "climate" ? null : "climate")}
+          problem={incomplete("climate")}
+        >
+          <div className="grid gap-3">
+            <Field label="Home Assistant 地址">
+              <input
+                className={input}
+                type="url"
+                required
+                placeholder="https://ha.example.com"
+                value={acUrl}
+                onChange={(e) => setAcUrl(e.target.value)}
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="空调实体">
+                <input
+                  className={`${input} font-mono`}
+                  required
+                  placeholder="climate.living_room"
+                  value={acEntity}
+                  onChange={(e) => setAcEntity(e.target.value.trim())}
+                />
+              </Field>
+              <Field label="长期访问令牌">
+                <input
+                  className={input}
+                  type="password"
+                  autoComplete="new-password"
+                  value={acToken}
+                  placeholder={
+                    value?.climate || acSharesPowerToken ? t("留空保持不变") : ""
+                  }
+                  onChange={(e) => setAcToken(e.target.value)}
+                />
+              </Field>
+            </div>
+            {acSharesPowerToken && !value?.climate && (
+              <Hint>{t("与电源控制是同一个 Home Assistant，令牌可以留空，沿用电源的令牌。")}</Hint>
+            )}
+            <Hint>{t("可选的模式、风速和温度范围以空调实体自己上报的为准。")}</Hint>
           </div>
         </CapabilityCard>
 

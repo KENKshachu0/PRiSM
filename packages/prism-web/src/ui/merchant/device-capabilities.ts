@@ -10,10 +10,11 @@ import type { Machine } from "../../api";
  * let the device card, the editor and the action list disagree about whether
  * coin was usable on a given machine.
  */
-export type CapabilityId = "power" | "hinata_io" | "door" | "mahjong";
+export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong";
 
 export const capabilityOrder: CapabilityId[] = [
   "power",
+  "climate",
   "hinata_io",
   "door",
   "mahjong",
@@ -24,6 +25,7 @@ export function deviceCapabilities(
   machine: Pick<
     Machine,
     | "homeAssistant"
+    | "climate"
     | "ttlockLockId"
     | "mahjong"
     | "hasHinata"
@@ -34,6 +36,7 @@ export function deviceCapabilities(
 ): Record<CapabilityId, boolean> {
   return {
     power: !!machine.homeAssistant,
+    climate: !!machine.climate,
     hinata_io:
       !!machine.hasHinata || machine.relayConnection === "embedded",
     door: !!machine.ttlockLockId,
@@ -76,6 +79,7 @@ export type MachineAction = { name: string; capability: string };
  */
 export function actionCapability(action: string): CapabilityId | null {
   if (action === "power.on" || action === "power.off") return "power";
+  if (action.startsWith("climate.")) return "climate";
   if (action === "aime.scan" || action === "coin") return "hinata_io";
   if (action === "door.open") return "door";
   if (action.startsWith("mahjong.")) return "mahjong";
@@ -87,6 +91,7 @@ export function deviceActionGroups(
   machine: Pick<
     Machine,
     | "homeAssistant"
+    | "climate"
     | "ttlockLockId"
     | "mahjong"
     | "hasHinata"
@@ -116,6 +121,9 @@ export function deviceActionGroups(
       add("power", "power.on");
       add("power", "power.off");
     }
+    if (caps.climate)
+      for (const action of ["climate.on", "climate.off", "climate.set_mode", "climate.set_temperature", "climate.set_fan_mode"])
+        add("climate", action);
     if (caps.hinata_io) add("hinata_io", "aime.scan");
     if (canOperateCoin(machine)) add("hinata_io", "coin");
     if (caps.door) add("door", "door.open");

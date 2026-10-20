@@ -8,7 +8,12 @@ import { createD1Executor } from "@prism/adapter-d1";
 import { normalizeTTLockConnectionConfig } from "@prism/application";
 import { createDeviceEventRepository } from "@prism/storage-sql";
 import type { Env } from "../bindings.js";
-import { callHomeAssistantPower, getHomeAssistantEntityState } from "../hardware/home-assistant.js";
+import {
+  callHomeAssistantPower,
+  callHomeAssistantService,
+  getHomeAssistantEntity,
+  getHomeAssistantEntityState,
+} from "../hardware/home-assistant.js";
 import { normalizeHinataUrl, sendHinataCard, sendHinataCoin } from "../hardware/hinata.js";
 import { TTLockClient } from "../hardware/ttlock.js";
 import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
@@ -29,8 +34,12 @@ export type DeviceRuntime = {
   id?: () => string;
 };
 
-async function haBinding(runtime: DeviceRuntime, device: Device): Promise<HaBinding | null> {
-  const raw = await readSecret(runtime.db, device, "power", "binding", runtime.env.URL_ENCRYPTION_KEY);
+async function haBinding(
+  runtime: DeviceRuntime,
+  device: Device,
+  capability: "power" | "climate" = "power",
+): Promise<HaBinding | null> {
+  const raw = await readSecret(runtime.db, device, capability, "binding", runtime.env.URL_ENCRYPTION_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<HaBinding>;
@@ -65,6 +74,84 @@ function powerRunner(runtime: DeviceRuntime, service: "turn_on" | "turn_off"): A
       accessToken: binding.token,
       entityId: binding.entityId,
       service,
+      fetch: runtime.fetcher,
+      timeoutMs: HA_TIMEOUT_MS,
+    }));
+  };
+}
+
+/** What a climate entity is doing and what it offers, read live from Home Assistant. */
+export type ClimateState = {
+  /** `off`, or the running HVAC mode such as `cool`, `heat`, `dry`, `fan_only`, `auto`. */
+  mode: string;
+  modes: string[];
+  temperature: number | null;
+  currentTemperature: number | null;
+  minTemperature: number | null;
+  maxTemperature: number | null;
+  temperatureStep: number | null;
+  fanMode: string | null;
+  fanModes: string[];
+};
+
+const numberOrNull = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+const strings = (value: unknown) =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+/** Live climate state, or null when Home Assistant cannot be read. */
+export async function readClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
+  const binding = await haBinding(runtime, device, "climate");
+  if (!binding) return null;
+  const entity = await getHomeAssistantEntity({
+    baseUrl: binding.url,
+    accessToken: binding.token,
+    entityId: binding.entityId,
+    fetch: runtime.fetcher,
+    timeoutMs: 3000,
+  });
+  if (!entity || entity.state === "unavailable" || entity.state === "unknown") return null;
+  const a = entity.attributes;
+  return {
+    mode: entity.state,
+    modes: strings(a.hvac_modes),
+    temperature: numberOrNull(a.temperature),
+    currentTemperature: numberOrNull(a.current_temperature),
+    minTemperature: numberOrNull(a.min_temp),
+    maxTemperature: numberOrNull(a.max_temp),
+    temperatureStep: numberOrNull(a.target_temp_step),
+    fanMode: typeof a.fan_mode === "string" ? a.fan_mode : null,
+    fanModes: strings(a.fan_modes),
+  };
+}
+
+/**
+ * The part of a climate state that is a setting. Room temperature drifts on
+ * its own, so recording it would log a change on nearly every read.
+ */
+export const climateSetting = (state: ClimateState) => ({
+  mode: state.mode,
+  temperature: state.temperature,
+  fanMode: state.fanMode,
+});
+
+function climateRunner(
+  runtime: DeviceRuntime,
+  service: string,
+  data: (payload: Record<string, unknown>) => Record<string, unknown> | null,
+): ActionRunner {
+  return async ({ device, payload }) => {
+    const binding = await haBinding(runtime, device, "climate");
+    if (!binding) return { outcome: "failed", message: "空调未配置" };
+    const body = data(payload);
+    if (!body) return { outcome: "failed", message: "空调操作缺少参数" };
+    return relayOutcome(await callHomeAssistantService({
+      baseUrl: binding.url,
+      accessToken: binding.token,
+      entityId: binding.entityId,
+      domain: "climate",
+      service,
+      data: body,
       fetch: runtime.fetcher,
       timeoutMs: HA_TIMEOUT_MS,
     }));
@@ -161,12 +248,24 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
   const runners: Record<string, ActionRunner> = {
     "power.on": powerRunner(runtime, "turn_on"),
     "power.off": powerRunner(runtime, "turn_off"),
+    "climate.on": climateRunner(runtime, "turn_on", () => ({})),
+    "climate.off": climateRunner(runtime, "turn_off", () => ({})),
+    "climate.set_mode": climateRunner(runtime, "set_hvac_mode", (p) =>
+      typeof p.mode === "string" && p.mode ? { hvac_mode: p.mode } : null),
+    "climate.set_temperature": climateRunner(runtime, "set_temperature", (p) =>
+      typeof p.temperature === "number" && Number.isFinite(p.temperature) ? { temperature: p.temperature } : null),
+    "climate.set_fan_mode": climateRunner(runtime, "set_fan_mode", (p) =>
+      typeof p.fanMode === "string" && p.fanMode ? { fan_mode: p.fanMode } : null),
     "aime.scan": cardRunner(runtime),
     coin: coinRunner(runtime),
     "door.open": doorRunner(runtime),
   };
   const readers: Record<string, StateReader> = {
     "power.power": (device) => readPower(runtime, device),
+    "climate.climate": async (device) => {
+      const state = await readClimate(runtime, device);
+      return state ? climateSetting(state) : null;
+    },
   };
   return createDeviceBus({
     events: createDeviceEventRepository(createD1Executor(runtime.db, runtime.shopId)),
@@ -175,4 +274,22 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
     runners,
     readers,
   });
+}
+
+/**
+ * Read a climate device for display and record its setting when it moved,
+ * with a single Home Assistant request.
+ */
+export async function observeClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
+  const state = await readClimate(runtime, device).catch(() => null);
+  if (!state) return null;
+  const bus = createDeviceBus({
+    events: createDeviceEventRepository(createD1Executor(runtime.db, runtime.shopId)),
+    now: runtime.now ?? (() => new Date()),
+    id: runtime.id ?? (() => crypto.randomUUID()),
+    runners: {},
+    readers: { "climate.climate": async () => climateSetting(state) },
+  });
+  await bus.observe(device, "climate", "climate").catch(() => null);
+  return state;
 }

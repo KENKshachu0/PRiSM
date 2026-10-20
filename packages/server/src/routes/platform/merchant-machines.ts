@@ -44,9 +44,9 @@ function encryptionKey(c: C): string {
 
 type HaBinding = { url: string; entityId: string; token: string };
 
-async function readHaBinding(c: C, device: Device): Promise<HaBinding | null> {
-  if (!device.capabilities.has("power")) return null;
-  const raw = await readSecret(c.env.DB, device, "power", "binding", encryptionKey(c));
+async function readHaBinding(c: C, device: Device, capability: "power" | "climate" = "power"): Promise<HaBinding | null> {
+  if (!device.capabilities.has(capability)) return null;
+  const raw = await readSecret(c.env.DB, device, capability, "binding", encryptionKey(c));
   if (!raw) return null;
   try { return JSON.parse(raw) as HaBinding; } catch { return null; }
 }
@@ -71,6 +71,7 @@ async function presentMachine(c: C, device: Device, shopPublicId: string, canCon
   const hinata = hinataConfigOf(device);
   const io = device.capabilities.get("hinata_io");
   const ha = await readHaBinding(c, device);
+  const climate = await readHaBinding(c, device, "climate");
   const embedded = hinata?.transport === "embedded";
   const coinKey = hinata?.coinKey ?? 32;
   return {
@@ -90,6 +91,7 @@ async function presentMachine(c: C, device: Device, shopPublicId: string, canCon
       : null,
     hasPassword: !!io?.secretNames.has("password"),
     homeAssistant: ha ? { url: canConfigure ? ha.url : "", entityId: ha.entityId } : null,
+    climate: climate ? { url: canConfigure ? climate.url : "", entityId: climate.entityId } : null,
     ttlockLockId: doorConfigOf(device)?.lockId ?? null,
     mahjong: mahjongConfigOf(device),
     coinKey,
@@ -255,6 +257,11 @@ const homeAssistantInput = z.object({
   entityId:z.string().regex(/^(switch|input_boolean)\.[a-z0-9_]+$/),
   token:z.string().trim().max(4096).optional(),
 }).nullable();
+const climateInput = z.object({
+  url:urlInput,
+  entityId:z.string().regex(/^climate\.[a-z0-9_]+$/,"空调实体需要是 climate.* 实体"),
+  token:z.string().trim().max(4096).optional(),
+}).nullable();
 const machineInput=z.object({
   shopId:z.string().min(1),
   name:z.string().trim().min(1).max(80),
@@ -267,6 +274,7 @@ const machineInput=z.object({
   ).nullable().optional(),
   hinataPassword:z.string().trim().max(128).nullable().optional(),
   homeAssistant:homeAssistantInput.optional(),
+  climate:climateInput.optional(),
   ttlockLockId:z.number().int().positive().nullable().optional(),
   coinKey:z.number().int().min(0).max(65535).default(32),
   coinAfterSwipe:z.boolean().default(false),
@@ -326,6 +334,21 @@ async function nextCapabilities(
     if(!token)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
     const binding:HaBinding={url:body.homeAssistant.url,entityId:body.homeAssistant.entityId,token};
     next.set("power",{config:{},secrets:{binding:await seal(JSON.stringify(binding))},credentialHash:null});
+  }
+
+  if(body.climate===null)next.delete("climate");
+  else if(body.climate){
+    const tokenOf=async(sealed:string|undefined)=>sealed
+      ?(JSON.parse(await decryptSecret(sealed,encryptionKey(c))) as Partial<HaBinding>)
+      :undefined;
+    const previous=await tokenOf(stored.get("climate")?.secrets.binding);
+    // The same Home Assistant usually serves both, so an empty token falls
+    // back to the power binding's when the address matches.
+    const power=await tokenOf(next.get("power")?.secrets.binding);
+    const token=body.climate.token||previous?.token||(power?.url===body.climate.url?power.token:undefined);
+    if(!token)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
+    const binding:HaBinding={url:body.climate.url,entityId:body.climate.entityId,token};
+    next.set("climate",{config:{},secrets:{binding:await seal(JSON.stringify(binding))},credentialHash:null});
   }
 
   if(body.ttlockLockId===null)next.delete("door");

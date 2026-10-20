@@ -6,7 +6,7 @@ import { requireUser } from "../../middleware/auth.js";
 import { isEntry } from "../../middleware/tenant.js";
 import { getShopForMachine } from "./machine-login.js";
 import { resolveMachineSession, type Machine } from "./machine-session.js";
-import { executeDeviceAction, actionSchema, devicePowerState } from "./device-actions.js";
+import { executeDeviceAction, actionSchema, deviceClimateState, devicePowerState } from "./device-actions.js";
 import { has, loadDevice } from "../../devices/device.js";
 import { mahjongState, operateMahjong } from "./mahjong.js";
 
@@ -21,7 +21,7 @@ deviceSessionRouter.get("/session/state", async c=>{
   const device=await loadDevice(c.env.DB,shop.id,machine.id);
   const bound=(id:Parameters<typeof has>[1])=>!!device&&has(device,id);
   const needsEntry=
-    (shop.billing_enabled&&(bound("hinata_io")||bound("power")||bound("mahjong")))
+    (shop.billing_enabled&&(bound("hinata_io")||bound("power")||bound("climate")||bound("mahjong")))
     ||bound("door")||bound("mahjong");
   if(needsEntry){
     const player=await c.env.DB.prepare(
@@ -45,6 +45,7 @@ deviceSessionRouter.get("/session/state", async c=>{
     mahjong:gate==="ready"?await mahjongState(c,machine):null,
     power:gate==="ready"&&bound("power")&&c.req.query("includePower")!=="0"
       ?await devicePowerState(c,machine):"unmanaged",
+    climate:gate==="ready"&&bound("climate")?await deviceClimateState(c,machine):null,
   });
 });
 
@@ -93,6 +94,7 @@ merchantMachineActionRouter.get("/machines/:id/state",async c=>{
   const machine=await merchantMachine(c);
   return c.json({
     power:await devicePowerState(c,machine),
+    climate:await deviceClimateState(c,machine),
     // Seats let staff see who is at the table before seating someone else.
     mahjong:await mahjongState(c,machine),
   });
