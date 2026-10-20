@@ -13,7 +13,7 @@ type CardOutcome = NonNullable<MachineLoginResult["card"]>;
 const CARD_TEXT: Record<CardOutcome, string> = {
   ok: "登录成功",
   failed: "登录失败",
-  not_read: "未读卡，请在刷卡界面重试",
+  not_read: "登录失败",
   read: "已刷卡",
   sent: "已刷卡",
 };
@@ -202,7 +202,7 @@ function MachineSessionPage({
   /** For a server that predates notices: the card result alone. */
   const fallbackNotices = (card: CardOutcome): Notice[] => [{
     code: card, display: "inline", flow: "none", title: null, actions: [],
-    level: card === "failed" ? "error" : card === "not_read" ? "warning" : "success",
+    level: card === "failed" || card === "not_read" ? "error" : "success",
     body: t(CARD_TEXT[card]),
   }];
 

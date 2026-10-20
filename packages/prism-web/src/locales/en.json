@@ -1611,7 +1611,6 @@
   "已闲置": "Idle",
   "恢复使用": "In use again",
   "重新加载": "Reload",
-  "未读卡，请在刷卡界面重试": "Card not read. Retry on the card screen.",
   "开门密码获取失败，请重试": "Could not get the door code. Retry.",
   "定位获取失败，请重试": "Could not get location. Retry.",
   "未检测到开机，请重试": "Power-on not detected. Retry."

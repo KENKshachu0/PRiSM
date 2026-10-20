@@ -264,7 +264,7 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 3. 之后约 15 秒内，**同一个读卡器**的 `event.ledSet` 变成 `0000FF` 记为登录成功（`ok`），变成 `FF0000` 或 `FFFF00` 记为被拒（`failed`），并存一条 `card.login` 信号（`payload.result`）。等不到这三种颜色就是 `read`：游戏拿到了卡，但没有给出结论。
 4. 新卡会顶掉机台上还没被取走的旧卡，旧卡的等待随即以 `not_read` 结束。
 
-响应新增 `card` 字段：`ok`、`failed`、`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 和 `failed` 不投币，`coin` 返回 `skipped`，`reason` 分别为 `CARD_NOT_READ`、`LOGIN_FAILED`。扫码页在卡片行的说明文字里显示「登录成功」「登录失败」「未读卡，请在刷卡界面重试」「已刷卡」，投币结果接在后面（如「登录成功 · 投币失败」）；结果停留几秒，期间其它卡片和投币按钮照常可用。`card.consumed` 只说明游戏从读卡接口拿到了卡号，灯光颜色才反映游戏服务器的结论。
+响应新增 `card` 字段：`ok`、`failed`、`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 和 `failed` 不投币，`coin` 返回 `skipped`，`reason` 分别为 `CARD_NOT_READ`、`LOGIN_FAILED`。扫码页在卡片行的说明文字里显示「登录成功」「登录失败」（`failed` 和 `not_read` 都显示这个）「已刷卡」，投币结果接在后面（如「登录成功 · 投币失败」）；结果停留几秒，期间其它卡片和投币按钮照常可用。`card.consumed` 只说明游戏从读卡接口拿到了卡号，灯光颜色才反映游戏服务器的结论。
 
 ### 店铺 Hub：谁替店里盯着 Home Assistant
 

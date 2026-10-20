@@ -10,7 +10,7 @@ describe("player notices", () => {
   });
 
   it("interrupts only for what went wrong, and keeps normal outcomes inline", () => {
-    expect(notice("CARD_NOT_READ", "zh")).toMatchObject({ display: "inline", level: "warning", body: "未读卡，请在刷卡界面重试", actions: [] });
+    expect(notice("CARD_NOT_READ", "zh")).toMatchObject({ display: "inline", level: "error", body: "登录失败", actions: [] });
     for (const code of ["COIN_FAILED", "COIN_UNKNOWN", "COIN_SKIPPED"]) expect(notice(code, "zh").display).toBe("inline");
     expect(errorNotice({ code: "COIN_COOLDOWN", message: "请稍后再投币", status: 429 }, "zh").display).toBe("inline");
     const banned = errorNotice({ code: "ACCOUNT_BANNED", message: "这个账号暂时无法使用", status: 403 }, "zh");
