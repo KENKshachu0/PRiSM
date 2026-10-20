@@ -20,6 +20,7 @@ export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong
 export type ActionName =
   | "power.on"
   | "power.off"
+  | "power.keep"
   | "climate.on"
   | "climate.off"
   | "climate.set_mode"
@@ -112,10 +113,14 @@ export const power: CapabilitySpec<HaEntityConfig> = {
   actions: {
     "power.on": { countsAsPlay: true, requiresEntry: true, observeAfter: "power" },
     "power.off": { countsAsPlay: true, requiresEntry: true, staffOnly: true, observeAfter: "power" },
+    // "I am still here": an entered player keeps a running device from being
+    // switched off as idle. It never switches anything on.
+    "power.keep": { countsAsPlay: true, requiresEntry: true },
   },
   signals: {},
-  // Power can be switched outside the platform, so it is always read live.
-  state: { power: { authority: "external" } },
+  // Power can be switched outside the platform, so it is read from Home
+  // Assistant (or its watcher); `idle` is the platform's own verdict.
+  state: { power: { authority: "external" }, idle: { authority: "owned" } },
   available: (_action, config, secrets) => haBound(config, secrets),
 };
 

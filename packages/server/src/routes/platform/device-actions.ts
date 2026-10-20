@@ -13,6 +13,7 @@ import type { AppBindings } from "../../bindings.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { vkFromKeyText } from "../../devices/key-text.js";
 import { createRuntimeBus, observeClimate, readPower, type ClimateState } from "../../devices/runtime.js";
+import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import type { ActionName } from "../../devices/capabilities.js";
 
 type C = Context<AppBindings, any, any>;
@@ -220,6 +221,8 @@ export async function executeDeviceAction(
           : isClimate
             ? { climate: await deviceClimateState(c, machine, { live: true }) }
             : done.result;
+      // A player or staff action may start or end an idle countdown.
+      touchShopHubAfter(c, shop.id);
       return c.json({ operationId: body.operationId, ...result });
     },
   );

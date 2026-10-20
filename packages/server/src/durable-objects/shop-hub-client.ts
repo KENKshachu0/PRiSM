@@ -14,6 +14,7 @@ type ShopHubNamespace = {
     readState(connectionId: string, entityId: string): Promise<WatchedState | null>;
     watcher(): Promise<{ machineId: string; leaseUntil: number } | null>;
     haReport(shopId: string, machineId: string, report: HaReport): Promise<void>;
+    touch(shopId: string): Promise<void>;
   };
 };
 
@@ -37,4 +38,31 @@ export async function refreshShopHub(env: Env, shopId: string): Promise<void> {
   } catch (error) {
     console.error("Shop hub refresh failed", error);
   }
+}
+
+/**
+ * Tell the hub something that may change idle state happened. Never throws; run
+ * after the response when an execution context is at hand.
+ */
+export function touchShopHub(env: Env, shopId: string, ctx?: { waitUntil(promise: Promise<unknown>): void } | null): void {
+  const task = (async () => {
+    try {
+      await shopHub(env, shopId)?.touch(shopId);
+    } catch (error) {
+      console.error("Shop hub touch failed", error);
+    }
+  })();
+  if (ctx) ctx.waitUntil(task);
+}
+
+/** `touchShopHub` from a Hono handler, after the response. */
+export function touchShopHubAfter(c: { env: Env; executionCtx: { waitUntil(promise: Promise<unknown>): void } }, shopId: string): void {
+  let ctx: { waitUntil(promise: Promise<unknown>): void } | null = null;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    // Local server and tests: nothing would keep the call alive.
+    return;
+  }
+  touchShopHub(c.env, shopId, ctx);
 }

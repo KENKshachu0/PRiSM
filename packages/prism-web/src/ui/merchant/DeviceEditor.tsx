@@ -15,6 +15,7 @@ import { useI18n } from "../../i18n";
 import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant, useResource } from "./shared";
 import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
 import { HaEntityFields, NEW_CONNECTION, haBody, useHaConnections, type HaDraft } from "./HaEntityFields";
+import { idlePath, useIdleSettings } from "./IdlePowerSettings";
 
 const draftOf = (binding?: { connectionId?: string | null; url: string; entityId: string } | null): HaDraft => ({
   connection: binding?.connectionId ?? NEW_CONNECTION,
@@ -75,6 +76,14 @@ export function DeviceEditor({
   const [enabled, setEnabled] = useState(value ? !!value.enabled : true);
 
   const ha = useHaConnections(shopId);
+  const idle = useIdleSettings(shopId);
+  const ownIdle = value ? idle.settings?.devices[value.id] : undefined;
+  const [idleMinutes, setIdleMinutes] = useState("");
+  const [idleExclude, setIdleExclude] = useState(false);
+  useEffect(() => {
+    setIdleMinutes(ownIdle?.minutes == null ? "" : String(ownIdle.minutes));
+    setIdleExclude(!!ownIdle?.exclude);
+  }, [ownIdle?.minutes, ownIdle?.exclude]);
   const [power, setPower] = useState<HaDraft>(() => draftOf(value?.homeAssistant));
   const [ac, setAc] = useState<HaDraft>(() => draftOf(value?.climate));
   // Once the shop's connections are known, an unset binding uses the first one,
@@ -294,7 +303,7 @@ export function DeviceEditor({
           setOpen("hinata_io");
           throw new Error(t("请先签发设备令牌，或改为外部中继。"));
         }
-        return api(`/api/v1/merchant/machines${value ? `/${value.id}` : ""}`, {
+        const saved = await api<{ machine: Machine }>(`/api/v1/merchant/machines${value ? `/${value.id}` : ""}`, {
           method: value ? "PATCH" : "POST",
           body: JSON.stringify({
             shopId,
@@ -334,6 +343,16 @@ export function DeviceEditor({
             ttlockLockId: caps.door ? Number(lockId) : null,
           }),
         });
+        // Idle settings live with the shop's rules, keyed by device.
+        const own = idle.settings?.devices[saved.machine.id];
+        const minutes = idleMinutes.trim() === "" ? null : Number(idleMinutes);
+        if (caps.power && ((own?.minutes ?? null) !== minutes || !!own?.exclude !== idleExclude)) {
+          await api(idlePath(shopId, `/devices/${encodeURIComponent(saved.machine.id)}`), {
+            method: "PUT",
+            body: JSON.stringify({ minutes, exclude: idleExclude }),
+          });
+        }
+        return saved;
       }}
     >
       <section className="grid gap-3">
@@ -440,6 +459,24 @@ export function DeviceEditor({
             tokenOptional={!!value?.homeAssistant}
             reload={ha.reload}
           />
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Field label="闲置多久算闲置（分钟）">
+              <input
+                className={input}
+                type="number"
+                min="0"
+                max="1440"
+                disabled={idleExclude}
+                placeholder={t("店铺默认（{minutes}）", { minutes: idle.settings?.device.defaultMinutes ?? 0 })}
+                value={idleMinutes}
+                onChange={(e) => setIdleMinutes(e.target.value)}
+              />
+            </Field>
+            <label className="flex items-center gap-2 self-end pb-3 text-sm">
+              <input type="checkbox" checked={idleExclude} onChange={(e) => setIdleExclude(e.target.checked)} />
+              {t("从不自动关机")}
+            </label>
+          </div>
         </CapabilityCard>
 
         <CapabilityCard

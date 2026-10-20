@@ -5,6 +5,7 @@ import { withOperationLease } from "@prism/application";
 import type { AppBindings, TenantShop } from "../../bindings.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
 import type { CardLoginResult } from "../../durable-objects/machine-relay.js";
+import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { createRuntimeBus, readPower } from "../../devices/runtime.js";
 import { clientIp, jsonError, nowIso } from "../../http.js";
@@ -216,6 +217,7 @@ async function handleLogin(c:C,routePublicId?:string) {
       "UPDATE player_operations SET result_json=? WHERE shop_id=? AND user_id=? AND id=?",
     ).bind(JSON.stringify(response),shop.id,user.id,operationId).run();
   }
+  touchShopHubAfter(c,shop.id);
   return c.json({ok:true,...response});
 }
 

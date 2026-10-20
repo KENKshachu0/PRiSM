@@ -1,3 +1,4 @@
+import { IdlePowerSettings } from "./IdlePowerSettings";
 import { ShopDataTransfer } from "./ShopDataTransfer";
 import { IdentityConverter } from "./IdentityConverter";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
@@ -87,7 +88,7 @@ const groups = [
   {
     id: "devices",
     label: "位置与设备",
-    description: "到店位置校验、投币冷却与门锁连接。",
+    description: "到店位置校验、投币冷却、闲置自动关机与门锁连接。",
     icon: MapPin,
   },
   {
@@ -315,6 +316,7 @@ export function SettingsPage({
                       </Field>
                     </ActionForm>
                   </section>
+                  <IdlePowerSettings />
                   <TTLockConnection
                     settings={settings.data.settings}
                     reload={settings.reload}

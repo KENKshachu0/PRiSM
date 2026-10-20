@@ -529,6 +529,7 @@ function changeLabel(event: DeviceEvent, t: (message: string, values?: Record<st
   const to = event.payload.to;
   if (event.name === "power") return t(to === "on" ? "电源已开启" : "电源已关闭");
   if (event.name === "link") return t(to === "online" ? "机台已连接" : "机台已断开");
+  if (event.name === "idle") return t(to === true ? "已闲置" : "恢复使用");
   if (event.name === "climate" && to && typeof to === "object") {
     const setting = to as { mode?: string; temperature?: number | null };
     const mode = t(climateModeName(String(setting.mode ?? "")));
@@ -542,6 +543,7 @@ function changeLabel(event: DeviceEvent, t: (message: string, values?: Record<st
 const actionLabels: Record<string, string> = {
   "power.on": "开机",
   "power.off": "关机",
+  "power.keep": "延迟关机",
   "climate.on": "开空调",
   "climate.off": "关空调",
   "climate.set_mode": "切换空调模式",

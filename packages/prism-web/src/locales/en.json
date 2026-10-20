@@ -1594,5 +1594,21 @@
   "实时状态需要一次 Home Assistant 管理员令牌，用来创建只读账号，用完不保存。": "Live state needs a Home Assistant administrator token once, to create a read-only account. It is not kept.",
   "正在启用实时状态…": "Turning on live state…",
   "管理员令牌": "Administrator token",
-  "这个令牌不是管理员的": "This token is not an administrator's"
+  "这个令牌不是管理员的": "This token is not an administrator's",
+  "闲置自动关机": "Idle power-off",
+  "刷卡、扫码投币、扫码开机都算有人在用。设置为不自动关机的设备不受影响。": "Card swipes, QR coins and QR power-ons count as use. Devices set never to power off are left alone.",
+  "保存闲置设置": "Save idle settings",
+  "店里没人后，全部关机（含空调）": "When nobody is in, switch everything off (air conditioners too)",
+  "没人多久后关机（分钟）": "Minutes empty before switching off",
+  "单台设备闲置多久算闲置（分钟，0 为不启用）": "Minutes without use before a device is idle (0 = off)",
+  "店里有人时，闲置的设备": "While players are in, an idle device is",
+  "只标记为闲置": "only marked idle",
+  "通过 Bot 提醒": "announced by the bot",
+  "直接关机": "switched off",
+  "闲置多久算闲置（分钟）": "Idle after (minutes)",
+  "店铺默认（{minutes}）": "Shop default ({minutes})",
+  "从不自动关机": "Never switch off automatically",
+  "延迟关机": "Keep on",
+  "已闲置": "Idle",
+  "恢复使用": "In use again"
 }

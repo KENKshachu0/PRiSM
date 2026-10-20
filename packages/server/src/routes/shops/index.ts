@@ -1,3 +1,4 @@
+import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -132,6 +133,14 @@ shopRouter.use("*", tenantMiddleware);
 // Restore the pre-consolidation event bridge at the tenant boundary. All player,
 // staff, cashier and integration mutations pass here, so new commands cannot silently
 // forget to wake the Live Activity. Send APNs after the response is committed.
+// Entries, checkouts and device commands can start or end an idle countdown.
+shopRouter.use("*", async (c, next) => {
+  await next();
+  if (!c.res.ok || c.req.method === "GET" || !c.req.path.startsWith("/api/v1/shops/")) return;
+  const shop = c.get("shop");
+  if (shop) touchShopHubAfter(c, shop.id);
+});
+
 shopRouter.use("*", async (c, next) => {
   await next();
   if (!c.res.ok || !liveActivityConfig(c.env) || c.res.headers.get("x-prism-operation-replayed") === "true" ||

@@ -422,6 +422,14 @@ export class MachineRelay extends BaseDurableObject<Env> {
         payload: event.params,
       }),
     );
+    // Someone is at this machine; its idle countdown starts over.
+    if (hinataIo.signals[name]?.activity) await this.touchHub();
+  }
+
+  private async touchHub() {
+    const channel = await this.channel();
+    if (!channel) return;
+    await shopHub(this.env, channel.shopId)?.touch(channel.shopId).catch((error) => console.error("Shop hub touch failed", error));
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

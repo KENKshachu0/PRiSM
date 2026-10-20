@@ -96,6 +96,19 @@ export async function readPower(
   return state === "on" || state === "off" ? state : null;
 }
 
+/**
+ * Keep a running device from being switched off as idle. Nothing is sent to
+ * Home Assistant, so it can never switch a device on; a device that is off
+ * (or whose state cannot be read) is refused.
+ */
+function keepRunner(runtime: DeviceRuntime): ActionRunner {
+  return async ({ device }) => {
+    const power = await readPower(runtime, device, { live: false });
+    if (power === "on") return { outcome: "ok" };
+    return { outcome: "failed", message: power === "off" ? "设备已关机" : "读取不到设备电源状态" };
+  };
+}
+
 function powerRunner(runtime: DeviceRuntime, service: "turn_on" | "turn_off"): ActionRunner {
   return async ({ device }) => {
     const binding = await haBinding(runtime, device);
@@ -293,6 +306,7 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
   const runners: Record<string, ActionRunner> = {
     "power.on": powerRunner(runtime, "turn_on"),
     "power.off": powerRunner(runtime, "turn_off"),
+    "power.keep": keepRunner(runtime),
     "climate.on": climateRunner(runtime, "turn_on", () => ({})),
     "climate.off": climateRunner(runtime, "turn_off", () => ({})),
     "climate.set_mode": climateRunner(runtime, "set_hvac_mode", (p) =>

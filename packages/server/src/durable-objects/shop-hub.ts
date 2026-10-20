@@ -6,6 +6,7 @@ import { listHaConnections } from "../devices/ha-connections.js";
 import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
 import type { HaEntityState, HaReport } from "../hardware/aimeio-relay.js";
 import type { HaWatch } from "./machine-relay.js";
+import { emptyIdleMemory, runIdleCheck, type IdleMemory, type IdleNotice } from "./shop-hub-idle.js";
 
 let BaseDurableObject: typeof DurableObject;
 try {
@@ -22,6 +23,8 @@ try {
 export const LEASE_MS = 90_000;
 /** A watcher that failed is not chosen again for this long, while others exist. */
 const BENCH_MS = 5 * 60_000;
+/** Bursts of activity are folded into one idle check this long after the first. */
+const TOUCH_DELAY_MS = 2000;
 
 /** An online IO able to watch Home Assistant for the shop. */
 type Candidate = { machineId: string; channel: string; since: number; benchedUntil?: number };
@@ -129,15 +132,60 @@ export class ShopHub extends BaseDurableObject<Env> {
     if (report.method === "ha.states") await this.apply(report.params.connection, report.params.states);
   }
 
+  /**
+   * Something that may change idle state happened: activity, an entry or a
+   * checkout, a settings change. The check runs shortly after, once per burst.
+   */
+  async touch(shopId: string): Promise<void> {
+    await this.shopId(shopId);
+    const at = Date.now() + TOUCH_DELAY_MS;
+    const pending = await this.ctx.storage.get<number>("touchAt");
+    if (pending === undefined || pending > at) await this.ctx.storage.put("touchAt", at);
+    await this.schedule();
+  }
+
   async alarm(): Promise<void> {
+    const now = Date.now();
     const leader = await this.ctx.storage.get<Leader>("leader");
-    if (leader && leader.leaseUntil <= Date.now()) {
+    if (leader && leader.leaseUntil <= now) {
       await this.bench(leader.machineId);
       await this.ctx.storage.delete("leader");
       await this.elect();
     }
+    const touchAt = await this.ctx.storage.get<number>("touchAt");
+    const idle = await this.load<IdleMemory>("idle", emptyIdleMemory());
+    if ((touchAt !== undefined && touchAt <= now) || (idle.wakeAt !== null && idle.wakeAt <= now)) {
+      await this.ctx.storage.delete("touchAt");
+      await this.checkIdle(idle);
+    }
     await this.schedule();
   }
+
+  private async checkIdle(memory: IdleMemory) {
+    const shopId = await this.shopId();
+    if (!shopId) return;
+    try {
+      const result = await runIdleCheck({
+        env: this.env,
+        shopId,
+        now: Date.now(),
+        memory,
+        watched: await this.load<Record<string, WatchedState>>("states", {}),
+        reminderLeadMs: await this.reminderLead(),
+      });
+      await this.ctx.storage.put("idle", result.memory);
+      if (result.notices.length) await this.notify(result.notices);
+    } catch (error) {
+      console.error("Idle check failed", error);
+    }
+  }
+
+  /** How long before a power-off the shop's bot wants to hear about it; null without one. */
+  protected async reminderLead(): Promise<number | null> {
+    return null;
+  }
+
+  protected async notify(_notices: IdleNotice[]): Promise<void> {}
 
   private async bench(machineId: string) {
     const candidates = await this.load<Record<string, Candidate>>("candidates", {});
@@ -244,8 +292,11 @@ export class ShopHub extends BaseDurableObject<Env> {
       for (const target of targets[key] ?? []) {
         try {
           if (target.capability === "power") {
-            if ((next.state === "on" || next.state === "off") && previous?.state !== next.state)
+            if ((next.state === "on" || next.state === "off") && previous?.state !== next.state) {
               await bus.report({ device: { id: target.deviceId }, capability: "power", key: "power", value: next.state, at });
+              // Switched on starts an idle countdown; switched off may end one.
+              if (previous) await this.touch(shopId);
+            }
           } else if (next.state !== "unavailable" && next.state !== "unknown") {
             const setting = climateSetting(next);
             if (!previous || JSON.stringify(climateSetting(previous)) !== JSON.stringify(setting))
@@ -262,7 +313,11 @@ export class ShopHub extends BaseDurableObject<Env> {
   /** Wake for the earliest thing that needs checking. */
   private async schedule() {
     const leader = await this.ctx.storage.get<Leader>("leader");
-    const due = leader ? leader.leaseUntil : null;
+    const touchAt = await this.ctx.storage.get<number>("touchAt");
+    const idle = await this.ctx.storage.get<IdleMemory>("idle");
+    const due = [leader?.leaseUntil, touchAt, idle?.wakeAt ?? undefined]
+      .filter((at): at is number => typeof at === "number")
+      .reduce<number | null>((earliest, at) => (earliest === null || at < earliest ? at : earliest), null);
     if (due === null) await this.ctx.storage.deleteAlarm?.();
     else await this.ctx.storage.setAlarm(due);
   }
