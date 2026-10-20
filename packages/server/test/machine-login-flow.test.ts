@@ -57,9 +57,11 @@ describe("pre-fork authenticated Aime machine login",()=>{
         body:JSON.stringify({ticket,cardId:"card-one"}),
       }),env);
       expect(res.status).toBe(200);
-      const reply=(await res.json()) as {data:{ok:boolean;status:string;operationId:string}};
+      const reply=(await res.json()) as {data:{ok:boolean;status:string;operationId:string;card:string}};
       expect(reply.data.ok).toBe(true);
       expect(reply.data.status).toBe("completed");
+      // An external relay reports nothing back, so the card is only known as sent.
+      expect(reply.data.card).toBe("sent");
       const sent=responseFetch.mock.calls;
       expect(sent).toHaveLength(1);
       expect(sent[0]?.[0]).toBe("https://hinata.example/scan");
@@ -119,5 +121,46 @@ describe("pre-fork authenticated Aime machine login",()=>{
       expect(responseFetch).not.toHaveBeenCalled();
       expect((sqlite.query("SELECT COUNT(*) AS n FROM device_operations").get() as {n:number}).n).toBe(0);
     }finally{responseFetch.mockRestore(); sqlite.close();}
+  });
+});
+
+describe("direct-connect card login result",()=>{
+  async function embedded(login:string){
+    const ctx=await fixture();
+    ctx.sqlite.run(
+      `UPDATE device_capabilities SET config_json='{"transport":"embedded","channel":"m_test","coinKey":32,"coinAfterSwipe":true}',secret_json='{}'
+       WHERE device_id='machine-id' AND capability='hinata_io'`,
+    );
+    const cards:Array<Record<string,unknown>>=[],presses:unknown[]=[];
+    (ctx.env as any).MACHINE_RELAY={getByName:()=>({
+      async sendCard(input:Record<string,unknown>){cards.push(input);return {ok:true,login};},
+      async sendKeyPress(input:unknown){presses.push(input);return {ok:true};},
+    })};
+    const res=await ctx.app.fetch(new Request("https://prism.test/api/v1/machines/login",{
+      method:"POST",headers:{authorization:`Bearer ${ctx.token}`,"content-type":"application/json"},
+      body:JSON.stringify({ticket:ctx.ticket,cardId:"card-one"}),
+    }),ctx.env);
+    const reply=(await res.json()) as {data:{card:string;coin?:{status:string;reason?:string}}};
+    ctx.sqlite.close();
+    return {res,reply:reply.data,cards,presses};
+  }
+
+  it("waits for the game and reports how its reader answered",async()=>{
+    const {res,reply,cards,presses}=await embedded("ok");
+    expect(res.status).toBe(200);
+    expect(reply.card).toBe("ok");
+    expect(cards[0]?.wait).toEqual({readMs:4500,resultMs:15_000});
+    // Coins follow a confirmed sign-in.
+    expect(reply.coin?.status).toBe("sent");
+    expect(presses).toHaveLength(1);
+  });
+
+  it("does not insert coins for a card the game never took or turned away",async()=>{
+    for(const [login,reason] of [["not_read","CARD_NOT_READ"],["failed","LOGIN_FAILED"]]){
+      const {reply,presses}=await embedded(login!);
+      expect(reply.card).toBe(login!);
+      expect(reply.coin).toMatchObject({status:"skipped",reason});
+      expect(presses).toEqual([]);
+    }
   });
 });

@@ -4,6 +4,7 @@ import { createD1Repositories } from "@prism/adapter-d1";
 import { withOperationLease } from "@prism/application";
 import type { AppBindings, TenantShop } from "../../bindings.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
+import type { CardLoginResult } from "../../durable-objects/machine-relay.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { createRuntimeBus, readPower } from "../../devices/runtime.js";
 import { clientIp, jsonError, nowIso } from "../../http.js";
@@ -17,6 +18,14 @@ import { resolveMachineSession } from "./machine-session.js";
 
 export const machineLoginRouter = new Hono<AppBindings>();
 type C = Context<AppBindings, any, any>;
+
+/**
+ * What the player is told about a card: signed in, turned away, taken without a
+ * verdict, never taken, or — through a relay that reports nothing — just sent.
+ */
+type CardOutcome = CardLoginResult | "sent";
+const isCardLoginResult = (value: unknown): value is CardLoginResult =>
+  value === "ok" || value === "failed" || value === "read" || value === "not_read";
 
 const machineLoginSchema = z.object({
   cardId: z.string().min(1, "请选择卡片"),
@@ -156,21 +165,26 @@ async function handleLogin(c:C,routePublicId?:string) {
   ).bind(shop.id,user.id,operationId,now,machine.id).run();
   const bus=createRuntimeBus(runtime);
   const actor=playerId?{type:"player" as const,playerId}:{type:"staff" as const,staffId:`user:${user.id}`};
-  // The card number reaches the machine only; the log keeps the card id.
+  // The card number reaches the machine only; the log keeps the card id. A
+  // direct-connect machine also reports whether the game took the card and how
+  // its reader answered; through a relay all we learn is that it was sent.
   const scan=await bus.perform({
     device,action:"aime.scan",actor,operationId,
-    payload:{cardId:card.id},transient:{accessCode:card.access_code},
+    payload:{cardId:card.id},transient:{accessCode:card.access_code,awaitLogin:true},
   });
   const sent=scan.operation.status==="succeeded";
   const status=sent?"completed":scan.operation.status==="pending"?"unknown":"failed";
+  const login=scan.result.login;
+  const cardResult:CardOutcome|undefined=sent?(isCardLoginResult(login)?login:"sent"):undefined;
   await recordLoginEvent(c,{
     userId:user.id,cardId:card.id,machineId:machine.id,ip,
     lat:body.lat??null,lng:body.lng??null,accuracy:body.accuracy??null,
     result:sent?"sent":"failed",responseCode:scan.httpStatus,errorMessage:scan.operation.failure,
   });
   const response:{
-    operationId:string;status:string;coin?:{status:"sent"|"skipped"|"failed"|"unknown";operationId:string;reason?:string}
-  }={operationId,status};
+    operationId:string;status:string;card?:CardOutcome;
+    coin?:{status:"sent"|"skipped"|"failed"|"unknown";operationId:string;reason?:string}
+  }={operationId,status,...(cardResult?{card:cardResult}:{})};
   await c.env.DB.prepare(
     "UPDATE player_operations SET status=?,result_json=? WHERE shop_id=? AND user_id=? AND id=?",
   ).bind(status,JSON.stringify(response),shop.id,user.id,operationId).run();
@@ -186,7 +200,11 @@ async function handleLogin(c:C,routePublicId?:string) {
     const coinId=crypto.randomUUID();
     response.coin={operationId:coinId,status:"unknown"};
     try {
-      if(!await claimCoin(c,shop.id,machine.id,coinId))response.coin={
+      // Coins for a game that never took the card, or turned it away, are lost.
+      if(cardResult==="not_read"||cardResult==="failed")response.coin={
+        operationId:coinId,status:"skipped",reason:cardResult==="not_read"?"CARD_NOT_READ":"LOGIN_FAILED",
+      };
+      else if(!await claimCoin(c,shop.id,machine.id,coinId))response.coin={
         operationId:coinId,status:"skipped",reason:"COIN_COOLDOWN",
       };
       else {

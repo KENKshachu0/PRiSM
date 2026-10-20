@@ -1580,5 +1580,10 @@
   "调低温度": "Lower temperature",
   "调高温度": "Raise temperature",
   "风速": "Fan speed",
-  "温度": "Temperature"
+  "温度": "Temperature",
+  "登录成功": "Signed in",
+  "登录失败": "Sign-in failed",
+  "未读卡": "Card not read",
+  "游戏登录成功": "Game signed in",
+  "游戏拒绝了卡片": "Game rejected the card"
 }

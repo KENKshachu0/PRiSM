@@ -22,6 +22,12 @@ import { doorConfigOf, hinataConfigOf, readSecret, type Device } from "./device.
 
 const KEY_PRESS_TTL_MS = 30_000;
 const HA_TIMEOUT_MS = 10_000;
+/**
+ * A game waiting for a card polls its reader continuously, so an unread card
+ * means it is busy elsewhere; the IO drops the card after 3 s. The verdict needs
+ * the game's server, which can take several seconds.
+ */
+const CARD_LOGIN_WAIT = { readMs: 4500, resultMs: 15_000 };
 
 type HaBinding = { url: string; token: string; entityId: string };
 
@@ -175,8 +181,13 @@ function cardRunner(runtime: DeviceRuntime): ActionRunner {
     if (config.transport === "embedded") {
       const relay = machineRelayNamespace(runtime.env);
       if (!relay || !config.channel) return { outcome: "failed", message: "直连中继尚未配置" };
-      const sent = await relay.getByName(config.channel).sendCard({ accessCode, source: operationId });
-      return sent.ok ? { outcome: "ok" } : { outcome: "failed", message: sent.error ?? "机台未在线" };
+      const sent = await relay.getByName(config.channel).sendCard({
+        accessCode,
+        source: operationId,
+        ...(payload.awaitLogin === true ? { wait: CARD_LOGIN_WAIT } : {}),
+      });
+      if (!sent.ok) return { outcome: "failed", message: sent.error ?? "机台未在线" };
+      return { outcome: "ok", ...(sent.login ? { result: { login: sent.login } } : {}) };
     }
     const url = await readSecret(runtime.db, device, "hinata_io", "url", runtime.env.URL_ENCRYPTION_KEY);
     if (!url) return { outcome: "failed", message: "机台未配置连接地址" };

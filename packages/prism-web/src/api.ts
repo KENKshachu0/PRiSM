@@ -46,6 +46,11 @@ export type PublicMachine = {
 
 export type MachineLoginResult = {
   ok: true;
+  /**
+   * Direct-connect machines report what the game did with the card: signed in,
+   * turned away, taken without a verdict, or never taken. Others only say sent.
+   */
+  card?: "ok" | "failed" | "read" | "not_read" | "sent";
   coin?: {
     status: "sent" | "skipped" | "failed" | "unknown";
     operationId: string;

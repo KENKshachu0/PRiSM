@@ -899,7 +899,9 @@ function DeviceHistory({ device }: { device: Machine }) {
                     )}
                     {e.kind === "change"
                       ? changeLabel(e, t)
-                      : t(actionLabels[e.name] ?? e.name)}
+                      : e.name === "card.login"
+                        ? t(e.payload.result === "ok" ? "游戏登录成功" : "游戏拒绝了卡片")
+                        : t(actionLabels[e.name] ?? e.name)}
                   </span>
                   <p className="mt-1 text-xs text-ink/50">{date(e.at)}</p>
                 </div>

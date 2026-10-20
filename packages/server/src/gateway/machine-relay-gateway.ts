@@ -1,5 +1,6 @@
 import type { Env } from "../bindings.js";
 import { sha256Hex } from "../crypto.js";
+import type { CardLoginResult, CardWaitLimits } from "../durable-objects/machine-relay.js";
 import { machineRelayPath } from "./relay-path.js";
 
 export type RelayGatewayResult =
@@ -77,8 +78,13 @@ function rejected(reason: string): Response {
  */
 export type MachineRelayNamespace = {
   getByName(name: string): {
-    sendCard(input: { accessCode: string; source?: string; disposable?: boolean; duration?: number }):
-      Promise<{ ok: boolean; error?: string }>;
+    sendCard(input: {
+      accessCode: string;
+      source?: string;
+      disposable?: boolean;
+      duration?: number;
+      wait?: CardWaitLimits;
+    }): Promise<{ ok: boolean; error?: string; login?: CardLoginResult }>;
     sendKeyPress(input: { key: number; messageId: string; expiresAt: number; count?: number }):
       Promise<{ ok: boolean; error?: string }>;
     getCapabilities(): Promise<{

@@ -79,6 +79,82 @@ function attachAgent(sockets: FakeSocket[]) {
   return ws;
 }
 
+const OP = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
+const upgradeRequest = () =>
+  new Request("https://prism.test/io/ws?role=agent", {
+    headers: { Upgrade: "websocket", "x-prism-relay-shop": "shop-1", "x-prism-relay-machine": "machine-1" },
+  });
+const consumed = (source: string, unit?: number) =>
+  JSON.stringify({
+    jsonrpc: "2.0",
+    method: "event.cardConsumed",
+    params: { interface: "aimeio", ...(unit === undefined ? {} : { unit_no: unit }), card: { source } },
+  });
+const led = (unit: number, r: number, g: number, b: number) =>
+  JSON.stringify({ jsonrpc: "2.0", method: "event.ledSet", params: { interface: "aimeio", unit_no: unit, r, g, b } });
+const LIMITS = { readMs: 30, resultMs: 60 };
+
+describe("MachineRelay card login", () => {
+  it("reports a sign-in when the reader that took the card turns blue", async () => {
+    const { relay, sockets, sqlite } = fixture();
+    const ws = attachAgent(sockets);
+    await relay.fetch(upgradeRequest());
+    const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
+    await relay.webSocketMessage(ws as any, consumed(OP, 1));
+    // The other player's reader changing colour is not this card's verdict.
+    await relay.webSocketMessage(ws as any, led(0, 0, 0, 255));
+    await relay.webSocketMessage(ws as any, led(1, 0, 0, 255));
+    expect(await result).toEqual({ ok: true, login: "ok" });
+    await Bun.sleep(5);
+    const signal = sqlite.query<{ operation_id: string; result: string }, []>(
+      "SELECT operation_id, json_extract(payload_json,'$.result') AS result FROM device_events WHERE name='card.login'",
+    ).all();
+    expect(signal).toEqual([{ operation_id: OP, result: "ok" }]);
+  });
+
+  it("reports a rejection for a red or a yellow reader", async () => {
+    for (const [r, g, b] of [[255, 0, 0], [255, 255, 0]] as const) {
+      const { relay, sockets } = fixture();
+      const ws = attachAgent(sockets);
+      const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
+      await relay.webSocketMessage(ws as any, consumed(OP, 0));
+      await relay.webSocketMessage(ws as any, led(0, r, g, b));
+      expect((await result).login).toBe("failed");
+    }
+  });
+
+  it("ignores reader colours seen before the game took the card", async () => {
+    const { relay, sockets } = fixture();
+    const ws = attachAgent(sockets);
+    const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
+    await relay.webSocketMessage(ws as any, led(0, 0, 0, 255));
+    expect((await result).login).toBe("not_read");
+  });
+
+  it("says the card was taken when the reader shows no verdict in time", async () => {
+    const { relay, sockets } = fixture();
+    const ws = attachAgent(sockets);
+    const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
+    await relay.webSocketMessage(ws as any, consumed(OP, 0));
+    await relay.webSocketMessage(ws as any, led(0, 10, 20, 30));
+    expect((await result).login).toBe("read");
+  });
+
+  it("ends an older wait when a newer card replaces it on the IO", async () => {
+    const { relay, sockets } = fixture();
+    attachAgent(sockets);
+    const first = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: { readMs: 5000, resultMs: 5000 } });
+    await relay.sendCard({ accessCode: "99887766554433221100" });
+    expect((await first).login).toBe("not_read");
+  });
+
+  it("does not wait for a card that never reached a device", async () => {
+    const { relay } = fixture();
+    expect(await relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS }))
+      .toEqual({ ok: false, error: "机台未在线或连接地址不正确。" });
+  });
+});
+
 describe("MachineRelay delivery", () => {
   it("refuses an upgrade that did not come through the authenticated gateway", async () => {
     const { relay } = fixture();
@@ -173,8 +249,35 @@ describe("MachineRelay delivery", () => {
     attachAgent(sockets);
     await relay.sendCard({ accessCode: "01234567890123456789" });
     await relay.sendCard({ accessCode: "99887766554433221100" });
-    expect((state.get("state-message") as { body: { value: string } }).body.value)
+    expect((state.get("state-message") as { message: { body: { value: string } } }).message.body.value)
       .toBe("99887766554433221100");
+  });
+
+  it("does not replay a card the IO would already have dropped", async () => {
+    // Replaying it on a later boot would sign the previous player in again.
+    const { relay, sockets, state } = fixture();
+    attachAgent(sockets);
+    await relay.sendCard({ accessCode: "01234567890123456789", source: "op-1" });
+    (state.get("state-message") as { expiresAt: number }).expiresAt = Date.now() - 1;
+    sockets.length = 0;
+    await relay.fetch(upgradeRequest());
+    expect(sockets[0]!.sent).toEqual([]);
+    expect(state.has("state-message")).toBe(false);
+  });
+
+  it("drops a card stored by an older version, which had no lifetime", async () => {
+    const { relay, sockets, state } = fixture();
+    state.set("state-message", { action: "SET_CARD", body: { type: "aime", value: "01234567890123456789" } });
+    await relay.fetch(upgradeRequest());
+    expect(sockets[0]!.sent).toEqual([]);
+  });
+
+  it("forgets the stored card once the game has taken it", async () => {
+    const { relay, sockets, state } = fixture();
+    const ws = attachAgent(sockets);
+    await relay.sendCard({ accessCode: "01234567890123456789", source: OP });
+    await relay.webSocketMessage(ws as any, consumed(OP, 0));
+    expect(state.has("state-message")).toBe(false);
   });
 
   it("does not store a key press as channel state", async () => {

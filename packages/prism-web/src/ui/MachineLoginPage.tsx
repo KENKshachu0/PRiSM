@@ -5,8 +5,19 @@ import { useCallback, useEffect, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { ShopHero, SessionSignIn } from "./SessionContent";
-import { Api, ApiError, type Card, type PublicMachine } from "../api";
+import { Api, ApiError, type Card, type MachineLoginResult, type PublicMachine } from "../api";
 import { useAuth } from "./AuthContext";
+
+type CardOutcome = NonNullable<MachineLoginResult["card"]>;
+const CARD_TEXT: Record<CardOutcome, string> = {
+  ok: "登录成功",
+  failed: "登录失败",
+  not_read: "未读卡",
+  read: "已刷卡",
+  sent: "已刷卡",
+};
+/** Outcomes where the game has the card; the others leave nothing to tick. */
+const CARD_TAKEN = new Set<CardOutcome>(["ok", "read", "sent"]);
 
 export function MachineLoginPage() {
   const { ticket: paramTicket = "", publicId = "" } = useParams();
@@ -109,7 +120,8 @@ function MachineSessionPage({
   const [cards, setCards] = useState<Card[]>([]);
   const [cardsLoading, setCardsLoading] = useState(true);
   const [cardsError, setCardsError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "locating" | "sending" | "success">("idle");
+  const [status, setStatus] = useState<"idle" | "locating" | "sending" | "done">("idle");
+  const [outcome, setOutcome] = useState<CardOutcome>("sent");
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
 
@@ -154,8 +166,10 @@ function MachineSessionPage({
         accuracy: position?.coords.accuracy,
         ticket,
       });
-      setStatus("success");
-      window.setTimeout(() => setStatus("idle"), 1000);
+      const card = result.card ?? "sent";
+      setOutcome(card);
+      setStatus("done");
+      window.setTimeout(() => setStatus("idle"), CARD_TAKEN.has(card) ? 1000 : 2500);
       if (["failed", "unknown"].includes(result.coin?.status ?? "")) window.alert(errorText("刷卡已完成，投币请求失败，请联系店员。"));
     } catch (caught) {
       if (caught instanceof ApiError && caught.sessionExpired) {
@@ -219,8 +233,9 @@ function MachineSessionPage({
             <div className="credential-list">
               {cards.map((card) => {
                 const active = activeCardId === card.id;
+                const done = active && status === "done";
                 const detail =
-                  active && status === "success" ? t("已刷卡") :
+                  done ? t(CARD_TEXT[outcome]) :
                   active && status === "locating"
                     ? t("确认位置…")
                     : active && status === "sending"
@@ -245,8 +260,10 @@ function MachineSessionPage({
                         {detail}
                       </span>
                     </span>
-                    {active && status === "success" ? (
-                      <span aria-label={t("已刷卡")}>✓</span>
+                    {done && CARD_TAKEN.has(outcome) ? (
+                      <span aria-hidden="true">✓</span>
+                    ) : done ? (
+                      <ChevronRight size={20} className="text-ink/30" />
                     ) : active && busy ? (
                       <Loader2 size={20} className="animate-spin text-mint" />
                     ) : (

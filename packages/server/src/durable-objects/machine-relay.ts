@@ -17,6 +17,9 @@ import {
 const STATE_KEY = "state-message";
 const CHANNEL_KEY = "channel";
 
+/** The IO forgets a remote card this long after receiving it unless told otherwise. */
+const CARD_LIFETIME_MS = 3000;
+
 /** IO event methods as device signals of the `hinata_io` capability. */
 const SIGNAL_NAMES: Record<IoEventMethod, string> = {
   "event.cardStateChanged": "card.state",
@@ -32,6 +35,40 @@ type Channel = { shopId: string; machineId: string };
  * sockets and their attachments survive.
  */
 type Attachment = ClientCapabilities & { e2ee?: boolean };
+
+/**
+ * What became of a card sent to a waiting game: the reader turned blue (signed
+ * in) or red/yellow (rejected), the game took it but showed no verdict, or it
+ * expired unread because the game was not polling the reader.
+ */
+export type CardLoginResult = "ok" | "failed" | "read" | "not_read";
+
+/** How long to wait for each step of a card login. */
+export type CardWaitLimits = { readMs: number; resultMs: number };
+
+/** A stored card is only worth replaying while the IO would still hold it. */
+type StoredCard = { message: RelayMessage; expiresAt: number; source?: string };
+
+/** `unit` stays null until the game takes the card from one of its readers. */
+type CardWait = {
+  unit: number | null;
+  resultMs: number;
+  timer: ReturnType<typeof setTimeout>;
+  settle: (result: CardLoginResult) => void;
+};
+
+/** A consumed event without a reader number matches a colour on any reader. */
+const ANY_UNIT = -1;
+
+/** Reader colours a waiting game shows once its server has answered for the card. */
+export function loginVerdict(r: unknown, g: unknown, b: unknown): "ok" | "failed" | null {
+  if (r === 0 && g === 0 && b === 255) return "ok";
+  if (r === 255 && b === 0 && (g === 0 || g === 255)) return "failed";
+  return null;
+}
+
+const unitOf = (params: Record<string, unknown>) =>
+  typeof params.unit_no === "number" && Number.isInteger(params.unit_no) ? params.unit_no : null;
 
 let BaseDurableObject: typeof DurableObject;
 try {
@@ -56,6 +93,12 @@ try {
  * the channel headers it is given and never parses a credential itself.
  */
 export class MachineRelay extends BaseDurableObject<Env> {
+  /**
+   * Cards a caller is waiting on, by operation id. Memory is enough: the waiting
+   * call keeps the object awake, and nothing else reads these.
+   */
+  private readonly waits = new Map<string, CardWait>();
+
   private socketCapabilities(ws: WebSocket): ClientCapabilities {
     return capabilitiesForAttachment(ws.deserializeAttachment());
   }
@@ -121,16 +164,29 @@ export class MachineRelay extends BaseDurableObject<Env> {
     if (capabilities.role === "agent") await this.setLink(true);
 
     // A reconnecting device cleared its card locally, so it must learn the card
-    // it is still holding.
-    const state = await this.ctx.storage.get<RelayMessage>(STATE_KEY);
-    if (state) {
+    // it was still holding. Only while it would still hold it: a card replayed
+    // after its lifetime would sign the last player in again on a later boot.
+    const stored = await this.storedCard();
+    if (stored) {
       try {
-        server.send(prepareMessageForClient(JSON.stringify(state), capabilities));
+        server.send(prepareMessageForClient(JSON.stringify(stored.message), capabilities));
       } catch {
         // Socket already gone; the next command will deliver the state again.
       }
     }
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** The card to hand a reconnecting device, dropping one that has lapsed. */
+  private async storedCard(): Promise<StoredCard | null> {
+    const stored = await this.ctx.storage.get<Partial<StoredCard>>(STATE_KEY);
+    if (!stored) return null;
+    // Older objects stored the bare message with no lifetime; treat it as lapsed.
+    if (!stored.message || typeof stored.expiresAt !== "number" || stored.expiresAt <= Date.now()) {
+      await this.ctx.storage.delete(STATE_KEY);
+      return null;
+    }
+    return stored as StoredCard;
   }
 
   /** What the connected IO reported about itself, for the device board. */
@@ -150,15 +206,21 @@ export class MachineRelay extends BaseDurableObject<Env> {
    * Deliver a card and remember it for replay.
    *
    * `source` rides along so a later `event.cardConsumed` can be tied back to the
-   * exact operation that sent the card.
+   * exact operation that sent the card. With `wait`, the call returns only once
+   * the game has taken the card and its reader showed a verdict, or a limit ran out.
    */
   async sendCard(input: {
     accessCode: string;
     source?: string;
     disposable?: boolean;
     duration?: number;
-  }): Promise<{ ok: boolean; error?: string }> {
-    return this.deliver(
+    wait?: CardWaitLimits;
+  }): Promise<{ ok: boolean; error?: string; login?: CardLoginResult }> {
+    // The IO holds one card at a time, so a newer card ends any older wait.
+    for (const [source, wait] of this.waits) if (wait.unit === null) this.finish(source, "not_read");
+    const waiting = input.wait && input.source ? this.waitFor(input.source, input.wait) : null;
+    const lifetime = input.duration ?? CARD_LIFETIME_MS;
+    const sent = await this.deliver(
       {
         action: "SET_CARD",
         body: {
@@ -169,8 +231,62 @@ export class MachineRelay extends BaseDurableObject<Env> {
           ...(input.duration ? { duration: input.duration } : {}),
         },
       },
-      true,
+      { expiresAt: Date.now() + lifetime, ...(input.source ? { source: input.source } : {}) },
     );
+    if (!sent.ok) {
+      if (input.source) this.finish(input.source, "not_read", false);
+      return sent;
+    }
+    return waiting ? { ok: true, login: await waiting } : sent;
+  }
+
+  /** Start waiting before the card leaves, so a fast game cannot beat the wait. */
+  private waitFor(source: string, limits: CardWaitLimits): Promise<CardLoginResult> {
+    return new Promise((resolve) => {
+      this.waits.set(source, {
+        unit: null,
+        resultMs: limits.resultMs,
+        timer: setTimeout(() => this.finish(source, "not_read"), limits.readMs),
+        settle: resolve,
+      });
+    });
+  }
+
+  private finish(source: string, result: CardLoginResult, settle = true) {
+    const wait = this.waits.get(source);
+    if (!wait) return;
+    clearTimeout(wait.timer);
+    this.waits.delete(source);
+    if (settle) wait.settle(result);
+  }
+
+  /** The game took the card: now wait for that reader's colour. */
+  private cardTaken(source: string, unit: number | null) {
+    const wait = this.waits.get(source);
+    if (!wait || wait.unit !== null) return;
+    clearTimeout(wait.timer);
+    wait.unit = unit ?? ANY_UNIT;
+    wait.timer = setTimeout(() => this.finish(source, "read"), wait.resultMs);
+  }
+
+  private readerColour(params: Record<string, unknown>) {
+    const verdict = loginVerdict(params.r, params.g, params.b);
+    if (!verdict) return;
+    const unit = unitOf(params);
+    for (const [source, wait] of this.waits) {
+      // A cabinet has a reader per player; only the one that took the card counts.
+      if (wait.unit === null || (wait.unit !== ANY_UNIT && wait.unit !== unit)) continue;
+      this.finish(source, verdict);
+      void this.record("card.login", (bus, channel) =>
+        bus.signal({
+          device: { id: channel.machineId },
+          capability: "hinata_io",
+          name: "card.login",
+          operationId: source,
+          payload: { result: verdict, unit_no: unit },
+        }),
+      );
+    }
   }
 
   /**
@@ -204,13 +320,13 @@ export class MachineRelay extends BaseDurableObject<Env> {
           expires_at: input.expiresAt,
         },
       },
-      false,
+      null,
     );
   }
 
   private async deliver(
     message: RelayMessage,
-    store: boolean,
+    store: Omit<StoredCard, "message"> | null,
   ): Promise<{ ok: boolean; error?: string }> {
     const agents = this.agents();
     if (agents.length === 0) return { ok: false, error: "机台未在线或连接地址不正确。" };
@@ -222,7 +338,7 @@ export class MachineRelay extends BaseDurableObject<Env> {
         error: "该机台仍配置了 remotePassword（端到端加密），直连模式需要将其清空。",
       };
     }
-    if (store) await this.ctx.storage.put(STATE_KEY, message);
+    if (store) await this.ctx.storage.put<StoredCard>(STATE_KEY, { message, ...store });
     const encoded = JSON.stringify(message);
     for (const ws of agents) {
       try {
@@ -252,16 +368,26 @@ export class MachineRelay extends BaseDurableObject<Env> {
 
     const event = parseIoEvent(message);
     if (!event) return;
+    if (event.method === "event.ledSet") {
+      // Never stored, but a waiting card login reads its verdict from it.
+      this.readerColour(event.params);
+      return;
+    }
     const name = SIGNAL_NAMES[event.method];
-    // The bus drops signals the catalog does not store (per-frame LED updates);
-    // checking first skips the storage round trip for them entirely.
+    const source = ioEventSource(event.params);
+    if (event.method === "event.cardConsumed" && source) {
+      this.cardTaken(source, unitOf(event.params));
+      // The game has the card, so a reconnect must not hand it over again.
+      const stored = await this.ctx.storage.get<Partial<StoredCard>>(STATE_KEY);
+      if (stored?.source === source) await this.ctx.storage.delete(STATE_KEY);
+    }
     if (!hinataIo.signals[name]?.store) return;
     await this.record(name, (bus, channel) =>
       bus.signal({
         device: { id: channel.machineId },
         capability: "hinata_io",
         name,
-        operationId: ioEventSource(event.params),
+        operationId: source,
         payload: event.params,
       }),
     );

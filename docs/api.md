@@ -392,7 +392,7 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/devic
 
 ## 机台直连 (`/io/ws`)
 
-HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`。令牌在设备看板把 HINATA IO 设为直连后签发、只显示一次；令牌无效或设备停用返回 401。平台通过这条连接下发 `SET_CARD`、`KEY_PRESS`，机台回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`。协议、能力模型和设备日志见 [集成与设备](integrations-and-machines.md)。
+HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`。令牌在设备看板把 HINATA IO 设为直连后签发、只显示一次；令牌无效或设备停用返回 401。平台通过这条连接下发 `SET_CARD`、`KEY_PRESS`，机台回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`。扫码刷卡在直连机台上会等到游戏取走卡并亮出结果灯再返回，响应的 `card` 字段为 `ok`／`failed`／`read`／`not_read`（外部中继为 `sent`）。协议、能力模型和设备日志见 [集成与设备](integrations-and-machines.md)。
 
 原先只在本地 Bun 服务端提供的 `GET /rpc/machine/ws`（`hello`/`ack`/`ping` 协议、`machine_ws` 执行器）已移除。
 

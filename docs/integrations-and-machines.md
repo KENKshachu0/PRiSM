@@ -150,7 +150,7 @@ await client.requestScanByIdentity(
 | --- | --- | --- | --- | --- | --- |
 | `power` | — | `binding`（HA 地址、`switch.*`/`input_boolean.*` 实体、令牌） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
 | `climate` | — | `binding`（HA 地址、`climate.*` 实体、令牌） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威，实时读取 |
-| `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`led.set`（不存） | `link`，平台权威 |
+| `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`card.login`（由读卡器灯光推出）、`led.set`（不存） | `link`，平台权威 |
 | `door` | `lockId` | — | `door.open` | — | — |
 | `mahjong` | `capacity`、`pricingConfigIds` | — | —（上下桌走麻将流程） | — | — |
 
@@ -226,6 +226,18 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 - 直连不做端到端加密：平台既是中继也是控制端，卡号本来就由平台从 `cards.access_code` 取出，身份由设备令牌承担，机密性由 `wss://` 承担。保存为直连时会丢弃之前给外部中继存的密码；请求里同时提交密码返回 `DEVICE_RELAY_PASSWORD_CONFLICT`。机台若仍设置了 `remotePassword`，会在 `CLIENT_HELLO` 里声明 `e2ee: true`，平台拒绝下发并在设备看板提示清空。
 - 通道是 `MachineRelay` Durable Object（binding `MACHINE_RELAY`，迁移 tag `machine-relay-v1`）。控制端接口不对外暴露，`/io/ws` 是唯一公开路径。设备看板上的「已连接」直接问 Durable Object，不读存储：部署重启会断开连接却不触发断开回调。
 - 机台通过同一连接回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`，分别记为 `card.state`、`card.consumed` 信号；`led.set` 每帧都有，不存储。下发刷卡时平台把操作 ID 放进 `source`，机台原样回传；只有 UUID 形式的 `source` 被当作关联，`Remote`、`HINATA(<实例>)` 等机台本地来源不关联任何操作。
+- 机台断线重连时，平台只重发**仍在有效期内、且还没被游戏取走**的那张卡（客户端默认 3 秒后丢弃远程卡）。游戏取走后（`source` 一致的 `card.consumed`）或过了有效期，存着的卡就被删除；旧版本存下的、没有有效期的卡一律不重发。否则机台几小时后重启，会把上一位玩家的卡再塞进游戏。
+
+#### 扫码刷卡的结果
+
+玩家在扫码页刷卡（`POST /api/v1/machines/login`）时，直连机台会等到游戏给出结果再返回：
+
+1. 发卡前先在 `MachineRelay` 内存里登记等待，再下发 `SET_CARD`；等待期间请求未返回，对象不会休眠。
+2. 约 4.5 秒内收到 `source` 一致的 `event.cardConsumed`，记下是哪个读卡器（`unit_no`）取走的；收不到就是 `not_read`（游戏不在读卡，卡已作废）。
+3. 之后约 15 秒内，**同一个读卡器**的 `event.ledSet` 变成 `0000FF` 记为登录成功（`ok`），变成 `FF0000` 或 `FFFF00` 记为被拒（`failed`），并存一条 `card.login` 信号（`payload.result`）。等不到这三种颜色就是 `read`：游戏拿到了卡，但没有给出结论。
+4. 新卡会顶掉机台上还没被取走的旧卡，旧卡的等待随即以 `not_read` 结束。
+
+响应新增 `card` 字段：`ok`、`failed`、`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 和 `failed` 不投币，`coin` 返回 `skipped`，`reason` 分别为 `CARD_NOT_READ`、`LOGIN_FAILED`。扫码页对应显示「登录成功 ✓」「登录失败」「未读卡」「已刷卡 ✓」。`card.consumed` 只说明游戏从读卡接口拿到了卡号，灯光颜色才反映游戏服务器的结论。
 
 ### 设备日志
 
