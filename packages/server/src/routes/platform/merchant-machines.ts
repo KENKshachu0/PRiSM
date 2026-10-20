@@ -17,7 +17,7 @@ import {
   writeHaConnection,
   type StoredHaConnection,
 } from "../../devices/ha-connections.js";
-import { scheduleReadAccess } from "./merchant-ha.js";
+import { afterHaChange, scheduleReadAccess } from "./merchant-ha.js";
 import { z } from "zod";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
@@ -501,6 +501,7 @@ async function changeMachine(c:C, machineId?:string) {
   // A new Home Assistant gets its read-only account in the background; a failure
   // is recorded on the connection and shown on the board, never on this save.
   for(const connection of connections)scheduleReadAccess(c,shopId,connection.id);
+  afterHaChange(c,shopId);
   const updated=await loadDevice(c.env.DB,shopId,id);
   if(!updated)jsonError(500,"设备保存失败","DEVICE_SAVE_FAILED");
   const [machine]=await presentWithStatus(c,[updated],publicShopId,true);

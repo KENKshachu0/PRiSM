@@ -21,6 +21,7 @@ import { createDeviceBus, type ActionRunner, type RunOutcome, type StateReader }
 import type { HaEntityConfig } from "./capabilities.js";
 import { doorConfigOf, hinataConfigOf, readSecret, type Device } from "./device.js";
 import { openHaConnection } from "./ha-connections.js";
+import { watchedState } from "../durable-objects/shop-hub-client.js";
 
 const KEY_PRESS_TTL_MS = 30_000;
 const HA_TIMEOUT_MS = 10_000;
@@ -65,8 +66,24 @@ async function haBinding(
   }
 }
 
-/** Live Home Assistant power state: "on", "off", or null when it cannot be read. */
-export async function readPower(runtime: DeviceRuntime, device: Device): Promise<"on" | "off" | null> {
+/** What the shop's Home Assistant watcher last reported for this capability's entity. */
+async function watched(runtime: DeviceRuntime, device: Device, capability: "power" | "climate") {
+  const config = device.capabilities.get(capability)?.config as HaEntityConfig | undefined;
+  if (!config?.connectionId || !config.entityId) return null;
+  return watchedState(runtime.env, device.shopId, config.connectionId, config.entityId);
+}
+
+/**
+ * Home Assistant power state: "on", "off", or null when it cannot be read. A
+ * watched "on" is used as is; "off" is confirmed live, because turning a player
+ * away from a machine that is actually on is the costly mistake.
+ */
+export async function readPower(
+  runtime: DeviceRuntime,
+  device: Device,
+  options: { live?: boolean } = {},
+): Promise<"on" | "off" | null> {
+  if (!options.live && (await watched(runtime, device, "power"))?.state === "on") return "on";
   const binding = await haBinding(runtime, device);
   if (!binding) return null;
   const state = await getHomeAssistantEntityState({
@@ -113,8 +130,14 @@ const numberOrNull = (value: unknown) =>
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
-/** Live climate state, or null when Home Assistant cannot be read. */
-export async function readClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
+/** Climate state from what the watcher reported, else read live; null when neither works. */
+export async function readClimate(
+  runtime: DeviceRuntime,
+  device: Device,
+  options: { live?: boolean } = {},
+): Promise<ClimateState | null> {
+  const known = options.live ? null : await watched(runtime, device, "climate");
+  if (known && known.state !== "unavailable" && known.state !== "unknown") return climateState(known.state, known.attributes);
   const binding = await haBinding(runtime, device, "climate");
   if (!binding) return null;
   const entity = await getHomeAssistantEntity({
@@ -125,9 +148,12 @@ export async function readClimate(runtime: DeviceRuntime, device: Device): Promi
     timeoutMs: 3000,
   });
   if (!entity || entity.state === "unavailable" || entity.state === "unknown") return null;
-  const a = entity.attributes;
+  return climateState(entity.state, entity.attributes);
+}
+
+function climateState(state: string, a: Record<string, unknown>): ClimateState {
   return {
-    mode: entity.state,
+    mode: state,
     modes: strings(a.hvac_modes),
     temperature: numberOrNull(a.temperature),
     currentTemperature: numberOrNull(a.current_temperature),
@@ -280,9 +306,9 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
     "door.open": doorRunner(runtime),
   };
   const readers: Record<string, StateReader> = {
-    "power.power": (device) => readPower(runtime, device),
-    "climate.climate": async (device) => {
-      const state = await readClimate(runtime, device);
+    "power.power": (device, options) => readPower(runtime, device, options),
+    "climate.climate": async (device, options) => {
+      const state = await readClimate(runtime, device, options);
       return state ? climateSetting(state) : null;
     },
   };
@@ -299,8 +325,12 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
  * Read a climate device for display and record its setting when it moved,
  * with a single Home Assistant request.
  */
-export async function observeClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
-  const state = await readClimate(runtime, device).catch(() => null);
+export async function observeClimate(
+  runtime: DeviceRuntime,
+  device: Device,
+  options: { live?: boolean } = {},
+): Promise<ClimateState | null> {
+  const state = await readClimate(runtime, device, options).catch(() => null);
   if (!state) return null;
   const bus = createDeviceBus({
     events: createDeviceEventRepository(createD1Executor(runtime.db, runtime.shopId)),

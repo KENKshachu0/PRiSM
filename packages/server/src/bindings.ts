@@ -120,6 +120,7 @@ export type Env = {
   APNS_PRIVATE_KEY?: string;
   LIVE_BILLING?: DurableObjectNamespace<any>;
   MACHINE_RELAY?: DurableObjectNamespace<any>;
+  SHOP_HUB?: DurableObjectNamespace<any>;
   EXTRA_ALLOWED_ORIGINS?: string;
   ANDROID_CERT_FINGERPRINTS?: string;
   PRISM_DEPLOY_GUARD?: string;

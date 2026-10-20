@@ -6,6 +6,7 @@ import {
   isIoEventMethod,
   messageForClient,
   parseClientHello,
+  parseHaReport,
   parseIoEvent,
   prepareMessageForClient,
   type ClientCapabilities,
@@ -103,7 +104,24 @@ describe("relay client hello", () => {
         action: "CLIENT_HELLO",
         body: { protocol: "aimeio-remote", auth: "bearer", e2ee: false, events: ["event.ledSet"] },
       }),
-    ).toEqual({ events: ["event.ledSet"], e2ee: false, authenticated: true });
+    ).toEqual({ events: ["event.ledSet"], e2ee: false, authenticated: true, features: [] });
+  });
+
+  it("reports the optional features a client announces", () => {
+    expect(
+      parseClientHello({ action: "CLIENT_HELLO", body: { auth: "bearer", events: [], features: ["ha.watch", 3] } })?.features,
+    ).toEqual(["ha.watch"]);
+  });
+
+  it("reads Home Assistant reports and ignores anything malformed", () => {
+    expect(parseHaReport({ jsonrpc: "2.0", method: "ha.status", params: { term: 2, connection: "ha_1", connected: true } }))
+      .toEqual({ method: "ha.status", params: { term: 2, connection: "ha_1", connected: true, error: null } });
+    expect(parseHaReport({
+      jsonrpc: "2.0", method: "ha.states",
+      params: { term: 2, connection: "ha_1", full: true, states: [{ entity_id: "switch.a", state: "on", last_changed: "2026-10-21T10:00:00Z" }, { nope: 1 }] },
+    })?.params).toMatchObject({ full: true, states: [{ entity_id: "switch.a", state: "on", attributes: {} }] });
+    expect(parseHaReport({ method: "ha.states", params: { connection: "ha_1", states: [] } })).toBeNull();
+    expect(parseHaReport({ id: 1, method: "ha.status", params: { term: 1, connection: "x" } })).toBeNull();
   });
 
   it("reports a legacy client as unauthenticated and not e2ee", () => {
@@ -112,6 +130,7 @@ describe("relay client hello", () => {
       events: [],
       e2ee: false,
       authenticated: false,
+      features: [],
     });
   });
 

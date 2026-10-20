@@ -46,8 +46,11 @@ export type RunOutcome =
   /** The request may or may not have reached the device (e.g. a network timeout). */
   | { outcome: "unknown"; message: string };
 
-/** Reads an external state live. Returns null when the source cannot be reached. */
-export type StateReader = (device: Device) => Promise<unknown | null>;
+/**
+ * Reads an external state. Returns null when the source cannot be reached.
+ * `live` skips any watched copy, for the read right after the platform acted.
+ */
+export type StateReader = (device: Device, options?: { live?: boolean }) => Promise<unknown | null>;
 
 export type DeviceBusDependencies = {
   events: DeviceEventRepository;
@@ -90,10 +93,15 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
     ...input,
   });
 
-  async function observe(device: Device, capability: CapabilityId, key: string): Promise<unknown | null> {
+  async function observe(
+    device: Device,
+    capability: CapabilityId,
+    key: string,
+    options?: { live?: boolean },
+  ): Promise<unknown | null> {
     const reader = deps.readers[`${capability}.${key}`];
     if (!reader) return null;
-    const value = await reader(device);
+    const value = await reader(device, options);
     if (value === null || value === undefined) return null;
     await deps.events.record({
       events: [],
@@ -220,7 +228,8 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
 
       if (action.observeAfter && outcome.outcome === "ok") {
         try {
-          await observe(input.device, spec.id, action.observeAfter);
+          // The watcher may not have reported the change yet; ask the source.
+          await observe(input.device, spec.id, action.observeAfter, { live: true });
         } catch {
           // A failed follow-up read must not turn a successful action into an error.
         }
@@ -308,5 +317,39 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
      * observation. Null means the source could not be reached right now.
      */
     observe,
+
+    /**
+     * Record an external state a watcher reported instead of one read now.
+     * `at` is when it changed at the source (Home Assistant's `last_changed`),
+     * so a switch turned on outside the platform keeps its real time.
+     */
+    async report(input: {
+      device: Pick<Device, "id">;
+      capability: CapabilityId;
+      key: string;
+      value: unknown;
+      at?: Date;
+    }): Promise<void> {
+      await deps.events.record({
+        events: [],
+        states: [
+          {
+            write: { deviceId: input.device.id, capability: input.capability, key: input.key, value: input.value, authority: "observed" },
+            event: {
+              ...event({
+                deviceId: input.device.id,
+                capability: input.capability,
+                kind: "change",
+                name: input.key,
+                operationId: null,
+                origin: "observer",
+                payload: { to: input.value },
+              }),
+              ...(input.at ? { occurredAt: input.at } : {}),
+            },
+          },
+        ],
+      });
+    },
   };
 }

@@ -11,6 +11,10 @@
       {
         "name": "MACHINE_RELAY",
         "class_name": "MachineRelay"
+      },
+      {
+        "name": "SHOP_HUB",
+        "class_name": "ShopHub"
       }
     ]
   },
@@ -25,6 +29,12 @@
       "tag": "machine-relay-v1",
       "new_sqlite_classes": [
         "MachineRelay"
+      ]
+    },
+    {
+      "tag": "shop-hub-v1",
+      "new_sqlite_classes": [
+        "ShopHub"
       ]
     }
   ],

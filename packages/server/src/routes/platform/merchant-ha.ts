@@ -17,6 +17,7 @@ import {
   type StoredHaConnection,
 } from "../../devices/ha-connections.js";
 import { provisionReadAccess } from "../../devices/ha-read-access.js";
+import { refreshShopHub } from "../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { assertMachineShop, canConfigureMachine, encryptionKey } from "./merchant-machines.js";
@@ -44,8 +45,19 @@ export function scheduleReadAccess(c: C, shopId: string, connectionId: string, a
     provisionReadAccess(c.env.DB, shopId, connectionId, key, {
       origin: c.env.APP_ORIGIN || new URL(c.req.url).origin,
       ...(adminToken ? { adminToken } : {}),
-    }).catch((error) => console.error("Home Assistant read access failed", error)),
+    })
+      .then((result) => (result.access === "ready" ? refreshShopHub(c.env, shopId) : undefined))
+      .catch((error) => console.error("Home Assistant read access failed", error)),
   );
+}
+
+/** After the response, have the shop hub pick up changed devices or connections. */
+export function afterHaChange(c: C, shopId: string) {
+  try {
+    c.executionCtx.waitUntil(refreshShopHub(c.env, shopId));
+  } catch {
+    // No execution context (local server, tests): nothing is watching there.
+  }
 }
 
 async function usage(c: C, shopId: string): Promise<Map<string, number>> {
@@ -112,6 +124,7 @@ merchantHaRouter.patch("/ha-connections/:id", async (c) => {
   await writeHaConnection(c.env.DB, shopId, next).run();
   // A new address or token may now be an administrator's; try again.
   if (body.url || body.token) scheduleReadAccess(c, shopId, next.id);
+  afterHaChange(c, shopId);
   const used = await usage(c, shopId);
   return c.json({ connection: present(next, used.get(next.id) ?? 0, true) });
 });
@@ -165,6 +178,7 @@ merchantHaRouter.post("/ha-connections/:id/read-access", async (c) => {
     origin: c.env.APP_ORIGIN || new URL(c.req.url).origin,
     ...(body.adminToken ? { adminToken: body.adminToken } : {}),
   });
+  if (result.access === "ready") afterHaChange(c, shopId);
   const updated = (await getHaConnection(c.env.DB, shopId, connection.id)) ?? connection;
   const used = await usage(c, shopId);
   return c.json({ ...result, connection: present(updated, used.get(updated.id) ?? 0, true) });

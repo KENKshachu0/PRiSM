@@ -1,6 +1,6 @@
 import type { Env } from "../bindings.js";
 import { sha256Hex } from "../crypto.js";
-import type { CardLoginResult, CardWaitLimits } from "../durable-objects/machine-relay.js";
+import type { CardLoginResult, CardWaitLimits, HaWatch } from "../durable-objects/machine-relay.js";
 import { machineRelayPath } from "./relay-path.js";
 
 export type RelayGatewayResult =
@@ -87,6 +87,7 @@ export type MachineRelayNamespace = {
     }): Promise<{ ok: boolean; error?: string; login?: CardLoginResult }>;
     sendKeyPress(input: { key: number; messageId: string; expiresAt: number; count?: number }):
       Promise<{ ok: boolean; error?: string }>;
+    watchHa(watch: HaWatch | null): Promise<{ ok: boolean }>;
     getCapabilities(): Promise<{
       online: boolean;
       e2ee: boolean;
@@ -112,6 +113,7 @@ export async function dispatchToRelay(
   const headers = new Headers(request.headers);
   headers.set("x-prism-relay-shop", target.shopId);
   headers.set("x-prism-relay-machine", target.machineId);
+  headers.set("x-prism-relay-channel", target.channel);
   // `webSocket` must be carried over untouched for the upgrade to complete; only
   // the headers differ from what arrived.
   const forwarded = new Request(request, { headers });

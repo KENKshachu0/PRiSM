@@ -408,6 +408,61 @@ describe("MachineRelay link state", () => {
   });
 });
 
+describe("MachineRelay Home Assistant watch", () => {
+  const upgradeWithChannel = () =>
+    new Request("https://prism.test/io/ws", {
+      headers: {
+        Upgrade: "websocket",
+        "x-prism-relay-shop": "shop-1",
+        "x-prism-relay-machine": "machine-1",
+        "x-prism-relay-channel": "m_chan",
+      },
+    });
+  function withHub() {
+    const ctx = fixture();
+    const calls: unknown[][] = [];
+    (ctx.env as any).SHOP_HUB = {
+      getByName: () => ({
+        async relayOnline(...args: unknown[]) { calls.push(["online", ...args]); },
+        async relayOffline(...args: unknown[]) { calls.push(["offline", ...args]); },
+        async haReport(...args: unknown[]) { calls.push(["report", ...args]); },
+      }),
+    };
+    return { ...ctx, calls };
+  }
+
+  it("offers an IO that can watch Home Assistant to the shop hub, and withdraws it on close", async () => {
+    const { relay, sockets, calls } = withHub();
+    await relay.fetch(upgradeWithChannel());
+    await relay.webSocketMessage(sockets[0] as any, JSON.stringify({ action: "CLIENT_HELLO", body: { auth: "bearer", events: [], features: ["ha.watch"] } }));
+    expect(calls).toEqual([["online", "shop-1", "machine-1", "m_chan"]]);
+    await relay.webSocketClose(sockets[0] as any, 1000, "");
+    expect(calls.at(-1)).toEqual(["offline", "shop-1", "machine-1"]);
+  });
+
+  it("does not offer an IO that did not announce the feature", async () => {
+    const { relay, sockets, calls } = withHub();
+    await relay.fetch(upgradeWithChannel());
+    await relay.webSocketMessage(sockets[0] as any, JSON.stringify({ action: "CLIENT_HELLO", body: { auth: "bearer", events: [] } }));
+    expect(calls).toEqual([]);
+    expect((await relay.watchHa({ term: 1, connections: [] })).ok).toBe(false);
+  });
+
+  it("passes the watch down and the reports up", async () => {
+    const { relay, sockets, calls } = withHub();
+    await relay.fetch(upgradeWithChannel());
+    const ws = sockets[0]!;
+    await relay.webSocketMessage(ws as any, JSON.stringify({ action: "CLIENT_HELLO", body: { auth: "bearer", events: [], features: ["ha.watch"] } }));
+    const watch = { term: 4, connections: [{ id: "ha_1", urls: ["http://ha.local"], token: "r", entities: ["switch.a"] }] };
+    expect((await relay.watchHa(watch)).ok).toBe(true);
+    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({ action: "HA_WATCH", body: watch });
+    await relay.webSocketMessage(ws as any, JSON.stringify({ jsonrpc: "2.0", method: "ha.status", params: { term: 4, connection: "ha_1", connected: true } }));
+    expect(calls.at(-1)).toEqual(["report", "shop-1", "machine-1", { method: "ha.status", params: { term: 4, connection: "ha_1", connected: true, error: null } }]);
+    await relay.watchHa(null);
+    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({ action: "HA_UNWATCH", body: {} });
+  });
+});
+
 describe("MachineRelay capabilities", () => {
   it("reports the connected agent and its protocol", async () => {
     const { relay, sockets } = fixture();

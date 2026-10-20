@@ -27,6 +27,15 @@ export class MachineRelay extends BaseDurableObject<Env> {
   }
 }
 
+/**
+ * The shop hub only reacts to relays and reads; while fenced, relays are down
+ * and nothing calls it. An alarm that fires now is simply dropped: the next
+ * relay connection after the deployment elects a watcher again.
+ */
+export class ShopHub extends BaseDurableObject<Env> {
+  async alarm(): Promise<void> {}
+}
+
 /** Keeps the existing Durable Object class and storage; no business schema is touched. */
 export class LiveBilling extends BaseDurableObject<Env> {
   async refresh(shopId: string, playerId: string, terminal = false, urgent = false): Promise<void> {

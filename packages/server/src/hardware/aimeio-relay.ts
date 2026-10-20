@@ -134,6 +134,8 @@ export type ClientHello = {
   events: string[];
   e2ee: boolean;
   authenticated: boolean;
+  /** Optional abilities beyond the card relay, such as `ha.watch`. */
+  features: string[];
 };
 
 /**
@@ -150,7 +152,52 @@ export function parseClientHello(value: unknown): ClientHello | null {
       : [],
     e2ee: body.e2ee === true,
     authenticated: body.auth === "bearer",
+    features: Array.isArray(body.features)
+      ? body.features.filter((item): item is string => typeof item === "string")
+      : [],
   };
+}
+
+/** What an IO watching Home Assistant for the shop reports back. */
+export type HaReport =
+  | { method: "ha.status"; params: { term: number; connection: string; connected: boolean; error?: string | null } }
+  | { method: "ha.states"; params: { term: number; connection: string; full: boolean; states: HaEntityState[] } };
+
+export type HaEntityState = {
+  entity_id: string;
+  state: string;
+  last_changed: string | null;
+  attributes: Record<string, unknown>;
+};
+
+/** A Home Assistant report from a watching IO, or null for anything else. */
+export function parseHaReport(value: unknown): HaReport | null {
+  if (!isRecord(value) || (value.id !== undefined && value.id !== null)) return null;
+  const params = isRecord(value.params) ? value.params : null;
+  if (!params || typeof params.term !== "number" || typeof params.connection !== "string") return null;
+  if (value.method === "ha.status") {
+    return {
+      method: "ha.status",
+      params: {
+        term: params.term,
+        connection: params.connection,
+        connected: params.connected === true,
+        error: typeof params.error === "string" ? params.error : null,
+      },
+    };
+  }
+  if (value.method !== "ha.states" || !Array.isArray(params.states)) return null;
+  const states: HaEntityState[] = [];
+  for (const item of params.states) {
+    if (!isRecord(item) || typeof item.entity_id !== "string" || typeof item.state !== "string") continue;
+    states.push({
+      entity_id: item.entity_id,
+      state: item.state,
+      last_changed: typeof item.last_changed === "string" ? item.last_changed : null,
+      attributes: isRecord(item.attributes) ? item.attributes : {},
+    });
+  }
+  return { method: "ha.states", params: { term: params.term, connection: params.connection, full: params.full === true, states } };
 }
 
 export function isIoEventMethod(method: string): method is IoEventMethod {

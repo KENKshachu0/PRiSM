@@ -39,21 +39,28 @@ export const actionSchema=z.object({
   location:z.unknown().optional(),
 });
 
-/** Live power state for a device page: "unmanaged" when it has no power binding. */
-export async function devicePowerState(c: C, machine: MachineRow): Promise<"on" | "off" | "unknown" | "unmanaged"> {
+/**
+ * Power state for a device page: "unmanaged" when it has no power binding.
+ * `live` skips the watched copy, for the answer to an action just taken.
+ */
+export async function devicePowerState(
+  c: C,
+  machine: MachineRow,
+  options: { live?: boolean } = {},
+): Promise<"on" | "off" | "unknown" | "unmanaged"> {
   const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
   if (!device?.capabilities.has("power")) return "unmanaged";
   const bus = createRuntimeBus({ db: c.env.DB, env: c.env, shopId: machine.shop_id });
   // Reading through the bus also records a change when power moved outside the platform.
-  const live = await bus.observe(device, "power", "power").catch(() => null);
+  const live = await bus.observe(device, "power", "power", options).catch(() => null);
   return live === "on" || live === "off" ? live : "unknown";
 }
 
-/** Live climate state for a device page; null when it has no climate binding or HA cannot be read. */
-export async function deviceClimateState(c: C, machine: MachineRow): Promise<ClimateState | null> {
+/** Climate state for a device page; null when it has no climate binding or HA cannot be read. */
+export async function deviceClimateState(c: C, machine: MachineRow, options: { live?: boolean } = {}): Promise<ClimateState | null> {
   const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
   if (!device?.capabilities.has("climate")) return null;
-  return observeClimate({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device);
+  return observeClimate({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device, options);
 }
 
 /** The setting a climate action changes, checked before anything is recorded. */
@@ -209,9 +216,9 @@ export async function executeDeviceAction(
       }
       const result =
         action === "power.on" || action === "power.off"
-          ? { power: await devicePowerState(c, machine) }
+          ? { power: await devicePowerState(c, machine, { live: true }) }
           : isClimate
-            ? { climate: await deviceClimateState(c, machine) }
+            ? { climate: await deviceClimateState(c, machine, { live: true }) }
             : done.result;
       return c.json({ operationId: body.operationId, ...result });
     },

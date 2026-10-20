@@ -2,11 +2,13 @@ import type { DurableObject } from "cloudflare:workers";
 import type { Env } from "../bindings.js";
 import { hinataIo } from "../devices/capabilities.js";
 import { createRuntimeBus } from "../devices/runtime.js";
+import { shopHub } from "./shop-hub-client.js";
 import {
   capabilitiesForAttachment,
   capabilitiesFromRequest,
   ioEventSource,
   parseClientHello,
+  parseHaReport,
   parseIoEvent,
   prepareMessageForClient,
   type ClientCapabilities,
@@ -27,14 +29,24 @@ const SIGNAL_NAMES: Record<IoEventMethod, string> = {
   "event.ledSet": "led.set",
 };
 
-type Channel = { shopId: string; machineId: string };
+type Channel = { shopId: string; machineId: string; channel?: string };
 
 /**
  * Per-socket state. It lives in the socket attachment rather than on the
  * object, because a hibernated object wakes with its fields reset while its
  * sockets and their attachments survive.
  */
-type Attachment = ClientCapabilities & { e2ee?: boolean };
+type Attachment = ClientCapabilities & { e2ee?: boolean; ha?: boolean };
+
+/**
+ * What the IO assigned to watch the shop's Home Assistants should subscribe to.
+ * `urls` are tried in order (the shop-local address first); the token is a
+ * read-only account's. `term` identifies this assignment in every report.
+ */
+export type HaWatch = {
+  term: number;
+  connections: Array<{ id: string; urls: string[]; token: string; entities: string[] }>;
+};
 
 /**
  * What became of a card sent to a waiting game: the reader turned blue (signed
@@ -153,7 +165,8 @@ export class MachineRelay extends BaseDurableObject<Env> {
     if (!shopId || !machineId) {
       return new Response("Missing relay channel", { status: 400 });
     }
-    await this.ctx.storage.put<Channel>(CHANNEL_KEY, { shopId, machineId });
+    const channel = request.headers.get("x-prism-relay-channel") ?? undefined;
+    await this.ctx.storage.put<Channel>(CHANNEL_KEY, { shopId, machineId, ...(channel ? { channel } : {}) });
 
     const capabilities = capabilitiesFromRequest(request);
     const pair = new WebSocketPair();
@@ -362,7 +375,25 @@ export class MachineRelay extends BaseDurableObject<Env> {
     // The IO announces its transports on connect, before anything else.
     const hello = parseClientHello(parsed);
     if (hello) {
-      ws.serializeAttachment({ ...this.socketCapabilities(ws), e2ee: hello.e2ee } satisfies Attachment);
+      const ha = hello.features.includes("ha.watch");
+      ws.serializeAttachment({ ...this.socketCapabilities(ws), e2ee: hello.e2ee, ha } satisfies Attachment);
+      const channel = await this.channel();
+      if (ha && channel?.channel) {
+        await shopHub(this.env, channel.shopId)
+          ?.relayOnline(channel.shopId, channel.machineId, channel.channel)
+          .catch((error) => console.error("Shop hub relayOnline failed", error));
+      }
+      return;
+    }
+
+    const report = parseHaReport(parsed);
+    if (report) {
+      const channel = await this.channel();
+      if (channel) {
+        await shopHub(this.env, channel.shopId)
+          ?.haReport(channel.shopId, channel.machineId, report)
+          .catch((error) => console.error("Shop hub haReport failed", error));
+      }
       return;
     }
 
@@ -404,6 +435,35 @@ export class MachineRelay extends BaseDurableObject<Env> {
     }
     if (this.socketCapabilities(ws).role !== "agent") return;
     if (!this.agents().some((other) => other !== ws)) await this.setLink(false);
+    const watching = (ws.deserializeAttachment() as Attachment | null)?.ha;
+    if (watching && !this.watchers().some((other) => other !== ws)) {
+      const channel = await this.channel();
+      if (channel) {
+        await shopHub(this.env, channel.shopId)
+          ?.relayOffline(channel.shopId, channel.machineId)
+          .catch((error) => console.error("Shop hub relayOffline failed", error));
+      }
+    }
+  }
+
+  /** Connected IOs that said they can watch Home Assistant. */
+  private watchers(): WebSocket[] {
+    return this.agents().filter((ws) => (ws.deserializeAttachment() as Attachment | null)?.ha === true);
+  }
+
+  /**
+   * Hand this machine's IO the Home Assistant watch for the shop, or take it
+   * away with `null`. Not stored: the shop hub sends it again on reconnect.
+   */
+  async watchHa(watch: HaWatch | null): Promise<{ ok: boolean }> {
+    const [socket] = this.watchers();
+    if (!socket) return { ok: false };
+    try {
+      socket.send(JSON.stringify(watch ? { action: "HA_WATCH", body: watch } : { action: "HA_UNWATCH", body: {} }));
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
   }
 
   async webSocketError(): Promise<void> {

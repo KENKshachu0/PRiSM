@@ -105,3 +105,4 @@ export const worker = {
 export default worker;
 export { LiveBilling } from "./durable-objects/live-billing.js";
 export { MachineRelay } from "./durable-objects/machine-relay.js";
+export { ShopHub } from "./durable-objects/shop-hub.js";
