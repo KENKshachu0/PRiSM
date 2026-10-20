@@ -170,6 +170,13 @@ export type HaEntityState = {
   attributes: Record<string, unknown>;
 };
 
+/** Home Assistant's compressed state gives Unix seconds; ISO text is accepted too. */
+function changedAt(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return new Date(value * 1000).toISOString();
+  if (typeof value === "string" && !Number.isNaN(Date.parse(value))) return new Date(value).toISOString();
+  return null;
+}
+
 /** A Home Assistant report from a watching IO, or null for anything else. */
 export function parseHaReport(value: unknown): HaReport | null {
   if (!isRecord(value) || (value.id !== undefined && value.id !== null)) return null;
@@ -193,7 +200,7 @@ export function parseHaReport(value: unknown): HaReport | null {
     states.push({
       entity_id: item.entity_id,
       state: item.state,
-      last_changed: typeof item.last_changed === "string" ? item.last_changed : null,
+      last_changed: changedAt(item.last_changed),
       attributes: isRecord(item.attributes) ? item.attributes : {},
     });
   }

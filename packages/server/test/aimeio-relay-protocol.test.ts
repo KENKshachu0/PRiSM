@@ -120,6 +120,9 @@ describe("relay client hello", () => {
       jsonrpc: "2.0", method: "ha.states",
       params: { term: 2, connection: "ha_1", full: true, states: [{ entity_id: "switch.a", state: "on", last_changed: "2026-10-21T10:00:00Z" }, { nope: 1 }] },
     })?.params).toMatchObject({ full: true, states: [{ entity_id: "switch.a", state: "on", attributes: {} }] });
+    expect(parseHaReport({
+      method: "ha.states", params: { term: 1, connection: "ha_1", states: [{ entity_id: "switch.a", state: "on", last_changed: 1_800_000_000.5 }] },
+    })?.params).toMatchObject({ states: [{ last_changed: "2027-01-15T08:00:00.500Z" }] });
     expect(parseHaReport({ method: "ha.states", params: { connection: "ha_1", states: [] } })).toBeNull();
     expect(parseHaReport({ id: 1, method: "ha.status", params: { term: 1, connection: "x" } })).toBeNull();
   });
