@@ -43,6 +43,16 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 
 `provider` 会统一转成小写，`subject` 只去掉首尾空白。简写只按第一个冒号分隔，所以 `telegram:abc:def` 会解析为 provider `telegram`、subject `abc:def`。
 
+### Bot 的 WebSocket 连接
+
+Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTTP 请求；HTTP 接口原样保留给旧插件和其它集成。
+
+- 连接：`GET /api/v1/shops/:shop/integration/ws`，`Authorization: Bearer <Bot 凭据>`，WebSocket 升级。凭据在握手前校验，不对返回 403；不要求店铺启用计费（每个请求仍按自己的路由校验）。连接交给店铺 Hub（`ShopHub`），连进来的 WebSocket 可以休眠。
+- 请求：`{"type":"request","id":"<唯一 ID>","method":"GET|POST|PUT","path":"integration/players/by-identity/wallet","query":{},"body":{}}`；回复 `{"type":"response","id":…,"status":200,"body":{"data":…}}`，`body` 与 HTTP 响应完全相同（含 `{error:{code,message}}`）。Hub 带着 Bot 凭据在进程内调用同一套路由，所以鉴权、校验、灵动岛推送（`waitUntil`）都和 HTTP 一样；吊销凭据后下一个请求就会 403，Hub 随即以 4003 关闭连接。只能访问本店的 `integration/…` 和 `version`，其它路径（包括 `..`）返回 404。
+- 去重：写请求（POST/PUT）的回复按 `id` 保存 10 分钟；同一 `id` 再发一次直接返回保存的回复，不会重复执行；还在执行中的同一 `id` 不再执行。断线后插件不重发、不排队，命令直接失败（「暂时连不上服务器」），避免结账、加钱被重复执行或延后执行。
+- 心跳：发送文本 `ping`，回复 `pong`（Workers 上由运行时自动回复，不唤醒 Hub）。
+- `{"type":"hello","reminderLeadSeconds":300}`：插件告诉 Hub 闲置关机前多久提醒。之后 Hub 推送 `{"type":"event","event":"idle.reminder","data":{"reason":"shop_empty"|"device_idle","at":<关机时间 ms>,"devices":[{"id","name"}]}}`；Koishi 发到店员配置的群或私聊。多个 Bot 连接时取最长的提前量。
+
 ### 常用玩家动作
 
 ### 在场客流与设备状态
@@ -52,7 +62,7 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 | 路由 | 用途 |
 | --- | --- |
 | `GET /rpc/integration/sessions/active` | 列出在场所有活跃 session，含 `playerDisplayName`、`identities` (provider+subject)、`startedAt`、`label`、`elapsedMinutes`。机器人在 `/list`、`/窝里` 这类命令里用 `identities` 中的 `subject`（平台用户 ID）去调用聊天平台 API 拉昵称，而不是直接显示后台存的 `playerDisplayName`。 |
-| `GET /rpc/integration/device-states` | 列出每台已启用、绑定了电源的设备的电源状态，**每次请求实时读取 Home Assistant**（电源可能在平台外被改动）。`state` 为 `on`/`off`；读不到时 `status` 为 `offline`、`state` 为最后一次观测值或 `unknown`。`metadata.aliases` 为设备别名。bot 的 `/show` 与自动关机直接消费。 |
+| `GET /rpc/integration/device-states` | 列出每台已启用、绑定了电源的设备的电源状态，**每次请求实时读取 Home Assistant**（电源可能在平台外被改动）。`state` 为 `on`/`off`；读不到时 `status` 为 `offline`、`state` 为最后一次观测值或 `unknown`。`metadata.aliases` 为设备别名。bot 的 `/show` 直接消费。（插件原来的无人自动关机 `powerOffInterval` 已删除，改为后台的「闲置自动关机」。） |
 
 平台昵称的取法因适配器而异：Koishi 走 `session.bot.getUser(qq)`，AstrBot 在 aiocqhttp 走 `bot.call_action("get_stranger_info", user_id=qq)`，telegram、微信、Aime 等按对应适配器提供的方法拉取；取不到则退化为后台存的玩家名。机器人不要把后台存的 displayName 直接写进消息，避免不同身份来源的玩家出现 `Player 123` 这种开发者命名。
 

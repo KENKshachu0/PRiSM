@@ -50,7 +50,9 @@ export const integrationRouter = new Hono<AppBindings>();
  */
 export async function guardIntegration(c: Context<AppBindings>): Promise<void> {
   const shop = getShop(c);
-  const identityOnly = c.req.path.endsWith("/integration/platform-binding/confirm");
+  // The bot's connection carries reminders even for a shop without billing;
+  // each request over it is guarded again on its own path.
+  const identityOnly = c.req.path.endsWith("/integration/platform-binding/confirm") || c.req.path.endsWith("/integration/ws");
   if (!identityOnly && !shop.billing_enabled) {
     jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
   }
@@ -60,6 +62,23 @@ export async function guardIntegration(c: Context<AppBindings>): Promise<void> {
 integrationRouter.use("*", async (c, next) => {
   await guardIntegration(c);
   await next();
+});
+
+/**
+ * The bot's single connection: requests go over it instead of HTTP, and the
+ * shop hub pushes reminders down it. The hub runs each request through this
+ * same router with the bot's token, so every route keeps its own checks.
+ */
+integrationRouter.get("/ws", async (c) => {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") jsonError(426, "需要 WebSocket 连接", "UPGRADE_REQUIRED");
+  const hub = (c.env.SHOP_HUB as unknown as { getByName(name: string): { fetch(request: Request): Promise<Response> } } | undefined);
+  if (!hub) jsonError(503, "店铺连接服务尚未配置", "SHOP_HUB_UNAVAILABLE");
+  const shop = getShop(c);
+  const code = c.req.path.match(/^\/api\/v1\/shops\/([^/]+)\//)?.[1] ?? shop.id;
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("x-prism-hub-shop", shop.id);
+  headers.set("x-prism-hub-shop-code", decodeURIComponent(code));
+  return hub.getByName(shop.id).fetch(new Request(c.req.raw, { headers }));
 });
 
 /** A Bot request never decides registration: the shop's switch does. */

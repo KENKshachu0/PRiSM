@@ -46,6 +46,7 @@ async function fixture(settings: unknown) {
       async setAlarm(at: number) { alarm = at; },
       async deleteAlarm() { alarm = null; },
     },
+    getWebSockets() { return []; },
   };
   const hub = new ShopHub(ctx as any, { DB: db, URL_ENCRYPTION_KEY: KEY } as any);
   const run = async () => {

@@ -56,6 +56,7 @@ async function fixture() {
       async setAlarm(at: number) { alarm = at; },
       async deleteAlarm() { alarm = null; },
     },
+    getWebSockets() { return []; },
   };
   const hub = new ShopHub(ctx as any, env as any);
   const power = () =>

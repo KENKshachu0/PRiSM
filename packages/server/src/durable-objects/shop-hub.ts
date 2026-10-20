@@ -7,6 +7,13 @@ import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
 import type { HaEntityState, HaReport } from "../hardware/aimeio-relay.js";
 import type { HaWatch } from "./machine-relay.js";
 import { emptyIdleMemory, runIdleCheck, type IdleMemory, type IdleNotice } from "./shop-hub-idle.js";
+import { parseBotFrame, revokedCredentials, runBotRequest, type BotResponse } from "./shop-hub-bot.js";
+import { app } from "../app.js";
+
+/** A shop bot's connection, kept on the socket so it survives hibernation. */
+type BotAttachment = { kind: "bot"; token: string; shopCode: string; reminderLeadMs: number | null };
+/** A write a bot sent is answered from here if it arrives again (a resend after a lost reply). */
+const REPLAY_MS = 10 * 60_000;
 
 let BaseDurableObject: typeof DurableObject;
 try {
@@ -55,6 +62,114 @@ const climateSetting = (state: WatchedState) => ({
  * an earlier term are ignored, so a handover needs no exact timing.
  */
 export class ShopHub extends BaseDurableObject<Env> {
+  /** Requests running now, so a resend while the first is in flight is not run twice. */
+  private readonly running = new Set<string>();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // A bot's keep-alive is answered without waking the object.
+    try {
+      ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    } catch {
+      // Not available outside the Workers runtime; the message handler answers instead.
+    }
+  }
+
+  /**
+   * A bot connecting. The Worker route has already checked its token for this
+   * shop and passes the shop on in headers; the token is kept to run requests.
+   */
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("Expected Upgrade: websocket", { status: 426 });
+    const shopId = request.headers.get("x-prism-hub-shop");
+    const shopCode = request.headers.get("x-prism-hub-shop-code");
+    const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+    if (!shopId || !shopCode || !token) return new Response("Missing bot channel", { status: 400 });
+    await this.shopId(shopId);
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server!, ["bot"]);
+    server!.serializeAttachment({ kind: "bot", token, shopCode, reminderLeadMs: null } satisfies BotAttachment);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private bots(): WebSocket[] {
+    return this.ctx.getWebSockets("bot");
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== "string") return;
+    const attachment = ws.deserializeAttachment() as BotAttachment | null;
+    if (attachment?.kind !== "bot") return;
+    if (message === "ping") {
+      ws.send("pong");
+      return;
+    }
+    const frame = parseBotFrame(message);
+    if (!frame) return;
+    if (frame.type === "hello") {
+      ws.serializeAttachment({ ...attachment, reminderLeadMs: frame.reminderLeadSeconds === undefined ? null : frame.reminderLeadSeconds * 1000 });
+      // Reminders may now be due earlier than the next planned check.
+      await this.touch((await this.shopId()) ?? "");
+      return;
+    }
+    const replayKey = `req:${frame.id}`;
+    const replay = await this.ctx.storage.get<BotResponse & { at: number }>(replayKey);
+    if (replay) {
+      const { at: _at, ...response } = replay;
+      ws.send(JSON.stringify(response));
+      return;
+    }
+    if (this.running.has(frame.id)) return;
+    this.running.add(frame.id);
+    let response: BotResponse;
+    try {
+      response = await runBotRequest({
+        app,
+        env: this.env,
+        waitUntil: (promise) => this.ctx.waitUntil(promise),
+        token: attachment.token,
+        shopCode: attachment.shopCode,
+        frame,
+      });
+    } catch (error) {
+      response = { type: "response", id: frame.id, status: 500, body: { error: { code: "INTERNAL_ERROR", message: error instanceof Error ? error.message : "服务器错误" } } };
+    } finally {
+      this.running.delete(frame.id);
+    }
+    if (frame.method !== "GET") await this.remember(replayKey, response);
+    try {
+      ws.send(JSON.stringify(response));
+    } catch {
+      // The bot left; a resend gets the remembered answer.
+    }
+    if (revokedCredentials(response)) {
+      try {
+        ws.close(4003, "credentials revoked");
+      } catch {
+        // Already closed.
+      }
+    }
+  }
+
+  private async remember(key: string, response: BotResponse) {
+    const now = Date.now();
+    await this.ctx.storage.put(key, { ...response, at: now });
+    const list = (this.ctx.storage as { list?: (options: { prefix: string }) => Promise<Map<string, { at?: number }>> }).list;
+    if (!list) return;
+    const stale = [...(await list.call(this.ctx.storage, { prefix: "req:" })).entries()]
+      .filter(([, value]) => (value.at ?? 0) < now - REPLAY_MS)
+      .map(([name]) => name);
+    if (stale.length) await this.ctx.storage.delete(stale as never);
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    try {
+      ws.close([1005, 1006, 1015].includes(code) ? 1000 : code, reason);
+    } catch {
+      // Already closed.
+    }
+  }
+
   private async load<T>(key: string, fallback: T): Promise<T> {
     return ((await this.ctx.storage.get<T>(key)) ?? fallback) as T;
   }
@@ -180,12 +295,26 @@ export class ShopHub extends BaseDurableObject<Env> {
     }
   }
 
-  /** How long before a power-off the shop's bot wants to hear about it; null without one. */
-  protected async reminderLead(): Promise<number | null> {
-    return null;
+  /** How long before a power-off the shop's bots want to hear about it; null without one. */
+  private async reminderLead(): Promise<number | null> {
+    const leads = this.bots()
+      .map((ws) => (ws.deserializeAttachment() as BotAttachment | null)?.reminderLeadMs)
+      .filter((lead): lead is number => typeof lead === "number");
+    return leads.length ? Math.max(...leads) : null;
   }
 
-  protected async notify(_notices: IdleNotice[]): Promise<void> {}
+  private async notify(notices: IdleNotice[]): Promise<void> {
+    for (const notice of notices) {
+      const frame = JSON.stringify({ type: "event", event: "idle.reminder", data: notice });
+      for (const ws of this.bots()) {
+        try {
+          ws.send(frame);
+        } catch {
+          // A bot that left misses it; the power-off happens regardless.
+        }
+      }
+    }
+  }
 
   private async bench(machineId: string) {
     const candidates = await this.load<Record<string, Candidate>>("candidates", {});
