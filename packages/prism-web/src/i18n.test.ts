@@ -31,15 +31,26 @@ describe("localization", () => {
     expect(translateError("toString", "en")).toBe(english["操作失败，请稍后重试"]);
   });
 
-  it("localizes insufficient balance by code instead of the internal diagnostic", () => {
-    for (const diagnostic of ["Insufficient currency holdings for this operation.", "changed internal diagnostic"]) {
-      const error = new ApiError(diagnostic, 409, "INSUFFICIENT_BALANCE");
-      expect(translateError(error.message, "zh")).toBe("余额不足，请充值后重试");
-      expect(translateError(error.message, "en")).toBe("Insufficient balance. Please top up and try again.");
-      expect(error.status).toBe(409);
-      expect(error.code).toBe("INSUFFICIENT_BALANCE");
-      expect(error.sessionExpired).toBe(false);
-    }
+  it("shows the server's notice for a player, never the internal diagnostic", () => {
+    const notice = {
+      code: "INSUFFICIENT_BALANCE", level: "warning" as const, display: "dialog" as const, flow: "none" as const,
+      title: "余额不足", body: "余额不足，请充值后再结账，计费会继续", actions: [],
+    };
+    const error = new ApiError("余额不足，请充值后再结账，计费会继续", 409, "INSUFFICIENT_BALANCE", undefined, undefined, notice,
+      "Insufficient currency holdings for this operation.");
+    expect(error.message).toBe(notice.body);
+    // Already written for the player in their language: shown as is.
+    expect(translateError(error.message, "en")).toBe(notice.body);
+    expect(error.sessionExpired).toBe(false);
+    // Without a notice, unknown text is still hidden behind the generic line.
+    expect(translateError(new ApiError("changed internal diagnostic", 409, "X").message, "zh")).toBe("操作失败，请稍后重试");
+  });
+
+  it("treats a notice that says the session ended as expiry", () => {
+    const error = new ApiError("x", 410, "SOMETHING", undefined, undefined, {
+      code: "SOMETHING", level: "error", display: "none", flow: "expired", title: null, body: "x", actions: [],
+    });
+    expect(error.sessionExpired).toBe(true);
   });
 
   it("has English text for every literal translation key in the web UI", () => {

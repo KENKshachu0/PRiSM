@@ -1,3 +1,4 @@
+import { useNotice } from "./NoticeProvider";
 import { displayDateTime } from "./bill-time";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -21,7 +22,8 @@ export function SettledBill({ receipt, timeZone }: { receipt: Receipt; timeZone?
 }
 
 export function CheckoutButton({ info, onComplete, onPendingChange }: { info: ShopInfo; onComplete: (receipt: Receipt) => void; onPendingChange?: (pending: boolean) => void }) {
-  const { t, errorText } = useI18n();
+  const { t } = useI18n();
+  const showNotice = useNotice();
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [error, setError] = useState("");
@@ -42,7 +44,11 @@ export function CheckoutButton({ info, onComplete, onPendingChange }: { info: Sh
       setReceipt(await playerOperation<Receipt>(shopApi(info.shop.publicId, "player/checkout/confirm"), {
         location: await operationLocation(info.shop.locationEnabled ?? info.shop.checkoutGeo),
       }));
-    } catch (e) { locked.current = false; onPendingChange?.(false); setError(errorText(e instanceof Error ? e.message : "操作失败")); }
+    } catch (e) {
+      locked.current = false; onPendingChange?.(false);
+      const notice = showNotice(e);
+      if (notice.display === "inline") setError(notice.body);
+    }
     finally { setBusy(false); }
   }
   return <>

@@ -1,3 +1,4 @@
+import { NoticeProvider } from "./NoticeProvider";
 import { PlayerAccountMenu } from "./PlayerAccountMenu";
 import { resolveLocale, translate, useI18n } from "../i18n";
 import { Component, lazy, Suspense, type ReactNode } from "react";
@@ -45,7 +46,9 @@ function routeArea(pathname: string): string {
 export function App() {
   return (
     <AuthProvider>
-      <Shell />
+      <NoticeProvider>
+        <Shell />
+      </NoticeProvider>
     </AuthProvider>
   );
 }

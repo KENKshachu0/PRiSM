@@ -3,9 +3,10 @@ import { DeviceControls } from "./DeviceControls";
 import { useI18n } from "../i18n";
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
 import { ShopHero, SessionSignIn } from "./SessionContent";
-import { Api, ApiError, type Card, type MachineLoginResult, type PublicMachine } from "../api";
+import { Api, ApiError, type Card, type MachineLoginResult, type Notice, type PublicMachine } from "../api";
+import { useNotice } from "./NoticeProvider";
 import { useAuth } from "./AuthContext";
 
 type CardOutcome = NonNullable<MachineLoginResult["card"]>;
@@ -16,8 +17,10 @@ const CARD_TEXT: Record<CardOutcome, string> = {
   read: "已刷卡",
   sent: "已刷卡",
 };
-/** Outcomes where the game has the card; the others leave nothing to tick. */
-const CARD_TAKEN = new Set<CardOutcome>(["ok", "read", "sent"]);
+function FeedbackIcon({ level }: { level: Notice["level"] }) {
+  const Icon = level === "success" ? CheckCircle2 : level === "error" ? XCircle : AlertCircle;
+  return <Icon size={24} className="credential-feedback-icon" aria-hidden="true" />;
+}
 
 export function MachineLoginPage() {
   const { ticket: paramTicket = "", publicId = "" } = useParams();
@@ -121,7 +124,8 @@ function MachineSessionPage({
   const [cardsLoading, setCardsLoading] = useState(true);
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "locating" | "sending" | "done">("idle");
-  const [outcome, setOutcome] = useState<CardOutcome>("sent");
+  const [feedback, setFeedback] = useState<{ level: Notice["level"]; text: string } | null>(null);
+  const showNotice = useNotice();
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
 
@@ -166,30 +170,40 @@ function MachineSessionPage({
         accuracy: position?.coords.accuracy,
         ticket,
       });
-      const card = result.card ?? "sent";
-      setOutcome(card);
-      setStatus("done");
-      window.setTimeout(() => setStatus("idle"), CARD_TAKEN.has(card) ? 1000 : 2500);
-      if (["failed", "unknown"].includes(result.coin?.status ?? "")) window.alert(errorText("刷卡已完成，投币请求失败，请联系店员。"));
+      const notices = result.notices ?? fallbackNotices(result.card ?? "sent");
+      const inline = notices.filter((notice) => notice.display === "inline");
+      // The card row carries the outcome; only a problem that needs the player interrupts.
+      showFeedback(inline[0]?.level ?? "success", inline.map((notice) => notice.body).join(" · ") || t("已刷卡"));
+      for (const notice of notices) if (notice.display === "dialog") showNotice(notice);
     } catch (caught) {
-      if (caught instanceof ApiError && caught.sessionExpired) {
-        onExpired();
-        return;
-      }
-      if (
-        caught instanceof ApiError &&
-        ["PLATFORM_BINDING_REQUIRED", "CHECKIN_REQUIRED"].includes(caught.code ?? "")
-      ) {
+      const notice = showNotice(caught instanceof ApiError ? caught : friendlyLoginError(caught), {
+        onExpired,
+        onRefresh: () => setReload((value) => value + 1),
+        retry: () => void loginWithCard(cardId),
+      });
+      if (notice.display === "inline") showFeedback(notice.level, notice.body);
+      else {
         setStatus("idle");
-        setReload((value) => value + 1);
-        return;
+        setActiveCardId(null);
       }
-      setStatus("idle");
-      setActiveCardId(null);
-      const message = friendlyLoginError(caught);
-      window.alert(errorText(message));
     }
   };
+
+  const showFeedback = (level: Notice["level"], text: string) => {
+    setFeedback({ level, text });
+    setStatus("done");
+    window.setTimeout(() => {
+      setStatus("idle");
+      setFeedback(null);
+    }, level === "success" ? 1500 : 3500);
+  };
+
+  /** For a server that predates notices: the card result alone. */
+  const fallbackNotices = (card: CardOutcome): Notice[] => [{
+    code: card, display: "inline", flow: "none", title: null, actions: [],
+    level: card === "failed" ? "error" : card === "not_read" ? "warning" : "success",
+    body: t(CARD_TEXT[card]),
+  }];
 
   const busy = status !== "idle";
   return (
@@ -233,9 +247,9 @@ function MachineSessionPage({
             <div className="credential-list">
               {cards.map((card) => {
                 const active = activeCardId === card.id;
-                const done = active && status === "done";
+                const done = active && status === "done" && feedback;
                 const detail =
-                  done ? t(CARD_TEXT[outcome]) :
+                  done ? feedback.text :
                   active && status === "locating"
                     ? t("确认位置…")
                     : active && status === "sending"
@@ -249,6 +263,7 @@ function MachineSessionPage({
                     className="credential-row"
                     disabled={busy}
                     data-active={active}
+                    data-feedback={done ? feedback.level : undefined}
                     onClick={() => void loginWithCard(card.id)}
                   >
                     <span className="min-w-0">
@@ -260,10 +275,8 @@ function MachineSessionPage({
                         {detail}
                       </span>
                     </span>
-                    {done && CARD_TAKEN.has(outcome) ? (
-                      <span aria-hidden="true">✓</span>
-                    ) : done ? (
-                      <ChevronRight size={20} className="text-ink/30" />
+                    {done ? (
+                      <FeedbackIcon level={feedback.level} />
                     ) : active && busy ? (
                       <Loader2 size={20} className="animate-spin text-mint" />
                     ) : (

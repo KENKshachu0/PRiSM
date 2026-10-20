@@ -1,3 +1,4 @@
+import { activeLocale, rememberPlayerText } from "./i18n";
 import { PlayerReadCache, subscribeRead } from "./player-read-cache";
 import type {
   AuthenticationResponseJSON,
@@ -51,6 +52,8 @@ export type MachineLoginResult = {
    * turned away, taken without a verdict, or never taken. Others only say sent.
    */
   card?: "ok" | "failed" | "read" | "not_read" | "sent";
+  /** What to show: inline ones on the card row, dialogs only when something went wrong. */
+  notices?: Notice[];
   coin?: {
     status: "sent" | "skipped" | "failed" | "unknown";
     operationId: string;
@@ -189,6 +192,20 @@ export type Passkey = {
   lastUsedAt?: string | null;
 };
 
+/**
+ * What the server wants the player told, and how: `dialog` interrupts, `inline`
+ * belongs next to what they touched, `none` only runs `flow`.
+ */
+export type Notice = {
+  code: string;
+  level: "success" | "info" | "warning" | "error";
+  display: "dialog" | "inline" | "none";
+  flow: "none" | "expired" | "refresh" | "signin";
+  title: string | null;
+  body: string;
+  actions: { kind: "dismiss" | "retry"; label: string }[];
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -196,13 +213,18 @@ export class ApiError extends Error {
     readonly code?: string,
     readonly details?: unknown,
     readonly retryAfterMs?: number,
+    readonly notice?: Notice,
+    /** The server's own wording, for staff screens. */
+    readonly reason?: string,
   ) {
-    super(code === "INSUFFICIENT_BALANCE" ? "余额不足，请充值后重试" : message);
+    super(notice?.body ?? message);
+    if (notice) rememberPlayerText(notice.body);
   }
 
   get sessionExpired(): boolean {
     return (
       this.code === "TICKET_EXPIRED" ||
+      this.notice?.flow === "expired" ||
       this.message === "本次会话已失效" ||
       this.message === "缺少会话凭证"
     );
@@ -235,6 +257,8 @@ async function fetchApi<T>(
     credentials: "include",
     headers: {
       "content-type": "application/json",
+      // Player-facing text comes back in this language.
+      "accept-language": activeLocale(),
       ...options.headers,
     },
   });
@@ -248,7 +272,7 @@ async function fetchApi<T>(
   }
   const payload = (await response.json().catch(() => ({}))) as {
     data?: T;
-    error?: { code: string; message: string; details?: unknown };
+    error?: { code: string; message: string; details?: unknown; notice?: Notice; reason?: string };
   };
   if (!response.ok)
     throw new ApiError(
@@ -257,6 +281,8 @@ async function fetchApi<T>(
       payload.error?.code,
       payload.error?.details,
       parseRetryAfter(response.headers.get("retry-after")),
+      payload.error?.notice,
+      payload.error?.reason,
     );
   return payload.data as T;
 }

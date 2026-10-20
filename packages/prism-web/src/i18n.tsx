@@ -14,6 +14,20 @@ export function resolveLocale(languages: readonly string[]): Locale {
   return "en";
 }
 
+/**
+ * Text the server already wrote for the player in their language. Shown as is:
+ * the translation table only covers text written in this client.
+ */
+const playerTexts = new Set<string>();
+export function rememberPlayerText(text: string) {
+  playerTexts.add(text);
+}
+
+/** The language requests ask the server to answer in. */
+export function activeLocale(): Locale {
+  return storedLocale() ?? resolveLocale(typeof navigator === "undefined" ? [] : navigator.languages ?? []);
+}
+
 function storedLocale(): Locale | null {
   if (typeof window === "undefined") return null;
   try {
@@ -30,6 +44,7 @@ export function translate(message: string, locale: Locale, values: Values = {}):
 }
 
 export function translateError(message: string, locale: Locale): string {
+  if (playerTexts.has(message)) return message;
   if (Object.hasOwn(translations, message)) return translate(message, locale);
   // Upstream diagnostics are not UI copy. Known API messages are translated above.
   return translate("操作失败，请稍后重试", locale);
@@ -39,7 +54,8 @@ const I18nContext = createContext<{
   locale: Locale;
   setLocale: (locale: Locale) => void;
   t: (message: string, values?: Values) => string;
-  errorText: (message: string) => string;
+  /** A message, or an error whose server notice is used when it has one. */
+  errorText: (error: unknown) => string;
 } | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -66,7 +82,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     locale,
     setLocale,
     t: (message: string, values?: Values) => translate(message, locale, values),
-    errorText: (message: string) => translateError(message, locale),
+    errorText: (error: unknown) => {
+      const notice = (error as { notice?: { body?: unknown } } | null)?.notice;
+      if (typeof notice?.body === "string") return notice.body;
+      return translateError(typeof error === "string" ? error : error instanceof Error ? error.message : "操作失败，请稍后重试", locale);
+    },
   }), [locale, setLocale]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

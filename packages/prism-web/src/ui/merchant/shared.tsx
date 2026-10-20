@@ -97,7 +97,7 @@ export function useResource<T>(path: string | null) {
         if (current) setData(result);
       })
       .catch((error) => {
-        if (current) setError(error.message);
+        if (current) setError(staffMessage(error));
       });
     return () => {
       current = false;
@@ -240,7 +240,7 @@ export function ActionForm({
       const result = await submit(form);
       if (!onResult?.(result)) done();
     } catch (error) {
-      setError(error instanceof Error ? error.message : t("操作失败"));
+      setError(error instanceof Error ? staffMessage(error) : t("操作失败"));
     } finally {
       setBusy(false);
     }
@@ -388,3 +388,12 @@ export type Preview = {
   adjustments: { label: string; amount: number }[];
   wallet: { balanceBefore: number; balanceAfter: number };
 };
+
+/**
+ * Staff see the player-facing text plus the server's own wording when they
+ * differ, which is often the more specific of the two.
+ */
+export function staffMessage(error: Error): string {
+  const reason = (error as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason && reason !== error.message ? `${error.message}（${reason}）` : error.message;
+}

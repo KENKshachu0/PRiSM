@@ -7,11 +7,35 @@ API 由 `packages/server-hono` 提供实现，本文档和服务端路由是客�
 ```json
 {
   "error": {
-    "code": "ERROR_CODE",
-    "message": "易读的错误说明文本。"
+    "code": "INSUFFICIENT_BALANCE",
+    "message": "余额不足，请充值后再结账，计费会继续",
+    "reason": "Insufficient currency holdings for this operation.",
+    "notice": {
+      "code": "INSUFFICIENT_BALANCE",
+      "level": "warning",
+      "display": "dialog",
+      "flow": "none",
+      "title": "余额不足",
+      "body": "余额不足，请充值后再结账，计费会继续",
+      "actions": [{ "kind": "dismiss", "label": "知道了" }]
+    }
   }
 }
 ```
+
+### 给玩家看的提示（`notice`）
+
+给玩家看什么、怎么展示，统一由服务端决定（`packages/server/src/notices.ts` 的一张按错误码索引的表），客户端只负责照着渲染。所以新增一种错误、改一句文案、给某个错误加「重试」，都只改服务端，App Clip 不用发版。
+
+- **语言**：按请求头 `Accept-Language` 选中文或英文（第一语言是英文才用英文）。网页按自己的语言设置发送，App Clip 用系统语言。
+- **`message`** 与 `notice.body` 相同，旧客户端原样显示它也能看到正确的提示。服务端原来的措辞（例如核心层的英文诊断）放在 **`reason`**，只给后台员工界面和排查用，玩家端不显示。
+- **`display`**：`dialog` 打断用户，只用于意外且需要玩家读完处理的情况（封号、余额不足、设备连不上、定位失败等）；`inline` 显示在玩家刚操作的地方（投币冷却、请先开机、兑换码无效等正常流程里的结果）；`none` 不显示，只执行 `flow`。
+- **`flow`**：客户端内置的几种后续动作。`expired`：会话失效，回到重新扫码；`refresh`：重新读取页面状态（如需要先入场、先绑定身份）；`signin`：重新登录；`none`：无。
+- **`actions`**：只在 `dialog` 时出现，`dismiss`（关闭）和 `retry`（重试，客户端能重试时才显示）。客户端不认识的动作当作关闭处理。
+- **`level`**：`success` / `info` / `warning` / `error`，决定颜色。
+- 表里没有的错误码：路由自己写的中文文案原样使用；英文开发者文本和服务器内部错误一律显示「操作失败，请稍后重试」，不让内部措辞出现在玩家面前。
+- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_OK` / `CARD_FAILED` / `CARD_NOT_READ` / `CARD_SENT` 和投币结果都是 `inline`，客户端把卡片那一行染成对应颜色；只有投币失败、投币结果未知是 `dialog`。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
+- 错误码与状态码由一个共享的处理函数映射（`http-errors.ts`），所有路由一致。封号为 `ACCOUNT_BANNED`，封禁表限制为 `ACCESS_RESTRICTED`，玩家资格停用统一为 403 `PLAYER_DISABLED`。
 
 ## 身份认证 (Authentication)
 

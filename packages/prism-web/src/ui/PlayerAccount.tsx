@@ -1,3 +1,4 @@
+import { useNotice } from "./NoticeProvider";
 import { CheckoutHistory } from "./CheckoutHistory";
 // Account sheets share their bill and checkout components with the standalone shop page.
 import { CheckoutButton, SettledBill, type Receipt } from "./Checkout";
@@ -75,6 +76,7 @@ export function AccountContent({
   onCheckoutPending: (pending: boolean) => void;
 }) {
   const { t, errorText } = useI18n();
+  const showNotice = useNotice();
   const code = info.shop.publicId;
   const { setBillingActive } = useAuth();
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -132,7 +134,8 @@ export function AccountContent({
       setDone(true);
       setPreview(null);
     } catch (e) {
-      setError(errorText(e instanceof Error ? e.message : "操作失败"));
+      const notice = showNotice(e);
+      if (notice.display === "inline") setError(notice.body);
     } finally {
       setBusy(false);
     }

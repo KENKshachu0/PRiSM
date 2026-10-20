@@ -16,6 +16,9 @@
   --color-primary: #0066d6;
   --color-on-primary: #ffffff;
   --color-coral: #d94f45;
+  /* Outcome colours for feedback shown where the player acted. */
+  --color-success: #1a8f4a;
+  --color-warning: #b86e00;
   --radius: 0.75rem;
   --shadow-soft: 0 8px 32px rgba(29, 29, 31, 0.045);
 
@@ -37,6 +40,8 @@
     --color-primary: #0b6fd8;
     --color-on-primary: #ffffff;
     --color-coral: #e06056;
+    --color-success: #34c759;
+    --color-warning: #ffb340;
     --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.12);
 
     color: #f5f5f7;
@@ -486,6 +491,36 @@ button.credential-row:not(:disabled):active {
 .credential-row:disabled:not([data-active="true"]) {
   opacity: 0.45;
 }
+/* A swipe's outcome tints the row the player tapped: noticeable without a dialog. */
+.credential-row[data-feedback] {
+  --feedback: var(--color-mint);
+  background: color-mix(in srgb, var(--feedback) 12%, transparent);
+  transition: background-color 200ms ease;
+}
+.credential-row[data-feedback="success"] { --feedback: var(--color-success); }
+.credential-row[data-feedback="warning"] { --feedback: var(--color-warning); }
+.credential-row[data-feedback="error"] { --feedback: var(--color-coral); }
+.credential-row[data-feedback] .credential-detail {
+  color: var(--feedback);
+  font-weight: 600;
+}
+.credential-feedback-icon {
+  flex: none;
+  color: var(--feedback);
+}
+/* A device action's outcome, shown above the controls instead of a dialog. */
+.inline-notice {
+  --feedback: var(--color-mint);
+  border-radius: 14px;
+  padding: 12px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--feedback);
+  background: color-mix(in srgb, var(--feedback) 12%, transparent);
+}
+.inline-notice[data-level="success"] { --feedback: var(--color-success); }
+.inline-notice[data-level="warning"] { --feedback: var(--color-warning); }
+.inline-notice[data-level="error"] { --feedback: var(--color-coral); }
 .credential-name {
   display: block;
   font-size: 21px;

@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { Power, DoorOpen, Coins, Loader2, Check } from "lucide-react";
-import { api, invalidatePlayerReads, playerOperation, type PublicMachine } from "../api";
+import { api, invalidatePlayerReads, playerOperation, type Notice, type PublicMachine } from "../api";
 import { useI18n } from "../i18n";
 import {
   operationLocation,
@@ -21,7 +21,7 @@ import {
   EntryPricing,
 } from "./BillingPages";
 import { useAuth } from "./AuthContext";
-import { PlayerDialog } from "./PlayerAccountMenu";
+import { useInlineNotice, useNotice } from "./NoticeProvider";
 
 type DeviceState = {
   gate: "ready" | "binding" | "entry";
@@ -69,19 +69,17 @@ export function DeviceControls({
     if (!live.watching || !live.climate) return;
     setState((current) => (current ? { ...current, climate: live.climate as ClimateState } : current));
   }, [live.watching, live.climate]);
+  const showNotice = useNotice();
+  const [note, showNote] = useInlineNotice();
+  /** Every problem goes through the shared notice entry; inline ones stay above the controls. */
   const failed = useCallback(
     (e: unknown) => {
-      const code =
-        e && typeof e === "object" && "code" in e ? String(e.code) : "";
-      if (
-        [
-          "TICKET_EXPIRED",
-        ].includes(code)
-      )
-        onExpired();
-      else setError(errorText(e instanceof Error ? e.message : "操作失败"));
+      const notice = showNotice(e, { onExpired, onRefresh: () => invalidatePlayerReads() });
+      if (notice.display === "inline") showNote(notice);
+      // Kept so a page that could not load offers its retry button.
+      else if (notice.display === "dialog") setError(notice.body);
     },
-    [onExpired, errorText],
+    [onExpired, showNotice, showNote],
   );
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const current = await api<DeviceState>(
@@ -199,7 +197,7 @@ export function DeviceControls({
   function enterAndOpenDoor(shop: ShopInfo["shop"]) {
     return act("door.open", async () => {
       const result = await playerOperation<{
-        door?: { temporaryPassword?: string; expiresAt?: string; error?: { message?: string } };
+        door?: { temporaryPassword?: string; expiresAt?: string; notice?: Notice };
       }>(shopApi(code, "player/session/start"), {
         ticket,
         consent,
@@ -209,7 +207,7 @@ export function DeviceControls({
       setState((current) => (current ? { ...current, gate: "ready" } : current));
       if (result.door?.temporaryPassword && result.door.expiresAt)
         setPassword({ temporaryPassword: result.door.temporaryPassword, expiresAt: result.door.expiresAt });
-      else setError(errorText(result.door?.error?.message ?? "获取开门密码失败，请联系店员"));
+      else showNotice(result.door?.notice ?? new Error("获取开门密码失败，请联系店员"));
     });
   }
   const cap = machine.capabilities;
@@ -222,10 +220,8 @@ export function DeviceControls({
   const spinner = <Loader2 size={22} className="animate-spin" />;
   return (
     <div className="device-controls">
-      {error && (
-        <PlayerDialog title={t("操作失败")} onClose={() => setError("")}>
-          <p className="text-sm leading-relaxed">{error}</p>
-        </PlayerDialog>
+      {note && (
+        <p className="inline-notice" data-level={note.level} role="status">{note.body}</p>
       )}
       {!state || state.gate === "entry" && !info ? (
         error ? <button className="session-action" onClick={() => act("load", async () => { invalidatePlayerReads(); })}>{t("重试")}</button> : <div className="flex justify-center" role="status" aria-label={t("正在加载")}>{spinner}</div>

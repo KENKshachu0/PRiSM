@@ -56,7 +56,12 @@ test("insufficient balance is actionable and clears the rejected checkout withou
   const ids: string[] = [];
   globalThis.fetch = Object.assign(async (_url: unknown, init?: RequestInit) => {
     ids.push(JSON.parse(String(init?.body)).operationId);
-    return Response.json({ error: { code: "INSUFFICIENT_BALANCE", message: "Insufficient currency holdings for this operation.", details: { required: 12 } } }, { status: 409 });
+    // As the server sends it: the player text in message and notice, the diagnostic in reason.
+    return Response.json({ error: {
+      code: "INSUFFICIENT_BALANCE", message: "余额不足，请充值后再结账，计费会继续", reason: "Insufficient currency holdings for this operation.",
+      notice: { code: "INSUFFICIENT_BALANCE", level: "warning", display: "dialog", flow: "none", title: "余额不足", body: "余额不足，请充值后再结账，计费会继续", actions: [] },
+      details: { required: 12 },
+    } }, { status: 409 });
   }, { preconnect: originalFetch.preconnect });
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -66,7 +71,8 @@ test("insufficient balance is actionable and clears the rejected checkout withou
       } catch (error) {
         expect(error).toBeInstanceOf(ApiError);
         const failure = error as ApiError;
-        expect(failure.message).toBe("余额不足，请充值后重试");
+        expect(failure.message).toBe("余额不足，请充值后再结账，计费会继续");
+        expect(failure.notice?.display).toBe("dialog");
         expect(failure.code).toBe("INSUFFICIENT_BALANCE");
         expect(failure.status).toBe(409);
         expect(failure.details).toEqual({ required: 12 });
