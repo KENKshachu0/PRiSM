@@ -17,7 +17,6 @@
   --color-on-primary: #ffffff;
   --color-coral: #d94f45;
   /* Outcome colours for feedback shown where the player acted. */
-  --color-success: #1a8f4a;
   --color-warning: #b86e00;
   --radius: 0.75rem;
   --shadow-soft: 0 8px 32px rgba(29, 29, 31, 0.045);
@@ -40,7 +39,6 @@
     --color-primary: #0b6fd8;
     --color-on-primary: #ffffff;
     --color-coral: #e06056;
-    --color-success: #34c759;
     --color-warning: #ffb340;
     --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.12);
 
@@ -491,34 +489,34 @@ button.credential-row:not(:disabled):active {
 .credential-row:disabled:not([data-active="true"]) {
   opacity: 0.45;
 }
-/* A swipe's outcome replaces the row's detail line: coloured text and an icon, no tint. */
+/* A swipe's outcome replaces the row's detail line: coloured text and an icon, no tint.
+   Success takes the accent blue; info is quiet grey. */
 .credential-row[data-feedback] .credential-detail {
   font-weight: 600;
 }
-.credential-feedback-part { --feedback: var(--color-mint); color: var(--feedback); }
 .credential-feedback-part + .credential-feedback-part::before {
   content: " · ";
   color: rgb(var(--color-ink) / 0.45);
 }
-:is(.credential-feedback-part, .inline-notice)[data-level="success"] { --feedback: var(--color-success); }
-:is(.credential-feedback-part, .inline-notice)[data-level="warning"] { --feedback: var(--color-warning); }
-:is(.credential-feedback-part, .inline-notice)[data-level="error"] { --feedback: var(--color-coral); }
-.credential-row[data-feedback="success"] { --feedback: var(--color-success); }
+:is(.credential-feedback-part, .inline-notice, .credential-row, .session-action)[data-level],
+.credential-row[data-feedback] { --feedback: var(--color-mint); }
+:is(.credential-feedback-part, .inline-notice, .session-action)[data-level="info"] { --feedback: rgb(var(--color-ink) / 0.6); }
+:is(.credential-feedback-part, .inline-notice, .session-action)[data-level="warning"],
 .credential-row[data-feedback="warning"] { --feedback: var(--color-warning); }
+:is(.credential-feedback-part, .inline-notice, .session-action)[data-level="error"],
 .credential-row[data-feedback="error"] { --feedback: var(--color-coral); }
-.credential-feedback-icon {
-  flex: none;
-  color: var(--feedback);
-}
+.credential-feedback-part, .credential-feedback-icon { color: var(--feedback); }
+.credential-feedback-icon { flex: none; }
+/* A coin press answers on the button itself for a moment. */
+.session-action[data-level] { color: var(--feedback); }
 /* An action's outcome, under the control that was used instead of a dialog: a coloured line, no box. */
 .inline-notice {
-  --feedback: var(--color-mint);
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--feedback);
+  color: var(--feedback, var(--color-mint));
 }
 .credential-name {
   display: block;

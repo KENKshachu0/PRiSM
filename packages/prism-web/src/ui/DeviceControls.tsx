@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Power, DoorOpen, Coins, Loader2, Check, CheckCircle2, AlertCircle, XCircle, Info } from "lucide-react";
+import { Power, DoorOpen, Coins, Loader2, CheckCircle2, AlertCircle, XCircle, Info } from "lucide-react";
 import { api, invalidatePlayerReads, playerOperation, type Notice, type PublicMachine } from "../api";
 import { useI18n } from "../i18n";
 import {
@@ -32,10 +32,14 @@ function anchorOf(action: string) {
   return action;
 }
 
+function NoticeIcon({ level, size }: { level: Notice["level"]; size: number }) {
+  const Icon = level === "success" ? CheckCircle2 : level === "error" ? XCircle : level === "info" ? Info : AlertCircle;
+  return <Icon size={size} aria-hidden="true" />;
+}
+
 /** A short outcome under a control: a coloured line with its icon. */
 function InlineNoticeLine({ note }: { note: Notice }) {
-  const Icon = note.level === "success" ? CheckCircle2 : note.level === "error" ? XCircle : note.level === "info" ? Info : AlertCircle;
-  return <p className="inline-notice" data-level={note.level} role="status"><Icon size={18} aria-hidden="true" />{note.body}</p>;
+  return <p className="inline-notice" data-level={note.level} role="status"><NoticeIcon level={note.level} size={18} />{note.body}</p>;
 }
 
 const localNote = (body: string, level: Notice["level"] = "warning"): Notice =>
@@ -91,6 +95,7 @@ export function DeviceControls({
   const [note, showNote] = useInlineNotice();
   const [noteAnchor, setNoteAnchor] = useState("");
   const noteAt = (anchor: string) => note && noteAnchor === anchor ? <InlineNoticeLine note={note} /> : null;
+  const coinNote = noteAnchor === "coin" ? note : null;
   const showNoteAt = useCallback((anchor: string, next: Notice) => { setNoteAnchor(anchor); showNote(next); }, [showNote]);
   /**
    * Every problem goes through the shared notice entry; inline ones are shown under the
@@ -407,20 +412,24 @@ export function DeviceControls({
                   </section>
                 )}
                 {cap.coin && !machine.coinAfterSwipe && (
+                  // The press answers on the button itself (已投币, 请稍后再投币…) for a moment.
                   <button
                     className="session-action"
+                    data-level={coinNote?.level}
                     disabled={!!busy || cardBusy}
                     onClick={() => operate("coin")}
+                    aria-live="polite"
                   >
                     {busy === "coin" ? (
                       spinner
+                    ) : coinNote ? (
+                      <NoticeIcon level={coinNote.level} size={22} />
                     ) : (
                       <Coins size={22} />
                     )}{" "}
-                    {t("投币")}
+                    {coinNote ? coinNote.body : t("投币")}
                   </button>
                 )}
-                {noteAt("coin")}
               </>
             ))}
           {state.gate === "ready" && !hasReadyAction && <p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p>}

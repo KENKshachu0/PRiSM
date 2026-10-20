@@ -87,6 +87,11 @@ export function AccountContent({
   /** Why a code was not accepted, under the code field; the section itself loaded fine. */
   const [redeemError, setRedeemError] = useState("");
   const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!redeemError) return;
+    const timer = setTimeout(() => setRedeemError(""), 5000);
+    return () => clearTimeout(timer);
+  }, [redeemError]);
   const [redeem, setRedeem] = useState("");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {

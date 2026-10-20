@@ -89,7 +89,7 @@ const CATALOG: Record<string, Entry> = {
   // happens to it, it never interrupts the swipe.
   CARD_OK: { body: t("登录成功", "Signed in"), level: "success", display: "inline" },
   CARD_FAILED: { body: t("登录失败", "Sign-in failed"), level: "error", display: "inline" },
-  CARD_NOT_READ: { body: t("登录失败", "Sign-in failed"), level: "error", display: "inline" },
+  CARD_NOT_READ: { body: t("登录失败", "Sign-in failed"), level: "warning", display: "inline" },
   CARD_SENT: { body: t("已刷卡", "Card sent"), level: "success", display: "inline" },
   COIN_SENT: { body: t("已投币", "Coin added"), level: "success", display: "inline" },
   COIN_SKIPPED: { body: t("投币冷却中", "Coin cooling down"), level: "info", display: "inline" },

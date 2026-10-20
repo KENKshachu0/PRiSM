@@ -31,6 +31,12 @@ export function CheckoutButton({ info, onComplete, onPendingChange }: { info: Sh
   const button = useRef<HTMLButtonElement>(null);
   const complete = useRef(onComplete);
   complete.current = onComplete;
+  // A refused checkout is explained above the button for a moment, then the button stands alone.
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(""), 5000);
+    return () => clearTimeout(timer);
+  }, [error]);
   useEffect(() => {
     if (!receipt) return;
     const timer = setTimeout(() => complete.current(receipt), 1500);

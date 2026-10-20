@@ -195,14 +195,14 @@ function MachineSessionPage({
   const showFeedback = (next: typeof feedback) => {
     clearTimeout(feedbackTimer.current);
     setFeedback(next);
-    if (next) feedbackTimer.current = setTimeout(() => setFeedback(null), next.parts[0]?.level === "success" ? 3000 : 6000);
+    if (next) feedbackTimer.current = setTimeout(() => setFeedback(null), next.parts[0]?.level === "success" ? 3000 : 5000);
   };
   useEffect(() => () => clearTimeout(feedbackTimer.current), []);
 
   /** For a server that predates notices: the card result alone. */
   const fallbackNotices = (card: CardOutcome): Notice[] => [{
     code: card, display: "inline", flow: "none", title: null, actions: [],
-    level: card === "failed" || card === "not_read" ? "error" : "success",
+    level: card === "failed" ? "error" : card === "not_read" ? "warning" : "success",
     body: t(CARD_TEXT[card]),
   }];
 

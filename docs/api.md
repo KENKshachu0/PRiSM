@@ -34,7 +34,7 @@ API 由 `packages/server-hono` 提供实现，本文档和服务端路由是客�
 - **`actions`**：只在 `dialog` 时出现，`dismiss`（关闭）和 `retry`（重试，客户端能重试时才显示）。客户端不认识的动作当作关闭处理。
 - **`level`**：`success` / `info` / `warning` / `error`，决定颜色。
 - 表里没有的错误码：路由自己写的中文文案原样使用；英文开发者文本和服务器内部错误一律显示「操作失败，请稍后重试」，不让内部措辞出现在玩家面前。
-- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_OK` / `CARD_FAILED` / `CARD_NOT_READ` / `CARD_SENT` 和投币结果（含投币失败、未确认）全部是 `inline`：投币是刷卡的附带动作，不打断刷卡。客户端把每条提示按各自的 `level` 着色、用「 · 」拼在卡片那一行的说明文字里，并在行尾显示对应图标；不给整行染色，提示显示期间也不锁定任何操作。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
+- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_OK` / `CARD_FAILED` / `CARD_NOT_READ` / `CARD_SENT` 和投币结果（含投币失败、未确认）全部是 `inline`：投币是刷卡的附带动作，不打断刷卡。客户端把每条提示按各自的 `level` 着色（success 用项目强调色蓝，warning 橙，error 红，info 灰）、用「 · 」拼在卡片那一行的说明文字里，并在行尾显示对应图标；不给整行染色，提示显示期间也不锁定任何操作，成功 3 秒、其它 5 秒后恢复原样。投币按钮的结果直接显示在按钮上（「已投币」「请稍后再投币」），同样几秒后恢复「投币」。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
 - 错误码与状态码由一个共享的处理函数映射（`http-errors.ts`），所有路由一致。封号为 `ACCOUNT_BANNED`，封禁表限制为 `ACCESS_RESTRICTED`，玩家资格停用统一为 403 `PLAYER_DISABLED`。
 
 ## 身份认证 (Authentication)

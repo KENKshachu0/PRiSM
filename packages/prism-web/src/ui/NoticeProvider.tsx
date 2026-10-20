@@ -84,14 +84,14 @@ export function useNotice(): Show {
   return show;
 }
 
-/** A notice kept briefly next to a control; cleared after a moment unless it is an error. */
+/** A notice kept briefly next to a control, then cleared: 3 s for a success, 5 s otherwise. */
 export function useInlineNotice() {
   const [note, setNote] = useState<Notice | null>(null);
   const timer = useMemo(() => ({ id: 0 as ReturnType<typeof setTimeout> | 0 }), []);
   const showNote = useCallback((next: Notice | null) => {
     if (timer.id) clearTimeout(timer.id);
     setNote(next);
-    if (next) timer.id = setTimeout(() => setNote(null), next.level === "success" ? 2000 : 5000);
+    if (next) timer.id = setTimeout(() => setNote(null), next.level === "success" ? 3000 : 5000);
   }, [timer]);
   return [note, showNote] as const;
 }
