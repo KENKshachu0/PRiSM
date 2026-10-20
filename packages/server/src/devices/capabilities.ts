@@ -69,7 +69,21 @@ export type CapabilitySpec<Config> = {
   available(action: ActionName, config: Config, secrets: ReadonlySet<string>): boolean;
 };
 
-const powerConfig = z.object({}).passthrough();
+/**
+ * A Home Assistant entity on one of the shop's connections. Bindings from before
+ * connections existed have neither field and keep url and token in the
+ * `binding` secret until they are adopted.
+ */
+const haEntityConfig = z
+  .object({
+    connectionId: z.string().min(1).optional(),
+    entityId: z.string().min(1).optional(),
+  })
+  .passthrough();
+export type HaEntityConfig = z.infer<typeof haEntityConfig>;
+
+const haBound = (config: HaEntityConfig, secrets: ReadonlySet<string>) =>
+  secrets.has("binding") || (!!config.connectionId && !!config.entityId);
 
 const hinataConfig = z.object({
   transport: z.enum(["external", "embedded"]).default("external"),
@@ -89,11 +103,11 @@ const mahjongConfig = z.object({
 });
 export type MahjongConfig = z.infer<typeof mahjongConfig>;
 
-export const power: CapabilitySpec<z.infer<typeof powerConfig>> = {
+export const power: CapabilitySpec<HaEntityConfig> = {
   id: "power",
   legacyExecutor: "home_assistant",
   legacyTargetKind: "facility",
-  config: powerConfig,
+  config: haEntityConfig,
   secrets: ["binding"],
   actions: {
     "power.on": { countsAsPlay: true, requiresEntry: true, observeAfter: "power" },
@@ -102,7 +116,7 @@ export const power: CapabilitySpec<z.infer<typeof powerConfig>> = {
   signals: {},
   // Power can be switched outside the platform, so it is always read live.
   state: { power: { authority: "external" } },
-  available: (_action, _config, secrets) => secrets.has("binding"),
+  available: (_action, config, secrets) => haBound(config, secrets),
 };
 
 const climateAction: ActionSpec = { countsAsPlay: false, requiresEntry: true, observeAfter: "climate" };
@@ -113,11 +127,11 @@ const climateAction: ActionSpec = { countsAsPlay: false, requiresEntry: true, ob
  * it is not playing a machine, and an air conditioner being off must not stop
  * a machine from taking coins.
  */
-export const climate: CapabilitySpec<z.infer<typeof powerConfig>> = {
+export const climate: CapabilitySpec<HaEntityConfig> = {
   id: "climate",
   legacyExecutor: "home_assistant",
   legacyTargetKind: "facility",
-  config: powerConfig,
+  config: haEntityConfig,
   secrets: ["binding"],
   actions: {
     "climate.on": climateAction,
@@ -128,7 +142,7 @@ export const climate: CapabilitySpec<z.infer<typeof powerConfig>> = {
   },
   signals: {},
   state: { climate: { authority: "external" } },
-  available: (_action, _config, secrets) => secrets.has("binding"),
+  available: (_action, config, secrets) => haBound(config, secrets),
 };
 
 export const hinataIo: CapabilitySpec<HinataConfig> = {

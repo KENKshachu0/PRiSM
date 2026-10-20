@@ -14,6 +14,16 @@ import { api, type Machine } from "../../api";
 import { useI18n } from "../../i18n";
 import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant, useResource } from "./shared";
 import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
+import { HaEntityFields, NEW_CONNECTION, haBody, useHaConnections, type HaDraft } from "./HaEntityFields";
+
+const draftOf = (binding?: { connectionId?: string | null; url: string; entityId: string } | null): HaDraft => ({
+  connection: binding?.connectionId ?? NEW_CONNECTION,
+  url: binding?.url ?? "",
+  token: "",
+  entityId: binding?.entityId ?? "",
+});
+const POWER_DOMAINS = ["switch", "input_boolean"];
+const CLIMATE_DOMAINS = ["climate"];
 
 /**
  * Device configuration in two sections: what the device *is* (identity) and
@@ -64,17 +74,27 @@ export function DeviceEditor({
   const [aliases, setAliases] = useState<string[]>(value?.aliases ?? []);
   const [enabled, setEnabled] = useState(value ? !!value.enabled : true);
 
-  const [haUrl, setHaUrl] = useState(value?.homeAssistant?.url ?? "");
-  const [haEntity, setHaEntity] = useState(value?.homeAssistant?.entityId ?? "");
-  const [haToken, setHaToken] = useState("");
-
-  const [acUrl, setAcUrl] = useState(value?.climate?.url ?? "");
-  const [acEntity, setAcEntity] = useState(value?.climate?.entityId ?? "");
-  const [acToken, setAcToken] = useState("");
-  // The server reuses the power binding's token for the same Home Assistant.
+  const ha = useHaConnections(shopId);
+  const [power, setPower] = useState<HaDraft>(() => draftOf(value?.homeAssistant));
+  const [ac, setAc] = useState<HaDraft>(() => draftOf(value?.climate));
+  // Once the shop's connections are known, an unset binding uses the first one,
+  // and one saved by address alone is shown on its connection.
+  useEffect(() => {
+    const list = ha.connections;
+    if (!list?.length) return;
+    const settle = (draft: HaDraft): HaDraft => {
+      if (draft.connection !== NEW_CONNECTION || draft.token) return draft;
+      const url = draft.url.trim().replace(/\/+$/, "");
+      const match = url ? list.find((connection) => connection.url === url) : list[0];
+      return match ? { ...draft, connection: match.id } : draft;
+    };
+    setPower(settle);
+    setAc(settle);
+  }, [ha.connections]);
+  // The server reuses the power side's token for the same new Home Assistant.
   const acSharesPowerToken =
-    caps.power && !!acUrl.trim() && acUrl.trim() === haUrl.trim() &&
-    (!!value?.homeAssistant || !!haToken.trim());
+    caps.power && ac.connection === NEW_CONNECTION && power.connection === NEW_CONNECTION &&
+    !!ac.url.trim() && ac.url.trim() === power.url.trim() && (!!value?.homeAssistant || !!power.token.trim());
 
   const [embedded, setEmbedded] = useState(
     value?.relayConnection === "embedded",
@@ -126,16 +146,16 @@ export function DeviceEditor({
   /** Why a capability's own configuration is not complete yet. */
   const missingConfig = (id: CapabilityId): string | null => {
     if (id === "power") {
-      if (!haUrl.trim()) return t("请填写 Home Assistant 地址");
-      if (!haEntity.trim()) return t("请填写电源实体");
-      if (!value?.homeAssistant && !haToken.trim())
+      if (power.connection === NEW_CONNECTION && !power.url.trim()) return t("请填写 Home Assistant 地址");
+      if (!power.entityId.trim()) return t("请填写电源实体");
+      if (power.connection === NEW_CONNECTION && !value?.homeAssistant && !power.token.trim())
         return t("请填写长期访问令牌");
     }
     if (id === "climate") {
-      if (!acUrl.trim()) return t("请填写 Home Assistant 地址");
-      if (!/^climate\.[a-z0-9_]+$/.test(acEntity.trim()))
+      if (ac.connection === NEW_CONNECTION && !ac.url.trim()) return t("请填写 Home Assistant 地址");
+      if (!/^climate\.[a-z0-9_]+$/.test(ac.entityId.trim()))
         return t("请填写 climate. 开头的空调实体");
-      if (!value?.climate && !acToken.trim() && !acSharesPowerToken)
+      if (ac.connection === NEW_CONNECTION && !value?.climate && !ac.token.trim() && !acSharesPowerToken)
         return t("请填写长期访问令牌");
     }
     if (id === "hinata_io" && !embedded && !hinataUrl.trim())
@@ -303,20 +323,8 @@ export function DeviceEditor({
             ...(caps.hinata_io && !embedded && password
               ? { hinataPassword: password }
               : {}),
-            homeAssistant: caps.power
-              ? {
-                  url: haUrl.trim(),
-                  entityId: haEntity.trim(),
-                  ...(haToken.trim() ? { token: haToken.trim() } : {}),
-                }
-              : null,
-            climate: caps.climate
-              ? {
-                  url: acUrl.trim(),
-                  entityId: acEntity.trim(),
-                  ...(acToken.trim() ? { token: acToken.trim() } : {}),
-                }
-              : null,
+            homeAssistant: caps.power ? haBody(power) : null,
+            climate: caps.climate ? haBody(ac) : null,
             coinKey: caps.hinata_io && canCoin ? Number(coinKey || 0) : 0,
             coinAfterSwipe:
               caps.hinata_io &&
@@ -414,47 +422,24 @@ export function DeviceEditor({
           icon={Power}
           title="电源控制"
           description="通过 Home Assistant 读取并开关机台电源。"
-          summary={haEntity.trim()}
+          summary={power.entityId.trim()}
           on={caps.power}
           open={open === "power"}
           toggle={(on) => toggle("power", on)}
           select={() => setOpen(open === "power" ? null : "power")}
           problem={incomplete("power")}
         >
-          <div className="grid gap-3">
-            <Field label="Home Assistant 地址">
-              <input
-                className={input}
-                type="url"
-                required
-                placeholder="https://ha.example.com"
-                value={haUrl}
-                onChange={(e) => setHaUrl(e.target.value)}
-              />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="电源实体">
-                <input
-                  className={input}
-                  required
-                  placeholder="switch.maimai"
-                  value={haEntity}
-                  onChange={(e) => setHaEntity(e.target.value)}
-                />
-              </Field>
-              <Field label="长期访问令牌">
-                <input
-                  className={input}
-                  type="password"
-                  required={!value?.homeAssistant}
-                  autoComplete="new-password"
-                  value={haToken}
-                  placeholder={value?.homeAssistant ? t("留空保持不变") : ""}
-                  onChange={(e) => setHaToken(e.target.value)}
-                />
-              </Field>
-            </div>
-          </div>
+          <HaEntityFields
+            shopId={shopId}
+            connections={ha.connections ?? []}
+            draft={power}
+            change={setPower}
+            domains={POWER_DOMAINS}
+            entityLabel="电源实体"
+            entityPlaceholder="switch.maimai"
+            tokenOptional={!!value?.homeAssistant}
+            reload={ha.reload}
+          />
         </CapabilityCard>
 
         <CapabilityCard
@@ -462,51 +447,30 @@ export function DeviceEditor({
           icon={AirVent}
           title="空调"
           description="通过 Home Assistant 控制空调：开关、模式、温度和风速。"
-          summary={acEntity.trim()}
+          summary={ac.entityId.trim()}
           on={caps.climate}
           open={open === "climate"}
           toggle={(on) => {
             // Usually the same Home Assistant as the power switch.
-            if (on && !acUrl.trim() && haUrl.trim()) setAcUrl(haUrl.trim());
+            if (on && ac.connection === NEW_CONNECTION && !ac.url.trim())
+              setAc({ ...ac, connection: power.connection, url: power.url });
             toggle("climate", on);
           }}
           select={() => setOpen(open === "climate" ? null : "climate")}
           problem={incomplete("climate")}
         >
           <div className="grid gap-3">
-            <Field label="Home Assistant 地址">
-              <input
-                className={input}
-                type="url"
-                required
-                placeholder="https://ha.example.com"
-                value={acUrl}
-                onChange={(e) => setAcUrl(e.target.value)}
-              />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="空调实体">
-                <input
-                  className={`${input} font-mono`}
-                  required
-                  placeholder="climate.living_room"
-                  value={acEntity}
-                  onChange={(e) => setAcEntity(e.target.value.trim())}
-                />
-              </Field>
-              <Field label="长期访问令牌">
-                <input
-                  className={input}
-                  type="password"
-                  autoComplete="new-password"
-                  value={acToken}
-                  placeholder={
-                    value?.climate || acSharesPowerToken ? t("留空保持不变") : ""
-                  }
-                  onChange={(e) => setAcToken(e.target.value)}
-                />
-              </Field>
-            </div>
+            <HaEntityFields
+              shopId={shopId}
+              connections={ha.connections ?? []}
+              draft={ac}
+              change={setAc}
+              domains={CLIMATE_DOMAINS}
+              entityLabel="空调实体"
+              entityPlaceholder="climate.living_room"
+              tokenOptional={!!value?.climate || acSharesPowerToken}
+              reload={ha.reload}
+            />
             {acSharesPowerToken && !value?.climate && (
               <Hint>{t("与电源控制是同一个 Home Assistant，令牌可以留空，沿用电源的令牌。")}</Hint>
             )}

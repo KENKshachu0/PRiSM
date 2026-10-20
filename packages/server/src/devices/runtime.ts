@@ -18,7 +18,9 @@ import { normalizeHinataUrl, sendHinataCard, sendHinataCoin } from "../hardware/
 import { TTLockClient } from "../hardware/ttlock.js";
 import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
 import { createDeviceBus, type ActionRunner, type RunOutcome, type StateReader } from "./bus.js";
+import type { HaEntityConfig } from "./capabilities.js";
 import { doorConfigOf, hinataConfigOf, readSecret, type Device } from "./device.js";
+import { openHaConnection } from "./ha-connections.js";
 
 const KEY_PRESS_TTL_MS = 30_000;
 const HA_TIMEOUT_MS = 10_000;
@@ -45,6 +47,12 @@ async function haBinding(
   device: Device,
   capability: "power" | "climate" = "power",
 ): Promise<HaBinding | null> {
+  const config = device.capabilities.get(capability)?.config as HaEntityConfig | undefined;
+  if (config?.connectionId && config.entityId) {
+    const connection = await openHaConnection(runtime.db, device.shopId, config.connectionId, runtime.env.URL_ENCRYPTION_KEY);
+    return connection ? { url: connection.url, token: connection.token, entityId: config.entityId } : null;
+  }
+  // A binding from before shop connections, not yet adopted.
   const raw = await readSecret(runtime.db, device, capability, "binding", runtime.env.URL_ENCRYPTION_KEY);
   if (!raw) return null;
   try {

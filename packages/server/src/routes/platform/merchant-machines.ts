@@ -8,7 +8,16 @@ import { machineRelayPath } from "../../gateway/relay-path.js";
 import { machineRelayNamespace } from "../../gateway/machine-relay-gateway.js";
 import { loadDevice, loadDevices, can, hinataConfigOf, doorConfigOf, mahjongConfigOf, readSecret, type Device } from "../../devices/device.js";
 import { capabilityWrites, storedCapabilities, type StoredCapability } from "../../devices/configure.js";
-import { capabilities, type CapabilityId, type HinataConfig } from "../../devices/capabilities.js";
+import { capabilities, type CapabilityId, type HaEntityConfig, type HinataConfig } from "../../devices/capabilities.js";
+import {
+  getHaConnection,
+  normalizeHaUrl,
+  openHaConnection,
+  resolveHaConnection,
+  writeHaConnection,
+  type StoredHaConnection,
+} from "../../devices/ha-connections.js";
+import { scheduleReadAccess } from "./merchant-ha.js";
 import { z } from "zod";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
@@ -17,7 +26,7 @@ import { requireUser } from "../../middleware/auth.js";
 export const merchantMachineRouter = new Hono<AppBindings>();
 type C = Context<AppBindings>;
 
-async function assertMachineShop(c: C, user: AuthUser, shopId: string) {
+export async function assertMachineShop(c: C, user: AuthUser, shopId: string) {
   if (user.role === "admin") return;
   const member = await c.env.DB.prepare(
     "SELECT 1 FROM shop_members WHERE shop_id=? AND user_id=?",
@@ -25,7 +34,7 @@ async function assertMachineShop(c: C, user: AuthUser, shopId: string) {
   if (!member) jsonError(403, "你没有这个店铺的管理权限", "FORBIDDEN");
 }
 
-async function canConfigureMachine(c: C, user: AuthUser, shopId: string) {
+export async function canConfigureMachine(c: C, user: AuthUser, shopId: string) {
   if (user.role === "admin") return true;
   const row = await c.env.DB.prepare(
     "SELECT s.role FROM shop_staff_accounts a JOIN staff_users s ON s.shop_id=a.shop_id AND s.id=a.staff_id WHERE a.shop_id=? AND a.user_id=? AND s.status='active'",
@@ -37,18 +46,34 @@ async function canConfigureMachine(c: C, user: AuthUser, shopId: string) {
   return Boolean(owner);
 }
 
-function encryptionKey(c: C): string {
+export function encryptionKey(c: C): string {
   if (!c.env.URL_ENCRYPTION_KEY) jsonError(503, "设备密钥尚未配置", "DEVICE_ENCRYPTION_UNAVAILABLE");
   return c.env.URL_ENCRYPTION_KEY;
 }
 
 type HaBinding = { url: string; entityId: string; token: string };
 
-async function readHaBinding(c: C, device: Device, capability: "power" | "climate" = "power"): Promise<HaBinding | null> {
-  if (!device.capabilities.has(capability)) return null;
+/** Where a power or air-conditioner capability points, without its token. */
+async function describeHa(
+  c: C,
+  device: Device,
+  capability: "power" | "climate",
+): Promise<{ connectionId: string | null; url: string; entityId: string } | null> {
+  const bound = device.capabilities.get(capability);
+  if (!bound) return null;
+  const config = bound.config as HaEntityConfig;
+  if (config.connectionId && config.entityId) {
+    const connection = await getHaConnection(c.env.DB, device.shopId, config.connectionId);
+    return { connectionId: config.connectionId, url: connection?.url ?? "", entityId: config.entityId };
+  }
   const raw = await readSecret(c.env.DB, device, capability, "binding", encryptionKey(c));
   if (!raw) return null;
-  try { return JSON.parse(raw) as HaBinding; } catch { return null; }
+  try {
+    const binding = JSON.parse(raw) as HaBinding;
+    return { connectionId: null, url: binding.url, entityId: binding.entityId };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -70,8 +95,8 @@ function availableActions(device: Device): { name: string; capability: string }[
 async function presentMachine(c: C, device: Device, shopPublicId: string, canConfigure: boolean) {
   const hinata = hinataConfigOf(device);
   const io = device.capabilities.get("hinata_io");
-  const ha = await readHaBinding(c, device);
-  const climate = await readHaBinding(c, device, "climate");
+  const ha = await describeHa(c, device, "power");
+  const climate = await describeHa(c, device, "climate");
   const embedded = hinata?.transport === "embedded";
   const coinKey = hinata?.coinKey ?? 32;
   return {
@@ -90,8 +115,8 @@ async function presentMachine(c: C, device: Device, shopPublicId: string, canCon
       ? await readSecret(c.env.DB, device, "hinata_io", "url", encryptionKey(c))
       : null,
     hasPassword: !!io?.secretNames.has("password"),
-    homeAssistant: ha ? { url: canConfigure ? ha.url : "", entityId: ha.entityId } : null,
-    climate: climate ? { url: canConfigure ? climate.url : "", entityId: climate.entityId } : null,
+    homeAssistant: ha ? { connectionId: ha.connectionId, url: canConfigure ? ha.url : "", entityId: ha.entityId } : null,
+    climate: climate ? { connectionId: climate.connectionId, url: canConfigure ? climate.url : "", entityId: climate.entityId } : null,
     ttlockLockId: doorConfigOf(device)?.lockId ?? null,
     mahjong: mahjongConfigOf(device),
     coinKey,
@@ -252,16 +277,16 @@ const urlInput = z.string().trim().url().refine(
   value => ["http:","https:"].includes(new URL(value).protocol),
   "连接地址必须为 HTTP 或 HTTPS",
 );
-const homeAssistantInput = z.object({
-  url:urlInput,
-  entityId:z.string().regex(/^(switch|input_boolean)\.[a-z0-9_]+$/),
+// A Home Assistant entity names its shop connection, or — as older clients do —
+// the address (and token, when new) from which a connection is found or made.
+const haEntityInput = (entity: z.ZodString) => z.object({
+  connectionId:z.string().min(1).optional(),
+  url:urlInput.optional(),
+  entityId:entity,
   token:z.string().trim().max(4096).optional(),
-}).nullable();
-const climateInput = z.object({
-  url:urlInput,
-  entityId:z.string().regex(/^climate\.[a-z0-9_]+$/,"空调实体需要是 climate.* 实体"),
-  token:z.string().trim().max(4096).optional(),
-}).nullable();
+}).refine(value => !!value.connectionId || !!value.url, "请选择 Home Assistant 连接").nullable();
+const homeAssistantInput = haEntityInput(z.string().regex(/^(switch|input_boolean)\.[a-z0-9_]+$/));
+const climateInput = haEntityInput(z.string().regex(/^climate\.[a-z0-9_]+$/,"空调实体需要是 climate.* 实体"));
 const machineInput=z.object({
   shopId:z.string().min(1),
   name:z.string().trim().min(1).max(80),
@@ -318,37 +343,67 @@ async function validateMahjong(c:C,shopId:string,current:Device|null,body:Machin
  */
 async function nextCapabilities(
   c:C,
+  shopId:string,
   stored:ReadonlyMap<CapabilityId,StoredCapability>,
   body:MachineInput,
-):Promise<{next:Map<CapabilityId,StoredCapability>;relayToken:string|null}>{
+):Promise<{next:Map<CapabilityId,StoredCapability>;relayToken:string|null;connections:StoredHaConnection[]}>{
   const next=new Map(stored);
   const seal=(value:string)=>encryptSecret(value,encryptionKey(c));
+  const connections:StoredHaConnection[]=[];
+
+  /** The address and token a stored power or air-conditioner capability uses. */
+  const previousHa=async(capability:StoredCapability|undefined):Promise<{url:string;token:string}|null>=>{
+    if(!capability)return null;
+    const connectionId=(capability.config as HaEntityConfig).connectionId;
+    if(connectionId){
+      const open=await openHaConnection(c.env.DB,shopId,connectionId,encryptionKey(c));
+      return open?{url:open.url,token:open.token}:null;
+    }
+    if(!capability.secrets.binding)return null;
+    try{return JSON.parse(await decryptSecret(capability.secrets.binding,encryptionKey(c))) as HaBinding;}
+    catch{return null;}
+  };
+  /**
+   * The connection for an entity. A token left empty falls back to the one the
+   * capability already used, then to the other Home Assistant capability's
+   * when the address is the same, then to any connection to that address.
+   */
+  const connectionFor=async(
+    input:NonNullable<MachineInput["homeAssistant"]>,
+    fallbacks:Array<StoredCapability|undefined>,
+  ):Promise<string>=>{
+    if(input.connectionId){
+      if(!await getHaConnection(c.env.DB,shopId,input.connectionId))
+        jsonError(400,"没有找到这个 Home Assistant 连接","HA_CONNECTION_NOT_FOUND");
+      return input.connectionId;
+    }
+    const url=normalizeHaUrl(input.url!);
+    let token=input.token||null;
+    for(const fallback of fallbacks){
+      if(token)break;
+      const previous=await previousHa(fallback);
+      if(previous&&normalizeHaUrl(previous.url)===url)token=previous.token;
+    }
+    const pending=connections.find(connection=>connection.url===url);
+    if(!token&&pending)return pending.id;
+    const resolved=await resolveHaConnection(c.env.DB,shopId,encryptionKey(c),{url,token});
+    if(!resolved)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
+    if(resolved.created&&!connections.some(connection=>connection.id===resolved.connection.id))
+      connections.push(resolved.connection);
+    return resolved.connection.id;
+  };
 
   if(body.homeAssistant===null)next.delete("power");
   else if(body.homeAssistant){
-    const previous=stored.get("power")?.secrets.binding;
-    const previousToken=previous
-      ?(JSON.parse(await decryptSecret(previous,encryptionKey(c))) as Partial<HaBinding>).token
-      :undefined;
-    const token=body.homeAssistant.token||previousToken;
-    if(!token)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
-    const binding:HaBinding={url:body.homeAssistant.url,entityId:body.homeAssistant.entityId,token};
-    next.set("power",{config:{},secrets:{binding:await seal(JSON.stringify(binding))},credentialHash:null});
+    const connectionId=await connectionFor(body.homeAssistant,[stored.get("power")]);
+    next.set("power",{config:{connectionId,entityId:body.homeAssistant.entityId},secrets:{},credentialHash:null});
   }
 
   if(body.climate===null)next.delete("climate");
   else if(body.climate){
-    const tokenOf=async(sealed:string|undefined)=>sealed
-      ?(JSON.parse(await decryptSecret(sealed,encryptionKey(c))) as Partial<HaBinding>)
-      :undefined;
-    const previous=await tokenOf(stored.get("climate")?.secrets.binding);
-    // The same Home Assistant usually serves both, so an empty token falls
-    // back to the power binding's when the address matches.
-    const power=await tokenOf(next.get("power")?.secrets.binding);
-    const token=body.climate.token||previous?.token||(power?.url===body.climate.url?power.token:undefined);
-    if(!token)jsonError(400,"请填写 Home Assistant 令牌","HOME_ASSISTANT_TOKEN_REQUIRED");
-    const binding:HaBinding={url:body.climate.url,entityId:body.climate.entityId,token};
-    next.set("climate",{config:{},secrets:{binding:await seal(JSON.stringify(binding))},credentialHash:null});
+    // The same Home Assistant usually serves both.
+    const connectionId=await connectionFor(body.climate,[stored.get("climate"),next.get("power"),stored.get("power")]);
+    next.set("climate",{config:{connectionId,entityId:body.climate.entityId},secrets:{},credentialHash:null});
   }
 
   if(body.ttlockLockId===null)next.delete("door");
@@ -397,7 +452,7 @@ async function nextCapabilities(
   }else{
     next.delete("hinata_io");
   }
-  return {next,relayToken};
+  return {next,relayToken,connections};
 }
 
 async function changeMachine(c:C, machineId?:string) {
@@ -421,7 +476,7 @@ async function changeMachine(c:C, machineId?:string) {
   await validateMahjong(c,shopId,current,body);
   const id=current?.id??crypto.randomUUID();
   const stored=current?await storedCapabilities(c.env.DB,shopId,id):new Map<CapabilityId,StoredCapability>();
-  const {next,relayToken}=await nextCapabilities(c,stored,body);
+  const {next,relayToken,connections}=await nextCapabilities(c,shopId,stored,body);
 
   const name=body.name??current?.name;
   if(!name)jsonError(400,"设备名称不能为空","INVALID_DEVICE_NAME");
@@ -440,8 +495,12 @@ async function changeMachine(c:C, machineId?:string) {
     ).bind(id,randomToken(12),shopId,name,enabled,kind,JSON.stringify(aliases));
   await c.env.DB.batch([
     identity,
+    ...connections.map(connection=>writeHaConnection(c.env.DB,shopId,connection)),
     ...capabilityWrites(c.env.DB,{shopId,deviceId:id,next,now:new Date()}),
   ]);
+  // A new Home Assistant gets its read-only account in the background; a failure
+  // is recorded on the connection and shown on the board, never on this save.
+  for(const connection of connections)scheduleReadAccess(c,shopId,connection.id);
   const updated=await loadDevice(c.env.DB,shopId,id);
   if(!updated)jsonError(500,"设备保存失败","DEVICE_SAVE_FAILED");
   const [machine]=await presentWithStatus(c,[updated],publicShopId,true);

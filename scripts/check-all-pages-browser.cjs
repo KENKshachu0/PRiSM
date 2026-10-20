@@ -68,6 +68,7 @@ function mock(request, role, unknown, mutations) {
   if (p === "/api/v1/merchant/shops") return { shops: [shop] };
   if (p === "/api/v1/merchant/machines") return { machines: [] };
   if (p === "/api/v1/merchant/device-bindings") return { bindings: [] };
+  if (p === "/api/v1/merchant/ha-connections") return { connections: [] };
   if (p === "/api/v1/merchant/shop-members") return { members: [] };
   if (p === "/api/v1/admin/users") return { users: [] };
   if (p === "/api/v1/admin/bans") return { bans: [] };

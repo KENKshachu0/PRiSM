@@ -392,6 +392,31 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
     sqlite.close();
   });
 
+  it("carries a shop Home Assistant connection, re-sealing its tokens",async()=>{
+    const {sqlite,env,app,headers}=await transferFixture();
+    const now=new Date().toISOString();
+    const connection={id:"ha_1",url:"https://ha",internalUrl:"http://ha.local:8123",
+      token:await encryptSecret("control",KEY),readToken:await encryptSecret("reader",KEY),
+      readUserId:"u1",readAccess:"ready",readError:null,updatedAt:now};
+    sqlite.run("INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES ('source','devices.ha_connection:ha_1',?,?)",[JSON.stringify(connection),now]);
+    sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted) VALUES ('m1','pub-m1','source','Cabinet','')");
+    sqlite.run(
+      `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+       VALUES ('source','m1','power','{"connectionId":"ha_1","entityId":"switch.x"}','{}',?,?)`,[now,now],
+    );
+    const exported=await app.fetch(new Request("https://prism.test/api/v1/shops/source/data/export?scope=business",{headers}),env);
+    const backup=await exported.json() as {tables:Tables;[key:string]:unknown};
+    const row=backup.tables.app_settings!.find(item=>item.key==="devices.ha_connection:ha_1")!;
+    expect(JSON.parse(String(row.value_json))).toMatchObject({token:"control",readToken:"reader"});
+    await restore(app,env,headers,"destination",backup);
+    const restored=sqlite.query("SELECT value_json FROM app_settings WHERE shop_id='destination' AND key='devices.ha_connection:ha_1'").get() as {value_json:string};
+    const sealed=JSON.parse(restored.value_json);
+    expect(sealed.token).not.toBe("control");
+    expect(await decryptSecret(sealed.token,KEY)).toBe("control");
+    expect(await decryptSecret(sealed.readToken,KEY)).toBe("reader");
+    sqlite.close();
+  });
+
   it("converts a v2 file's machine columns and command history into the device model",async()=>{
     const {sqlite,env,app,headers}=await transferFixture();
     const now=new Date().toISOString();

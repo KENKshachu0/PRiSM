@@ -1586,5 +1586,13 @@
   "未读卡": "Card not read",
   "游戏登录成功": "Game signed in",
   "游戏拒绝了卡片": "Game rejected the card",
-  "获取开门密码失败，请联系店员": "Could not get the door code. Please ask the staff."
+  "获取开门密码失败，请联系店员": "Could not get the door code. Please ask the staff.",
+  "添加另一个 Home Assistant…": "Add another Home Assistant…",
+  "实时状态已启用": "Live state on",
+  "实时状态未启用：{reason}": "Live state off: {reason}",
+  "未知原因": "unknown reason",
+  "实时状态需要一次 Home Assistant 管理员令牌，用来创建只读账号，用完不保存。": "Live state needs a Home Assistant administrator token once, to create a read-only account. It is not kept.",
+  "正在启用实时状态…": "Turning on live state…",
+  "管理员令牌": "Administrator token",
+  "这个令牌不是管理员的": "This token is not an administrator's"
 }

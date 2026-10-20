@@ -12,6 +12,7 @@
 import type { D1BoundStatementLike, D1DatabaseLike } from "@prism/adapter-d1";
 import { decryptSecret, encryptSecret, sha256Hex } from "../crypto.js";
 import { normalizeHinataUrl } from "../hardware/hinata.js";
+import { listHaConnections, normalizeHaUrl } from "./ha-connections.js";
 
 const REGISTRY_KEYS = ["devices.homeassistant", "devices.hinata_io", "devices.ttlock"] as const;
 
@@ -60,14 +61,22 @@ async function boundEntities(db: D1DatabaseLike, shopId: string, key: string): P
   const rows = (
     await db
       .prepare(
-        `SELECT json_extract(secret_json, '$.binding') AS binding FROM device_capabilities
-         WHERE shop_id = ? AND capability = 'power'`,
+        `SELECT json_extract(secret_json, '$.binding') AS binding,
+                json_extract(config_json, '$.connectionId') AS connection_id,
+                json_extract(config_json, '$.entityId') AS entity_id
+         FROM device_capabilities WHERE shop_id = ? AND capability = 'power'`,
       )
       .bind(shopId)
-      .all<{ binding: string | null }>()
+      .all<{ binding: string | null; connection_id: string | null; entity_id: string | null }>()
   ).results;
   const entities = new Set<string>();
+  const connections = new Map((await listHaConnections(db, shopId)).map((connection) => [connection.id, connection.url]));
   for (const row of rows) {
+    if (row.connection_id && row.entity_id) {
+      const url = connections.get(row.connection_id);
+      if (url) entities.add(`${normalizeHaUrl(url)} ${row.entity_id}`);
+      continue;
+    }
     if (!row.binding) continue;
     try {
       const binding = record(JSON.parse(await decryptSecret(row.binding, key)));

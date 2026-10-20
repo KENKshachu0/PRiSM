@@ -159,7 +159,10 @@ describe("legacy device registries", () => {
     const wacca = devices.find((device) => device.name === "华卡")!;
     expect(JSON.parse(wacca.aliases_json)).toEqual(["switch.wacca", "wc"]);
     expect(sqlite.query("SELECT device_id FROM device_operations WHERE id='old'").get()).toEqual({ device_id: wacca.id });
-    expect(sqlite.query("SELECT key FROM app_settings ORDER BY key").all()).toEqual([{ key: "devices.homeassistant_connection" }]);
+    const keys = sqlite.query<{ key: string }, []>("SELECT key FROM app_settings ORDER BY key").all().map((row) => row.key);
+    // The registry is gone; its Home Assistant became one shop connection.
+    expect(keys.filter((key) => !key.startsWith("devices.ha_connection:"))).toEqual(["devices.homeassistant_connection"]);
+    expect(keys.filter((key) => key.startsWith("devices.ha_connection:"))).toHaveLength(1);
 
     // The adopted device is an ordinary device everywhere, including the Bot's state listing.
     const states = await listDeviceStates({ db, env: { DB: db, URL_ENCRYPTION_KEY: KEY } as unknown as Env, shopId: SHOP, fetcher, now: () => NOW });

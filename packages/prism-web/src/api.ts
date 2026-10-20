@@ -102,9 +102,10 @@ export type Machine = {
   hasHinata: boolean;
   kind: "machine" | "door";
   hinataUrl: string | null;
-  homeAssistant: { url: string; entityId: string } | null;
+  /** `connectionId` names the shop Home Assistant; null for a binding not yet moved onto one. */
+  homeAssistant: { connectionId?: string | null; url: string; entityId: string } | null;
   /** A Home Assistant `climate.*` entity, such as an air conditioner. */
-  climate?: { url: string; entityId: string } | null;
+  climate?: { connectionId?: string | null; url: string; entityId: string } | null;
   ttlockLockId: number | null;
   coinKey: number;
   coinEnabled?: boolean;

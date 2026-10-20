@@ -5,6 +5,7 @@
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
 import { decryptSecret } from "../crypto.js";
+import { adoptHaBindings } from "./ha-connections.js";
 import { adoptLegacyRegistries } from "./legacy-registries.js";
 import {
   capabilities,
@@ -140,6 +141,13 @@ export async function loadDevices(
   encryptionKey: string | undefined,
 ): Promise<Device[]> {
   await adoptLegacyRegistries({ db, shopId, encryptionKey });
+  try {
+    await adoptHaBindings(db, shopId, encryptionKey);
+  } catch (error) {
+    // An old binding still works as it is; a failed move (for example while a
+    // backup holds the shop read-only) is retried on the next listing.
+    console.error("Home Assistant binding adoption failed", error);
+  }
   const rows = (
     await db
       .prepare(`SELECT ${deviceColumns} FROM machines WHERE shop_id = ? ORDER BY created_at, id`)

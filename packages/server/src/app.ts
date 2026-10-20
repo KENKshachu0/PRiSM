@@ -16,6 +16,7 @@ import { shopsRouter } from "./routes/platform/shops.js";
 import { adminManagementRouter } from "./routes/platform/admin-management.js";
 import { merchantMembersRouter } from "./routes/platform/merchant-members.js";
 import { merchantMachineRouter } from "./routes/platform/merchant-machines.js";
+import { merchantHaRouter } from "./routes/platform/merchant-ha.js";
 import { cardsRouter } from "./routes/platform/cards.js";
 import { machineSessionRouter, machineTicketRouter } from "./routes/platform/machine-session.js";
 import { machineLoginRouter } from "./routes/platform/machine-login.js";
@@ -155,6 +156,7 @@ export function createApp(): Hono<AppBindings> {
   app.route("/api/v1/merchant/shops", shopsRouter);
   app.route("/api/v1/merchant", merchantMembersRouter);
   app.route("/api/v1/merchant", merchantMachineRouter);
+  app.route("/api/v1/merchant", merchantHaRouter);
   app.route("/api/v1/admin", adminManagementRouter);
   app.route("/api/v1/admin", shopDataAdminRouter);
   app.route("/api/v1/cards", cardsRouter);

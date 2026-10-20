@@ -1,3 +1,4 @@
+import { HA_CONNECTION_PREFIX, HA_CONNECTION_SECRETS } from "../../../devices/ha-connections.js";
 import type { LegacyD1Database } from "./compat.js";
 import type { LegacyD1Database as D1Database, LegacyD1PreparedStatement as D1PreparedStatement } from "./compat.js";
 import type { Context, Hono } from "hono";
@@ -426,6 +427,17 @@ async function readPage(c: C, job: ExportJob, after: number) {
             secrets[name] = await decryptSecret(sealed, c.env.URL_ENCRYPTION_KEY!);
         value.secret_json = JSON.stringify(secrets);
         payload = JSON.stringify(value);
+      }
+      if (table === "app_settings") {
+        const value = JSON.parse(payload) as Record<string, unknown>;
+        if (String(value.key).startsWith(HA_CONNECTION_PREFIX)) {
+          const connection = JSON.parse(String(value.value_json)) as Record<string, unknown>;
+          for (const name of HA_CONNECTION_SECRETS)
+            if (typeof connection[name] === "string" && connection[name])
+              connection[name] = await decryptSecret(String(connection[name]), c.env.URL_ENCRYPTION_KEY!);
+          value.value_json = JSON.stringify(connection);
+          payload = JSON.stringify(value);
+        }
       }
       const size = rowEncoder.encode(payload).length;
       if (rows.length && bytes + size > exportPageBytes) break;

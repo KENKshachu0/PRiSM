@@ -1,3 +1,4 @@
+import { HA_CONNECTION_PREFIX, HA_CONNECTION_SECRETS } from "../../../devices/ha-connections.js";
 import type { LegacyD1Database as D1Database, LegacyD1PreparedStatement as D1PreparedStatement } from "./compat.js";
 import type { LegacyD1Database } from "./compat.js";
 import { registerShopExportRoutes, sourceColumns, importAttemptStatement, shopExportError } from "./shop-data-export.js";
@@ -157,6 +158,14 @@ async function stage(
         if (typeof value === "string" && value) secrets[name] = await seal(value);
         else delete secrets[name];
       row.secret_json = JSON.stringify(secrets);
+    }
+  if (table === "app_settings")
+    for (const row of input.rows) {
+      if (!String(row.key).startsWith(HA_CONNECTION_PREFIX)) continue;
+      const connection = JSON.parse(String(row.value_json)) as Record<string, unknown>;
+      for (const name of HA_CONNECTION_SECRETS)
+        if (typeof connection[name] === "string" && connection[name]) connection[name] = await seal(connection[name]);
+      row.value_json = JSON.stringify(connection);
     }
   const json = JSON.stringify(input.rows),
     schema = schemasFor(header.version)[table],

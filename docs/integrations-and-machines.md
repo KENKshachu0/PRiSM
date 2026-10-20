@@ -148,8 +148,8 @@ await client.requestScanByIdentity(
 
 | 能力 | 配置（`config_json`） | 密钥（`secret_json`，每个值单独加密） | 动作 | 设备回报 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| `power` | — | `binding`（HA 地址、`switch.*`/`input_boolean.*` 实体、令牌） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
-| `climate` | — | `binding`（HA 地址、`climate.*` 实体、令牌） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威，实时读取 |
+| `power` | `connectionId`、`entityId`（`switch.*`/`input_boolean.*`） | —（旧绑定：`binding`，见下文「店铺 Home Assistant 连接」） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
+| `climate` | `connectionId`、`entityId`（`climate.*`） | —（同上） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威，实时读取 |
 | `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`card.login`（由读卡器灯光推出）、`led.set`（不存） | `link`，平台权威 |
 | `door` | `lockId` | — | `door.open` | — | — |
 | `mahjong` | `capacity`、`pricingConfigIds` | — | —（上下桌走麻将流程） | — | — |
@@ -161,7 +161,24 @@ await client.requestScanByIdentity(
 - 玩家扫码后能做全部空调操作（含关空调）；计费店铺要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。开启位置校验后，每个空调动作都和机台操作一样要求在店内（`checkShopLocation(…, "machine")`），后台店员操作不校验。
 - 玩家页是独立的空调卡片（`PlayerClimate`）：关着时只有「开空调」；开着时中间是大号设定温度和 −/+，下面是带图标的模式分段和风速分段，卡片颜色随模式变化（制冷蓝、制热橙等）。选择立即显示，Home Assistant 回报后以实际状态为准，6 秒内未回报则回到实际状态；连续按 −/+ 会在停下 0.7 秒后合并成一次 `climate.set_temperature`，避免每一步都重新定位、都调用一次 Home Assistant。后台操作面板沿用同一套逻辑，样式更紧凑。
 - **「全部开/关机」（`target.ref: "all"` 的 `power.on/off`）同时开/关所有空调**，每台空调记一条 `climate.on/off` 操作，与电源操作共用一个父操作 ID。Bot 的 `off all` 与 Koishi 的无人自动关机都走这条路径，因此也会关空调。
-- 保存设备时 `climate: { url, entityId, token? }`，实体必须是 `climate.*`；令牌留空时沿用已有的空调令牌，或在地址与电源相同时沿用电源的令牌。
+- 保存设备时 `climate` 与电源的 `homeAssistant` 形状相同（见下一节），实体必须是 `climate.*`。
+
+### 店铺 Home Assistant 连接
+
+Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一条连接，店里所有电源和空调能力都指向其中一条，能力里只存 `connectionId` 和 `entityId`。换令牌或地址只改一处。
+
+- 每条连接是一行 `app_settings`，键为 `devices.ha_connection:<id>`，值为 `{ id, url, internalUrl, token, readToken, readUserId, readAccess, readError, updatedAt }`。`token`（控制用）和 `readToken`（只读）用平台密钥加密；店铺备份下载时解密、导入时用目标环境密钥重新加密，和设备能力的密钥一样。
+- 保存设备时 `homeAssistant` / `climate` 二选一：`{ connectionId, entityId }` 直接选连接；或沿用旧形状 `{ url, entityId, token? }`，平台按地址找到或新建连接。令牌留空时依次沿用：这个能力原来的令牌、同一地址的另一个 HA 能力的令牌、店里这个地址已有的连接；都没有返回 `HOME_ASSISTANT_TOKEN_REQUIRED`。同一地址、不同令牌会成为两条连接。
+- 旧绑定（url、令牌、实体都在能力密钥 `binding` 里）照常工作，在下次读取店铺设备列表时**自动迁到连接上**：按「地址 + 令牌」生成固定的连接 ID，只在能力行未被改动时改写，所以重复执行或并发执行结果相同；备份正在导出、店铺只读时迁移失败，下次再试。
+- 后台接口（店长、管理员；令牌永不返回）：`GET /api/v1/merchant/ha-connections?shopId=` 列出连接与使用它的能力数；`PATCH /ha-connections/:id?shopId=` 改 `url` / `token`；`DELETE` 仅限无设备使用（否则 `HA_CONNECTION_IN_USE`）；`GET /ha-connections/:id/entities?shopId=` 实时读取 HA 的 `switch`、`input_boolean`、`climate` 实体，供设备编辑器选择。
+
+#### 只读账号（实时状态用）
+
+店里负责盯 Home Assistant 的游戏机拿到的令牌**不能开关任何东西**。Home Assistant 没有按实体的权限，但内置用户组 `system-read-only` 只能读、不能控制（调用实体服务时检查控制权限，没有就拒绝）。
+
+- 新建连接后，平台在后台（`waitUntil`）用连接的控制令牌执行：`auth/current_user` 确认是管理员 → `config/auth/create`（`group_ids: ["system-read-only"]`）建用户 → `config/auth_provider/homeassistant/create` 给它随机用户名和密码 → 走 HA 登录流程（`/auth/login_flow` + `/auth/token`，`client_id` 为平台地址）以该用户登录 → 以该用户身份 `auth/long_lived_access_token`（3650 天）→ `config/auth_provider/homeassistant/delete` 删掉它的密码，长期令牌成为这个账号唯一的入口。顺带读 `GET /api/config` 的 `internal_url` 存为 `internalUrl`，供店内机台优先使用。重做时先删除旧的只读用户。
+- 控制令牌不是管理员的，`readAccess` 为 `needs_admin`：设备编辑器提示贴一次管理员令牌，`POST /ha-connections/:id/read-access?shopId=`（`{ adminToken? }`）只在这一次请求里使用它，不保存。其它失败记为 `failed` 并带原因，可以重试。本地 Bun 服务端没有 `waitUntil`，只能用这个接口手动触发。
+- 依赖 Home Assistant 默认的用户名密码登录方式；店家关掉它时这一步失败，需要手动提供令牌。只读用户仍可调用少数不针对实体的服务（如发通知），但控制不了任何设备。以上只用模拟的 HA 响应测过，未接真实 Home Assistant 验证。
 
 能力目录写在 `packages/server/src/devices/capabilities.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
 
