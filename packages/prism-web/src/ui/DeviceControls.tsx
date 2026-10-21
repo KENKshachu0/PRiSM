@@ -164,8 +164,8 @@ export function DeviceControls({
   }, [code, state?.gate, info?.shop.billingEnabled, info?.membership?.playerId, setBillingActive]);
   /**
    * Runs a player action. The page is read again afterwards in the background, so the
-   * controls come back as soon as the action answers; only entry, which changes what the
-   * page shows, waits for that read. A failed read is not the action's failure.
+   * controls come back as soon as the action answers; only entry and mahjong seats, which
+   * change what the page offers, wait for that read. A failed read is not the action's failure.
    */
   async function act(action: string, fn: () => Promise<void>) {
     if (busy || cardBusy) return;
@@ -181,7 +181,7 @@ export function DeviceControls({
     }
     const reread = Promise.all([refresh(), api<ShopInfo>(shopApi(code)).then(setInfo)])
       .catch((e) => failed(e, "page", true));
-    if (action === "entry" || action === "load") await reread;
+    if (action === "entry" || action === "load" || action.startsWith("mahjong.")) await reread;
     setBusy("");
   }
   // The power button spins until the machine reports on; if it never does, it comes back.
