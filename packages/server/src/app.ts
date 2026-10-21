@@ -55,6 +55,8 @@ export function createApp(): Hono<AppBindings> {
   app.use("*", async (c, next) => {
     const start = performance.now();
     await next();
+    // Setting a header rebuilds the response, which a WebSocket handshake (101) cannot survive.
+    if (c.res.status === 101) return;
     const durationMs = Math.round(performance.now() - start);
     c.header("x-response-time", `${durationMs}ms`);
   });

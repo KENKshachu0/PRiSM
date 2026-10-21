@@ -98,7 +98,8 @@ export const corsMiddleware: MiddlewareHandler<AppBindings> = async (
 
   await next();
 
-  if (origin && isAllowed) {
+  // A WebSocket handshake carries no CORS headers, and its headers cannot be changed.
+  if (origin && isAllowed && c.res.status !== 101) {
     c.res.headers.set("access-control-allow-origin", origin);
     c.res.headers.set("access-control-allow-credentials", "true");
     c.res.headers.set(

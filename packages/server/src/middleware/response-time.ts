@@ -107,7 +107,8 @@ export async function wrapApiResponse(
   timeZone?: string | (() => Promise<string>),
   locale: Locale = "zh",
 ): Promise<Response> {
-  if (response.status === 204 || response.status === 304) return response;
+  // A WebSocket handshake (101) passes through as it is: no Response can be built with that status.
+  if (response.status === 101 || response.status === 204 || response.status === 304) return response;
   // Downloadable JSON is a storage artifact: keep its bytes, UTC clocks and root shape intact.
   if (
     response.ok &&

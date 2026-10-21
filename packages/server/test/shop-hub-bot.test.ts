@@ -137,13 +137,37 @@ describe("bot connection route", () => {
     const { sqlite } = await fixture();
     const env = { DB: createD1DatabaseFromSqlite(sqlite), SESSION_SECRET: "s" } as any;
     const forwarded: Request[] = [];
-    env.SHOP_HUB = { getByName: () => ({ async fetch(request: Request) { forwarded.push(request); return new Response(null, { status: 204 }); } }) };
+    // Workers only builds a 101 response together with its WebSocket; copying a response
+    // as `new Response(body, response)` keeps it, rebuilding from status and headers does not.
+    const BunResponse = globalThis.Response;
+    class WorkersResponse extends BunResponse {
+      webSocket: WebSocket | null;
+      constructor(body?: BodyInit | null, init?: ResponseInit) {
+        if (init?.status === 101 && !init.webSocket)
+          throw new RangeError("Responses may only be constructed with status codes in the range 200 to 599, inclusive.");
+        super(body, init);
+        this.webSocket = init?.webSocket ?? null;
+      }
+    }
+    globalThis.Response = WorkersResponse as typeof Response;
+    const socket = { kind: "client end" } as unknown as WebSocket;
+    env.SHOP_HUB = { getByName: () => ({ async fetch(request: Request) {
+      forwarded.push(request);
+      return new WorkersResponse(null, { status: 101, webSocket: socket });
+    } }) };
     const connect = (token: string) => createApp().fetch(new Request("https://prism.test/api/v1/shops/shop-code/integration/ws", {
-      headers: { Upgrade: "websocket", authorization: `Bearer ${token}` },
+      headers: { Upgrade: "websocket", authorization: `Bearer ${token}`, origin: "https://prism.test" },
     }), env);
     expect((await connect("wrong")).status).toBe(403);
     expect(forwarded).toHaveLength(0);
-    await connect(TOKEN);
+    // No middleware may rebuild the handshake, or the Bot sees a 500.
+    try {
+      const handshake = await connect(TOKEN);
+      expect(handshake.status).toBe(101);
+      expect((handshake as InstanceType<typeof WorkersResponse>).webSocket).toBe(socket);
+    } finally {
+      globalThis.Response = BunResponse;
+    }
     expect(forwarded[0]?.headers.get("x-prism-hub-shop")).toBe("shop");
     expect(forwarded[0]?.headers.get("x-prism-hub-shop-code")).toBe("shop-code");
     sqlite.close();
