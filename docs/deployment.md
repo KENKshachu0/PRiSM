@@ -134,6 +134,8 @@ bun run deploy:beta
 
 构建产物位于 `packages/prism-web/dist/`。`deploy:beta` 构建 React、生成 `--platform` 配置，然后调用 `scripts/deploy-platform.ts` 自动维护部署，注入根 SemVer 和 Git 提交号。脚本使用配置中的 `D1_DATABASE_ID` 和 `APP_ORIGIN`，名称中的 beta 不代表它只操作测试数据库。API 与网页使用同一 origin，SPA 路由由 ASSETS binding 回退。
 
+`wrangler.jsonc` 开启了智能放置（`placement.mode: "smart"`）：Worker 在 D1 附近运行，而不是在访客最近的边缘节点。一个请求要顺序查询多次数据库，从远端节点（如国内访问常被分到的 AMS、PDX）每次查询都要跨洲往返，服务端处理时间会从几十毫秒变成数秒。静态资源仍由边缘直接返回；Durable Object 不受这个设置影响。Cloudflare 需要观察一段流量后才会把 Worker 挪过去，部署后的前几分钟仍可能在边缘运行。
+
 ### 自动维护部署
 
 脚本先编译三个部署阶段，再开始改变线上服务；也可在生成生产平台配置后运行 `bun run scripts/deploy-platform.ts --dry-run`，仅编译三个阶段，不请求线上接口或执行迁移。

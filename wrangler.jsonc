@@ -2,6 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "prism-platform",
   "main": "packages/server/src/worker.ts",
+  "placement": {
+    "mode": "smart"
+  },
   "durable_objects": {
     "bindings": [
       {
