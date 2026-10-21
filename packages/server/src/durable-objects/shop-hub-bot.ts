@@ -10,7 +10,8 @@ export type BotFrame =
   | { type: "hello"; reminderLeadSeconds?: number }
   | { type: "request"; id: string; method: "GET" | "POST" | "PUT"; path: string; query?: Record<string, unknown>; body?: unknown };
 
-export type BotResponse = { type: "response"; id: string; status: number; body: unknown };
+/** `serverMs` is how long the platform spent on the request, so the Bot can tell the network from the server. */
+export type BotResponse = { type: "response"; id: string; status: number; body: unknown; serverMs?: number };
 
 /** A request frame or hello, or null for anything malformed. */
 export function parseBotFrame(raw: string): BotFrame | null {
@@ -90,7 +91,8 @@ export async function runBotRequest(input: {
   } catch {
     body = text;
   }
-  return { type: "response", id: frame.id, status: response.status, body };
+  const serverMs = Number.parseFloat(response.headers.get("x-response-time") ?? "");
+  return { type: "response", id: frame.id, status: response.status, body, ...(Number.isFinite(serverMs) ? { serverMs } : {}) };
 }
 
 /** The bot's credentials stopped working: its connection should end too. */

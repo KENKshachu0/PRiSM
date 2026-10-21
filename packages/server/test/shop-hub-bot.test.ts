@@ -82,6 +82,8 @@ describe("bot connection", () => {
     const { send, sqlite } = await fixture();
     const reply = await send({ type: "request", id: "r1", method: "GET", path: "integration/sessions/active" });
     expect(reply).toMatchObject({ type: "response", id: "r1", status: 200, body: { data: { sessions: [] } } });
+    // The platform's own time comes back with it, for the Bot's speed test.
+    expect(typeof reply.serverMs).toBe("number");
     sqlite.close();
   });
 
