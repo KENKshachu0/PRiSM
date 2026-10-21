@@ -142,6 +142,7 @@ export type PrismNeoPresentGrant = {
   activeAt?: Date | string | null;
   expireAt?: Date | string | null;
   durationMs?: number;
+  oncePerUser?: boolean;
 };
 
 export type PrismNeoRedeem = {
@@ -1066,6 +1067,8 @@ function toPresent(present: PrismNeoPresent, assetDefinitionsByLegacyId: Readonl
         activeAt: toOptionalDate(grant.activeAt),
         expiresAt: toOptionalDate(grant.expireAt),
         durationMs: grant.durationMs,
+        // prism-neo's per-item `oncePerUser` means "only the first redemption".
+        ...(grant.oncePerUser ? { maxPerPlayer: 1 } : {}),
       };
     }),
   };

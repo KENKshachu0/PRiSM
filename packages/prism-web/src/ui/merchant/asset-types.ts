@@ -20,6 +20,7 @@ export type Grant = {
   activeAt: string | null;
   expiresAt: string | null;
   durationMs?: number;
+  maxPerPlayer?: number;
 };
 
 export type Present = {

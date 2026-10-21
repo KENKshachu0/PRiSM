@@ -119,7 +119,7 @@ PRISM_SQLITE_PATH=./data/prism-next-staging.sqlite bun run dev:local
 - 当前 Neo 快照不包含规则源时区，导入器原样复制裸时钟，新存储将其视为 UTC，无法自动判断原来是否是店铺当地时间。启用前须按旧部署实际时区核对并转换区间、星期和日期，例如上海的 `10:00–次日 03:00` 应存为 UTC `02:00–19:00`；不能仅依据目标库的 UTC 标签判断正确。该入口仍需要补充明确的源时区转换，和现有 PRiSM stable 的 UTC 升级是两条不同链路，详见 [计费时区字段审计](pricing-time-zone-audit.md#独立的-prism-neo-导入缺口)。
 
 ### F. CDK 与出币记录映射
-- 礼物（`Present`）与 CDK（`Redeem`）正常平移，历史合并发放策略自动转化为 `stack` / `extend-time` / `replace`。礼物授予里的 `activeAt` / `expiresAt` 会在 PRiSM Next 仓储层恢复为 `Date | null`，兼容旧 JSON 快照和 pg_dump 导入后的字符串日期。
+- 礼物（`Present`）与 CDK（`Redeem`）正常平移，历史合并发放策略自动转化为 `stack` / `extend-time` / `replace`。礼物授予里的 `activeAt` / `expiresAt` 会在 PRiSM Next 仓储层恢复为 `Date | null`，兼容旧 JSON 快照和 pg_dump 导入后的字符串日期。礼物授予的货币数量按资产持有同样的存储单位（分）写入，网页导入与命令行导入结果一致，不会再在显示时被缩小 100 倍；`extend-time` 的 `durationMs` 会保留。旧礼物内容上的 `oncePerUser`（该内容只在首次兑换时发放）会转为该内容的 `maxPerPlayer: 1`。
 - 旧的投币日志 `CoinRecord` 均会转化为已确认（`acked`）的 `coin` 通道设备命令记录，作为设备审计和投币数量统计的基础，而不会重新触发任何物理出币动作。
 
 ### G. 旧配置中的硬件连接迁移

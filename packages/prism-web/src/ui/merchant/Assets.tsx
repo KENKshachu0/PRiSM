@@ -1,7 +1,7 @@
 import { parseLocalDateTime } from "@prism/core";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { displayDateTime } from "../bill-time";
 import { useScrollFade } from "../use-scroll-fade";
@@ -15,6 +15,7 @@ import {
   effectSummary,
 } from "./AssetDetails";
 import type { Effect, Grant, Present, RedeemCode } from "./asset-types";
+import { RedeemCodeExport } from "./RedeemCodeExport";
 import {
   ActionForm,
   Field,
@@ -58,6 +59,7 @@ export function AssetsPage() {
   const [effect, setEffect] = useState<Effect | null>(null);
   const [gift, setGift] = useState(false);
   const [code, setCode] = useState(false);
+  const [exportingCodes, setExportingCodes] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [detail, setDetail] = useState<
     | { kind: "asset"; item: Asset }
@@ -174,6 +176,12 @@ export function AssetsPage() {
             />
             {t("显示已归档")}
           </label>
+        )}
+        {tab === "codes" && visibleCodes.length > 0 && (
+          <button className={button} onClick={() => setExportingCodes(true)}>
+            <Download size={16} />
+            {t("导出兑换码")}
+          </button>
         )}
       </div>
       {tab === "assets" &&
@@ -346,6 +354,8 @@ export function AssetsPage() {
                             a.type === g.assetType && a.code === g.assetCode,
                         )?.name ?? g.assetCode}{" "}
                         × {g.amount}
+                        {g.maxPerPlayer !== undefined &&
+                          ` (${t("每位玩家限领 {count} 次", { count: g.maxPerPlayer })})`}
                       </p>
                     ))}
                   </td>
@@ -451,6 +461,14 @@ export function AssetsPage() {
             ))}
           </Table>
         ))}
+      {exportingCodes && (
+        <RedeemCodeExport
+          codes={visibleCodes}
+          presents={presents.data?.presents ?? []}
+          timeZone={timeZone}
+          close={() => setExportingCodes(false)}
+        />
+      )}
       {detail && (
         <Modal
           title={
@@ -856,7 +874,7 @@ function GiftForm({ assets, done }: { assets: Asset[]; done: () => void }) {
       </label>
       {grants.map((g, index) => (
         <div
-          className="grid grid-cols-[1fr_6rem_auto] items-end gap-2"
+          className="grid grid-cols-[1fr_6rem_7rem_auto] items-end gap-2"
           key={index}
         >
           <Field label="资产">
@@ -903,6 +921,27 @@ function GiftForm({ assets, done }: { assets: Asset[]; done: () => void }) {
                   grants.map((v, i) =>
                     i === index ? { ...v, amount: Number(e.target.value) } : v,
                   ),
+                )
+              }
+            />
+          </Field>
+          <Field label="每位玩家限领次数">
+            <input
+              className={input}
+              type="number"
+              min="1"
+              step="1"
+              placeholder={t("不限")}
+              value={g.maxPerPlayer ?? ""}
+              onChange={(e) =>
+                setGrants(
+                  grants.map((v, i) => {
+                    if (i !== index) return v;
+                    const { maxPerPlayer: _drop, ...rest } = v;
+                    return e.target.value === ""
+                      ? rest
+                      : { ...rest, maxPerPlayer: Number(e.target.value) };
+                  }),
                 )
               }
             />
