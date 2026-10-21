@@ -3,7 +3,7 @@
   "name": "prism-platform",
   "main": "packages/server/src/worker.ts",
   "placement": {
-    "mode": "smart"
+    "region": "aws:ap-northeast-1"
   },
   "durable_objects": {
     "bindings": [
