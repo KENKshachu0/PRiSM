@@ -657,30 +657,7 @@ export function AssetsPage() {
                 defaultValue={effect.name}
               />
             </Field>
-            <Field label="优惠方式">
-              <select className={input} name="type" defaultValue={effect.type}>
-                {[
-                  ["free", "免费"],
-                  ["discount", "减免金额"],
-                  ["percentage-discount", "折扣比例"],
-                  ["surcharge", "加收金额"],
-                ].map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {t(label!)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="数值（比例减免使用 0～100）">
-              <input
-                className={input}
-                type="number"
-                min="0"
-                step="0.01"
-                name="value"
-                defaultValue={effect.value ?? 0}
-              />
-            </Field>
+            <EffectValueFields key={effect.id} effect={effect} />
             <Field label="范围">
               <select
                 className={input}
@@ -836,6 +813,47 @@ function Empty({
         </button>
       )}
     </div>
+  );
+}
+
+const effectTypes = [
+  ["free", "免费"],
+  ["discount", "减免金额"],
+  ["percentage-discount", "折扣比例"],
+  ["surcharge", "加收金额"],
+] as const;
+
+function EffectValueFields({ effect }: { effect: Effect }) {
+  const { t } = useI18n();
+  const [type, setType] = useState(effect.type);
+  return (
+    <>
+      <Field label="优惠方式">
+        <select
+          className={input}
+          name="type"
+          value={type}
+          onChange={(e) => setType(e.target.value as Effect["type"])}
+        >
+          {effectTypes.map(([key, label]) => (
+            <option key={key} value={key}>
+              {t(label)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="数值" unit={type === "percentage-discount" ? "%" : type === "free" ? undefined : "元"}>
+        <input
+          className={input}
+          type="number"
+          min="0"
+          step="0.01"
+          name="value"
+          disabled={type === "free"}
+          defaultValue={effect.value ?? 0}
+        />
+      </Field>
+    </>
   );
 }
 

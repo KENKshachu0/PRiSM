@@ -4,7 +4,7 @@ import { pricingInZone } from "./pricing-clock";
 import { billTime } from "../bill-time";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { BillingExplainer } from "./BillingExplainer";
+import { BillingManualButton } from "./BillingExplainer";
 import { api } from "../../api";
 import { shopApi } from "../BillingPages";
 import { ChevronDown, Plus } from "lucide-react";
@@ -103,14 +103,16 @@ export function PricingPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [params] = useSearchParams();
   const [showSimulator, setShowSimulator] = useState(() => params.get("simulate") === "1");
-  const [explaining, setExplaining] = useState(false);
   const rows = resource.data?.pricingConfigs.filter(
     (row) => showArchived || row.status !== "archived",
   );
   return (
     <div className="grid gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <h2 className="text-xl font-semibold">{t("计费规则")}</h2>
+        <div className="flex items-center gap-1">
+          <h2 className="text-xl font-semibold">{t("计费规则")}</h2>
+          <BillingManualButton />
+        </div>
         {canWrite && (
           <button
             className={primary}
@@ -140,9 +142,6 @@ export function PricingPage() {
           {t("显示已归档")}
         </label>
         <div className="flex flex-wrap gap-2">
-        <button type="button" className={button} onClick={() => setExplaining(true)}>
-          {t("计费是怎么算的")}
-        </button>
         {canWrite && (
           <button
             type="button"
@@ -160,11 +159,6 @@ export function PricingPage() {
         )}
         </div>
       </div>
-      {explaining && (
-        <Modal title="计费是怎么算的" close={() => setExplaining(false)} xl>
-          <BillingExplainer />
-        </Modal>
-      )}
       {showSimulator && resource.data && (
         <BillingSimulator pricingConfigs={resource.data.pricingConfigs} />
       )}
@@ -465,7 +459,10 @@ function PricingEditor({
       }}
     >
       <section className="grid gap-3">
-        <h3 className="text-sm font-semibold">{t("基本信息")}</h3>
+        <div className="flex items-center gap-1">
+          <h3 className="text-sm font-semibold">{t("基本信息")}</h3>
+          <BillingManualButton section="fields" />
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="名称">
             <input
@@ -782,7 +779,7 @@ function PeriodCard({
             {t("开始与结束相同表示全天。")}
           </p>
           {kind === "time.cap" ? (
-            <Field label="封顶金额">
+            <Field label="封顶金额" unit="元">
               <input
                 className={input}
                 required
@@ -799,13 +796,17 @@ function PeriodCard({
             <div className="grid grid-cols-2 gap-3">
               {(
                 [
-                  ["unitMinutes", "每隔（分钟）", 1],
-                  ["unitPrice", "收费金额", 0],
-                  ["roundGraceMinutes", "宽限（分钟）", 0],
-                  ["priceCap", "时段封顶（0 为不限）", 0],
+                  ["unitMinutes", "计费间隔", "分钟", 1],
+                  ["unitPrice", "收费金额", "元", 0],
+                  ["roundGraceMinutes", "宽限时长", "分钟", 0],
+                  ["priceCap", "时段封顶", "元", 0],
                 ] as const
-              ).map(([key, label, min]) => (
-                <Field key={key} label={label}>
+              ).map(([key, label, unit, min]) => (
+                <Field
+                  key={key}
+                  label={label}
+                  unit={key === "priceCap" && !rule.pricing?.priceCap ? "不限" : unit}
+                >
                   <input
                     className={input}
                     type="number"
@@ -865,7 +866,7 @@ function PeriodCard({
                   </label>
                 ))}
               </div>
-              <Field label="指定日期（逗号分隔）">
+              <Field label="指定日期">
                 <input
                   className={input}
                   placeholder="2026-10-01, 2026-10-02"

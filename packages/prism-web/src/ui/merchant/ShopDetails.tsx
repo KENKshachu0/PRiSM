@@ -121,7 +121,7 @@ export function ShopForm({
           {t("店铺名称")}
           <input
             className={input}
-            placeholder={t("例如：万达广场机厅")}
+            placeholder={t("万达广场机厅")}
             value={name}
             onChange={(event) => setName(event.target.value)}
             required
@@ -152,7 +152,6 @@ export function ShopForm({
               {t("纬度 (Latitude)")}
               <input
                 className={`${input} font-mono`}
-                placeholder={t("点击地图或自动定位")}
                 value={latitude ?? ""}
                 onChange={(event) =>
                   setLatitude(parseCoordinate(event.target.value))
@@ -164,7 +163,6 @@ export function ShopForm({
               {t("经度 (Longitude)")}
               <input
                 className={`${input} font-mono`}
-                placeholder={t("点击地图或自动定位")}
                 value={longitude ?? ""}
                 onChange={(event) =>
                   setLongitude(parseCoordinate(event.target.value))
@@ -186,7 +184,7 @@ export function ShopForm({
 
         <label className="grid gap-1.5 text-sm font-medium">
           <div className="flex items-center justify-between">
-            <span>{t("店铺定位范围（米）")}</span>
+            <span>{t("店铺定位范围")}</span>
             <span className="text-xs font-normal text-ink/50">
               {t("30 ~ 1000 米")}
             </span>
@@ -197,7 +195,6 @@ export function ShopForm({
               min={30}
               max={1000}
               className={`${input} pr-10`}
-              placeholder={t("默认 80")}
               value={radiusMeters}
               onChange={(event) => setRadiusMeters(event.target.value)}
               inputMode="numeric"

@@ -232,7 +232,7 @@ function ReportResults({
               headers={[
                 "玩家",
                 "结账时间",
-                "累计时长（分钟）",
+                "累计时长",
                 "金额",
                 "收款方式",
                 "操作",
@@ -249,7 +249,7 @@ function ReportResults({
                   <td className={`${cell} whitespace-nowrap`}>
                     {displayDateTime(record.settledAt, timeZone)}
                   </td>
-                  <td className={cell}>{record.durationMinutes}</td>
+                  <td className={cell}>{record.durationMinutes} {t("分钟")}</td>
                   <td className={cell}>{money(record.total)}</td>
                   <td className={cell}>{payment(record, t)}</td>
                   <td className={cell}>
@@ -416,7 +416,7 @@ function ReportDetail({
             ["入场时间", at(record.startedAt)],
             ["结束时间", at(record.endedAt)],
             ["结账时间", at(record.settledAt)],
-            ["累计时长（分钟）", record.durationMinutes],
+            ["累计时长", `${record.durationMinutes} ${t("分钟")}`],
             ["收款方式", payment(record, t)],
             ["计费小计", money(record.subtotal)],
             ["归档状态", t(record.archived ? "已归档" : "未归档")],

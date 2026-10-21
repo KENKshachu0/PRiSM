@@ -108,14 +108,14 @@ export function HaEntityFields({
               onChange={(e) => change({ ...draft, url: e.target.value })}
             />
           </Field>
-          <Field label="长期访问令牌">
+          <Field label="长期访问令牌" unit={tokenOptional ? "已设置" : undefined}>
             <input
               className={input}
               type="password"
               required={!tokenOptional}
               autoComplete="new-password"
               value={draft.token}
-              placeholder={tokenOptional ? t("留空保持不变") : ""}
+              placeholder={tokenOptional ? "••••••••" : ""}
               onChange={(e) => change({ ...draft, token: e.target.value })}
             />
           </Field>

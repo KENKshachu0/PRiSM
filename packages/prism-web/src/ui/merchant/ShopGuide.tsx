@@ -214,13 +214,13 @@ export function ShopGuide() {
           <MoneyFlow mode={status.mode} />
           <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-ink/10 bg-panel p-5">
             <div className="min-w-0">
-              <h3 className="font-semibold">{t("计费是怎么算的")}</h3>
+              <h3 className="font-semibold">{t("计费说明书")}</h3>
               <p className="mt-1 text-sm leading-relaxed text-ink/60">
-                {t("用一个例子画出：按单位计费与宽限、跨时段与封顶、多条计费合并、结账扣款顺序。")}
+                {t("计费图解、字段说明与配置注意事项。")}
               </p>
             </div>
             <button type="button" className={button} onClick={() => setExplaining(true)}>
-              {t("看图解")}
+              {t("查看说明书")}
             </button>
           </section>
         </>
@@ -246,7 +246,7 @@ export function ShopGuide() {
       </section>
       <Optional status={status} shopCode={shopCode} />
       {explaining && (
-        <Modal title="计费是怎么算的" close={() => setExplaining(false)} xl>
+        <Modal title="计费说明书" close={() => setExplaining(false)} xl>
           <BillingExplainer />
         </Modal>
       )}

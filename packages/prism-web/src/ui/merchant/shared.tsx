@@ -109,16 +109,28 @@ export function useResource<T>(path: string | null) {
 }
 export function Field({
   label,
+  unit,
   children,
 }: {
   label: string;
+  /** Shown inside the right edge of the input, so the label stays a plain noun. */
+  unit?: string;
   children: ReactNode;
 }) {
   const { t } = useI18n();
   return (
     <label className="grid min-w-0 gap-2 text-sm font-medium">
       {t(label)}
-      {children}
+      {unit ? (
+        <span className="relative block [&>input]:pr-16">
+          {children}
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-normal text-ink/50">
+            {t(unit)}
+          </span>
+        </span>
+      ) : (
+        children
+      )}
     </label>
   );
 }

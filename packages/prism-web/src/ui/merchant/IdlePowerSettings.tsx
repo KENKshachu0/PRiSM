@@ -68,16 +68,24 @@ export function IdlePowerSettings() {
         <div className="grid gap-4">
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={emptyOn} onChange={(e) => setEmptyOn(e.target.checked)} />
-            {t("店里没人后，全部关机（含空调）")}
+            {t("店铺闲置自动关闭设备")}
           </label>
           {emptyOn && (
-            <Field label="没人多久后关机（分钟）">
+            <Field label="店铺闲置判定时长" unit="分钟">
               <input className={input} type="number" min="1" max="1440" name="emptyMinutes" defaultValue={settings.shopEmpty.minutes} required />
             </Field>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="单台设备闲置多久算闲置（分钟，0 为不启用）">
-              <input className={input} type="number" min="0" max="1440" name="deviceMinutes" defaultValue={settings.device.defaultMinutes} required />
+            <Field label="设备默认闲置判定时长" unit="分钟">
+              <input
+                className={input}
+                type="number"
+                min="0"
+                max="1440"
+                name="deviceMinutes"
+                placeholder={t("不启用")}
+                defaultValue={settings.device.defaultMinutes || ""}
+              />
             </Field>
             <Field label="店里有人时，闲置的设备">
               <select className={input} name="whileOccupied" defaultValue={settings.device.whileOccupied}>

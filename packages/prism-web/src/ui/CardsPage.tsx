@@ -18,8 +18,7 @@ export function CardsPage() {
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const startsWithThree = accessCode.startsWith("3");
-  const canCreate = label.trim().length > 0 && /^[0-24-9]\d{19}$/.test(accessCode);
+  const canCreate = label.trim().length > 0 && /^\d{20}$/.test(accessCode);
 
   const load = async () => {
     if (!user) return;
@@ -84,11 +83,10 @@ export function CardsPage() {
                 value={accessCode}
                 onChange={(event) => setAccessCode(event.target.value.replace(/\D/g, "").slice(0, 20))}
                 inputMode="numeric"
-                placeholder={t("20位数字，不能以3开头")}
+                placeholder={t("20 位卡号")}
                 maxLength={20}
                 required
               />
-              {startsWithThree && <p className="text-xs text-coral">{t("卡号不能以 3 开头")}</p>}
             </label>
             {error && <p className="rounded border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">{errorText(error)}</p>}
             <button
