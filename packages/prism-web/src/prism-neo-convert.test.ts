@@ -93,6 +93,37 @@ const snapshot = {
 };
 
 describe("convertPrismNeoSnapshot", () => {
+  it("stores present grants in stored units and keeps per-item limits", () => {
+    const converted = convertPrismNeoSnapshot(
+      {
+        ...snapshot,
+        presents: [
+          {
+            id: 62,
+            name: "First top-up",
+            oncePerUser: false,
+            body: [
+              { assetType: "CURRENCY", assetId: 10001, count: 12.5, mergeStrategy: "STACK" },
+              { assetType: "TICKET", assetId: 10001, count: 3, mergeStrategy: "EXTEND_TIME", durationMs: 3_600_000, oncePerUser: true },
+            ],
+          },
+        ],
+      },
+      { shopName: "x" },
+    );
+    expect(JSON.parse(String(converted.tables.presents[0]!.grants_json))).toEqual([
+      expect.objectContaining({ assetType: "currency", assetCode: "paid", amount: 1250, mergeStrategy: "stack" }),
+      expect.objectContaining({
+        assetType: "ticket",
+        assetCode: "legacy.ticket.10001",
+        amount: 3,
+        mergeStrategy: "extend-time",
+        durationMs: 3_600_000,
+        maxPerPlayer: 1,
+      }),
+    ]);
+  });
+
   const backup = convertPrismNeoSnapshot(snapshot, { shopName: "云谷", timeZone: "Asia/Shanghai" });
 
   it("maps legacy ids, money and hidden assets like the CLI importer", () => {

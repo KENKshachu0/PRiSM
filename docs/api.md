@@ -206,7 +206,7 @@ curl -X POST http://localhost:8787/rpc/player/redeem \
 | `POST` | `/rpc/staff/asset-definitions/:assetType/:assetCode/archive` | 软归档某项资产定义（保护历史引用不丢失）。 |
 | `POST` | `/rpc/staff/asset-definitions/:assetType/:assetCode/restore` | 恢复已归档的资产定义，使其恢复可用。 |
 | `GET` | `/rpc/staff/presents` | 查看所有礼物定义，包括已归档的定义和有效期。 |
-| `POST` | `/rpc/staff/presents` | 创建一个礼物定义，可包含多项发放内容，每项内容可单独设置有效期。 |
+| `POST` | `/rpc/staff/presents` | 创建一个礼物定义，可包含多项发放内容，每项内容可单独设置有效期和 `maxPerPlayer`（正整数，该内容每位玩家最多领取的次数，不填为不限）。 |
 | `POST` | `/rpc/staff/presents/:presentId/archive` | 软归档礼物。 |
 | `POST` | `/rpc/staff/presents/:presentId/restore` | 恢复已归档的礼物。 |
 | `GET` | `/rpc/staff/business-items` | 查看非计时商品定义列表。 |
@@ -216,7 +216,7 @@ curl -X POST http://localhost:8787/rpc/player/redeem \
 | `GET` | `/rpc/staff/business-item-orders` | 查看全场玩家的商品订单列表。 |
 | `POST` | `/rpc/staff/business-item-orders/:orderId/fulfill` | 确认订单核销履行（Fulfill）。 |
 | `POST` | `/rpc/staff/business-item-orders/:orderId/cancel` | 取消已支付商品订单，不执行物理删除，不包含自动退款。 |
-| `GET` | `/rpc/staff/redeem-codes` | 获取 CDK 码清单，返回每个码绑定的礼物、使用上限、已使用次数，以及已使用码的兑换人和兑换时间。已使用次数由 `redeem_records` 聚合而来，因此迁移过来的已兑换记录会在 Staff Web 中显示为已用。Staff Web 不会把全量结果一次性铺开，只展示汇总和最近少量预览，并支持按绑定礼物和使用状态筛选；大量码的查询/导出应走专门筛选或批次工具。 |
+| `GET` | `/rpc/staff/redeem-codes` | 获取 CDK 码清单，返回每个码绑定的礼物、使用上限、已使用次数，以及已使用码的兑换人和兑换时间。已使用次数由 `redeem_records` 聚合而来，因此迁移过来的已兑换记录会在 Staff Web 中显示为已用。Staff Web 不会把全量结果一次性铺开，只展示汇总和最近少量预览，并支持按绑定礼物和使用状态筛选；大量码的查询/导出应走专门筛选或批次工具。Staff Web「资产与兑换 → 兑换码」页的「导出兑换码」基于这份清单在浏览器本地导出，不新增接口：可按绑定礼物、使用状态（未使用/部分使用/已用完/已撤销）、有效状态（有效/未生效/已过期）、兑换码包含的文字（如批次前缀）、到期日期范围（按店铺时区、含首尾两天，永不过期的码不在范围内）和最多导出数量组合筛选，格式为 CSV（可选列，带 UTF-8 BOM 便于 Excel 打开）或纯文本（每行一个兑换码）；CSV 中以 `=`、`+`、`-`、`@` 开头的礼物名会加前缀避免被当作公式，兑换码列保持原样。 |
 | `POST` | `/rpc/staff/redeem-codes` | 生成单个 CDK。 |
 | `POST` | `/rpc/staff/redeem-codes/batch` | 批量生成 CDK 兑换码，可指定前缀、数量、礼物、可用次数和有效期。 |
 | `POST` | `/rpc/staff/redeem-codes/:codeId/revoke` | 作废指定的 CDK 兑换码。 |
@@ -241,7 +241,7 @@ curl -X POST http://localhost:8787/rpc/player/redeem \
 | `POST` | `/rpc/staff/reports/checkouts/:checkoutId/archive` | 店主/manager 输入 archived 布尔值归档或恢复；同步调整营业额，其他统计、玩家历史和余额不变。 |
 | `GET` | `/rpc/staff/reports/players?from=<iso>&to=<iso>&limit=20&offset=0` | 分页查询特定时段内玩家消费贡献榜；返回 `players` 和 `{ limit, offset, hasMore }`。 |
 
-已归档的资产定义、计费效果、礼物、商品项目和计费配置都会保留供历史账单与审计视图查阅。新员工赠送和新礼物不能使用已归档或不在有效期内的资产定义；已归档或过期的礼物不能被兑换；兑换码过期也会拒绝兑换。礼物过期但兑换码没过期、礼物没过期但兑换码过期，都会无法兑换；礼物和兑换码都有效但礼物内容过期时，兑换会成功记录，但过期内容不会到账。现有的兑换码、商品项目、插件和账本历史流水保持可读。已归档的资产定义、计费效果、礼物、商品项目和计费配置可以从 Staff Web 还原；已归档计费方案允许编辑并保存到原记录，但会继续保持归档和禁用，直到员工显式还原并开启。错误的草稿规则会从当前编辑列表中物理移除。导入的礼物授予日期会在仓储层恢复为 `Date | null`，避免旧 JSON 字符串破坏员工接口。导入的提供商有效负载可能仍包含退役的时间规则行或整段日期时间范围，以供迁移上下文使用；结算报价、会话启动营业时间验证、已启用配置验证和时间轴渲染会按领域规则处理这些历史行。
+已归档的资产定义、计费效果、礼物、商品项目和计费配置都会保留供历史账单与审计视图查阅。新员工赠送和新礼物不能使用已归档或不在有效期内的资产定义；已归档或过期的礼物不能被兑换；兑换码过期也会拒绝兑换。礼物过期但兑换码没过期、礼物没过期但兑换码过期，都会无法兑换；礼物和兑换码都有效但礼物内容过期时，兑换会成功记录，但过期内容不会到账。礼物可重复兑换（`oncePerPlayer` 为否）时，带 `maxPerPlayer` 的内容只在该玩家兑换此礼物的次数未超过上限时到账，超过后兑换仍然成功并记录，只是跳过该内容，可用于首充类优惠；如果所有有效内容都已达到上限，兑换会以 `PRESENT_GRANT_LIMIT_REACHED` 拒绝，不消耗兑换码次数。现有的兑换码、商品项目、插件和账本历史流水保持可读。已归档的资产定义、计费效果、礼物、商品项目和计费配置可以从 Staff Web 还原；已归档计费方案允许编辑并保存到原记录，但会继续保持归档和禁用，直到员工显式还原并开启。错误的草稿规则会从当前编辑列表中物理移除。导入的礼物授予日期会在仓储层恢复为 `Date | null`，避免旧 JSON 字符串破坏员工接口。导入的提供商有效负载可能仍包含退役的时间规则行或整段日期时间范围，以供迁移上下文使用；结算报价、会话启动营业时间验证、已启用配置验证和时间轴渲染会按领域规则处理这些历史行。
 
 员工用户因审计需求而被保留。禁用员工用户可阻止登录，但会保留旧场次、指令和资产操作记录可读。PRiSM 会拒绝禁用或降权最后一名制造的所有者（owner）。
 

@@ -276,6 +276,10 @@ function GrantDetails({ grant, assets }: { grant: Grant; assets: Asset[] }) {
                 ] as [string, ReactNode],
               ]
             : []),
+          [
+            "每位玩家限领次数",
+            grant.maxPerPlayer === undefined ? t("不限") : grant.maxPerPlayer,
+          ],
         ]}
       />
       <Validity item={grant} />
