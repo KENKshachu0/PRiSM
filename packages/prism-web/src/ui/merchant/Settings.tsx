@@ -300,7 +300,7 @@ export function SettingsPage({
                         })
                       }
                     >
-                      <Field label="投币冷却时间（秒）">
+                      <Field label="投币冷却" unit="秒">
                         <input
                           className={input}
                           type="number"

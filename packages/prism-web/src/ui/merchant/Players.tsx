@@ -227,10 +227,9 @@ export function Players({ live = false }: { live?: boolean }) {
             <Field label="玩家验证码">
               <input className={input} name="code" required maxLength={8}
                 autoCapitalize="characters" autoComplete="off"
-                pattern="[23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz]{8}"
-                placeholder={t("玩家绑定页面上的验证码")} />
+                pattern="[23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz]{8}" />
             </Field>
-            <Field label="平台标识"><input className={input} name="provider" required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="onebot / telegram" /></Field>
+            <Field label="平台标识"><input className={input} name="provider" required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="onebot" /></Field>
             <Field label="身份值"><input className={input} name="subject" required maxLength={256} /></Field>
           </ActionForm>
         </Modal>
@@ -579,7 +578,7 @@ function PlayerDetail({
                   })
                 }
               >
-                <Field label="平台标识"><input className={input} name="provider" required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="onebot / telegram" /></Field>
+                <Field label="平台标识"><input className={input} name="provider" required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="onebot" /></Field>
                 <Field label="身份值"><input className={input} name="subject" required maxLength={256} /></Field>
               </ActionForm>
               <ActionForm

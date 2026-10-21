@@ -33,7 +33,7 @@ export function IdentityConverter({ shopCode, embedded = false }: { shopCode:str
     <form className="grid gap-4" onSubmit={e=>{e.preventDefault();void run(false);}}>
       <Field label="原平台标识"><input className={input} value={source} required pattern="[a-z][a-z0-9_-]{0,63}" disabled={busy}
         onChange={e=>{setSource(e.target.value);setPreview(null);setDone(false);}} /></Field>
-      <Field label="目标平台标识"><input className={input} value={target} required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="onebot / telegram" disabled={busy}
+      <Field label="目标平台标识"><input className={input} value={target} required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="onebot" disabled={busy}
         onChange={e=>{setTarget(e.target.value);setPreview(null);setDone(false);}} /></Field>
       <button className={`${button} justify-self-start`} disabled={busy}>{t("预览转换")}</button>
     </form>

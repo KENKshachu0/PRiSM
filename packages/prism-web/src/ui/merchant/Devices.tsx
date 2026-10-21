@@ -725,7 +725,7 @@ function DeviceActions({
                     className={`${input} min-h-9 w-56 font-mono`}
                     inputMode="numeric"
                     maxLength={20}
-                    placeholder={t("输入 20 位卡号")}
+                    placeholder={t("20 位卡号")}
                     aria-label={t("卡号")}
                     value={cardNumber}
                     disabled={!device.enabled}

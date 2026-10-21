@@ -460,7 +460,7 @@ export function DeviceEditor({
             reload={ha.reload}
           />
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <Field label="闲置多久算闲置（分钟）">
+            <Field label="设备闲置判定时长覆盖" unit="分钟">
               <input
                 className={input}
                 type="number"
@@ -562,14 +562,14 @@ export function DeviceEditor({
                     onChange={(e) => setHinataUrl(e.target.value)}
                   />
                 </Field>
-                <Field label="连接密码">
+                <Field label="连接密码" unit={value?.hasPassword ? "已设置" : undefined}>
                   <input
                     className={input}
                     type="password"
                     autoComplete="new-password"
                     value={password}
                     placeholder={
-                      value?.hasPassword ? t("留空保持不变") : ""
+                      value?.hasPassword ? "••••••••" : ""
                     }
                     onChange={(e) => setPassword(e.target.value)}
                   />
@@ -584,7 +584,7 @@ export function DeviceEditor({
                     type="number"
                     min="1"
                     max="65535"
-                    placeholder={t("留空关闭投币")}
+                    placeholder={t("不启用")}
                     disabled={!canCoin}
                     value={coinKey}
                     onChange={(e) => setCoinKey(e.target.value)}

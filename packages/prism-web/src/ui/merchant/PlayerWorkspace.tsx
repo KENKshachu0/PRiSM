@@ -640,7 +640,6 @@ function BindForm({ done }: { done: () => void }) {
           autoCapitalize="characters"
           autoComplete="off"
           pattern="[23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz]{8}"
-          placeholder={t("玩家绑定页面上的验证码")}
         />
       </Field>
       <Field label="平台标识">
@@ -649,7 +648,7 @@ function BindForm({ done }: { done: () => void }) {
           name="provider"
           required
           pattern="[a-z][a-z0-9_-]{0,63}"
-          placeholder="onebot / telegram"
+          placeholder="onebot"
         />
       </Field>
       <Field label="身份值">
@@ -1252,7 +1251,7 @@ function PlayerPanel({
                     name="provider"
                     required
                     pattern="[a-z][a-z0-9_-]{0,63}"
-                    placeholder="onebot / telegram"
+                    placeholder="onebot"
                   />
                 </Field>
                 <Field label="身份值">

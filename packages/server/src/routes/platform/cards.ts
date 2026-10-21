@@ -8,7 +8,7 @@ import { syncMunetCards } from "./oauth.js";
 export const cardsRouter = new Hono<AppBindings>();
 const cardInput = z.object({
   label: z.string().trim().min(1).max(40),
-  accessCode: z.string().regex(/^[0-24-9]\d{19}$/, "卡片号码必须为20位数字且不能以3开头"),
+  accessCode: z.string().regex(/^\d{20}$/, "卡片号码必须为20位数字"),
 });
 
 async function listCards(c: import("hono").Context<AppBindings>, userId: string) {

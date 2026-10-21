@@ -18,12 +18,11 @@ export function BillingSetupFields({ value, change }: { value: Setup; change: (v
           onChange={event => change({ ...value, [key]: event.target.value })} /></Field>)}
     </div>
     <div className="grid grid-cols-3 gap-3">
-      {([["hourlyPrice", "每小时"], ["graceMinutes", "宽限分钟"], ["dailyCap", "全天封顶"]] as const).map(([key, label]) =>
-        <Field key={key} label={label}><input className={input} type="number" required min={key === "hourlyPrice" ? ".01" : "0"}
+      {([["hourlyPrice", "每小时", "元"], ["graceMinutes", "宽限时长", "分钟"], ["dailyCap", "全天封顶", "元"]] as const).map(([key, label, unit]) =>
+        <Field key={key} label={label} unit={key === "dailyCap" && value.dailyCap === 0 ? "不封顶" : unit}><input className={input} type="number" required min={key === "hourlyPrice" ? ".01" : "0"}
           max={key === "graceMinutes" ? 59 : 100000} step={key === "graceMinutes" ? "1" : ".01"} value={value[key]}
           onChange={event => change({ ...value, [key]: Number(event.target.value) })} /></Field>)}
     </div>
-    <p className="text-sm text-ink/60">{t("收费金额单位为元，全天封顶填 0 表示不封顶。")}</p>
   </>;
 }
 
@@ -65,7 +64,7 @@ export function BillingConversionWizard({ shopCode, close, done }: {
         </> : <>
           <dl className="grid grid-cols-2 gap-3 rounded-lg bg-ink/5 p-4 text-sm">
             <dt>{t("每小时")}</dt><dd>{money(setup.hourlyPrice)}</dd>
-            <dt>{t("宽限分钟")}</dt><dd>{setup.graceMinutes}</dd>
+            <dt>{t("宽限时长")}</dt><dd>{setup.graceMinutes} {t("分钟")}</dd>
             <dt>{t("全天封顶")}</dt><dd>{setup.dailyCap === 0 ? t("不封顶") : money(setup.dailyCap)}</dd>
             <dt>{t("前台收银")}</dt><dd>{t(cashier ? "启用" : "停用")}</dd>
           </dl>

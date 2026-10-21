@@ -1,6 +1,35 @@
+import { CircleHelp } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "../../i18n";
-import { useMerchant } from "./shared";
+import { Modal, buttonQuiet, useMerchant } from "./shared";
+
+/**
+ * The question-mark entry to the manual below. The rule editor opens it at the
+ * field descriptions; the rule list opens it from the top.
+ */
+export function BillingManualButton({ section }: { section?: "fields" }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className={`${buttonQuiet} size-9 shrink-0 justify-center`}
+        aria-label={t("计费说明书")}
+        title={t("计费说明书")}
+        onClick={() => setOpen(true)}
+      >
+        <CircleHelp size={18} aria-hidden="true" />
+      </button>
+      {open && (
+        <Modal title="计费说明书" close={() => setOpen(false)} xl>
+          <BillingExplainer section={section} />
+        </Modal>
+      )}
+    </>
+  );
+}
 
 /**
  * How a bill is built, drawn with one worked example. The figures follow the
@@ -9,9 +38,59 @@ import { useMerchant } from "./shared";
  * growth, a spending cap merges plans, and checkout spends bonus balance
  * before paid balance.
  */
-export function BillingExplainer() {
+export function BillingExplainer({ section }: { section?: "fields" } = {}) {
   const { t } = useI18n();
   const { shopCode } = useMerchant();
+  const fields = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (section === "fields") fields.current?.scrollIntoView({ block: "start" });
+  }, [section]);
+  const kinds: [string, string][] = [
+    [t("按时计费"), t("按时长收费。可以分成多个时段，每个时段有自己的单价、宽限和封顶。入场计费通常用这一种。")],
+    [t("固定收费"), t("每次入场收取一笔固定金额，不看时长。")],
+    [t("消费封顶"), t("把选中的几条规则合起来封顶，超出上限的部分免收。它自己不产生费用。")],
+  ];
+  const basics: [string, string][] = [
+    [t("名称"), t("规则在列表和账单里显示的名字，最多 80 个字。")],
+    [t("计费方式"), t("创建后不能更改。")],
+    [t("启用规则"), t("停用后不再参与计费。已经在店的玩家仍按入场时的规则计费。")],
+  ];
+  const periods: [string, string][] = [
+    [t("名称"), t("显示在账单时间轴上的时段名称，例如日场、夜场。")],
+    [t("开始"), t("时段每天的开始时间，按店铺时区。开始与结束相同表示全天。")],
+    [t("结束"), t("时段每天的结束时间。早于开始时间表示跨过午夜。")],
+    [t("计费间隔"), t("一个计费单位的时长，单位分钟，需要大于 0。")],
+    [t("收费金额"), t("每个计费单位的价格，单位元。")],
+    [t("宽限时长"), t("不足一个单位的余数不超过宽限时不多收；超过宽限才多收一个单位。单位分钟。")],
+    [t("时段封顶"), t("这个时段内累计费用的上限，单位元。填 0 表示不限。")],
+    [t("优先级"), t("同一条规则内，同一时刻有多个时段命中时，只采用数字最大的那个。")],
+    [t("适用星期"), t("只在勾选的星期生效。")],
+    [t("指定日期"), t("只在这些日期生效，格式如 2026-10-01，多个日期用逗号分隔。")],
+    [t("启用时段"), t("取消勾选后，这个时段不参与计费。")],
+  ];
+  const fixed: [string, string][] = [
+    [t("账单名称"), t("显示在玩家账单上的名称。")],
+    [t("金额"), t("每次入场收取一次，单位元。")],
+  ];
+  const cap: [string, string][] = [
+    [t("计入封顶的规则"), t("被合并计算的规则。固定收费目前不能计入封顶。")],
+    [t("封顶金额"), t("选中的规则在一个时段内的合计上限，单位元，需要大于 0。")],
+    [t("时段"), t("名称、开始、结束、优先级、适用星期、指定日期的含义与按时计费相同。")],
+  ];
+  const notes = [
+    t("新建的规则不会自动用于入场。要先在「设置」里选中入场规则，列表里标有「入场」的规则才会在玩家入场时计费。"),
+    t("修改、停用、归档规则只影响之后入场的玩家。已经在店的玩家按入场时的版本计费，结账后重新入场才使用最新版。"),
+    t("没有命中任何时段的时间不产生费用。入场规则需要覆盖全部营业时间，要全天生效时让开始与结束相同。"),
+    t("同一条规则内重叠的时段按优先级选一个；不同规则的费用相加，不会自动选最便宜的。不要用优先级相同的重叠时段表达规则。"),
+    t("跨过午夜的时段整体归属开始的那一天：星期和指定日期按开始日匹配，封顶额度也只算一份。"),
+    t("封顶按玩家累计，已结算的历史会计入，同一玩家重新扫码不会重置额度。"),
+    t("时段封顶只限制这一个时段。要把同时进行的几条计费（例如入场加麻将）合计封顶，使用消费封顶。"),
+    t("计费单位在每个时段内单独计算，跨时段边界的费用不一定等于把总时长一次算完。"),
+    t("刚入场且没有操作过设备时，宽限内不收费；操作过设备后，第一个单位照收。开门和空调操作不算设备操作。"),
+    t("金额单位是元，最多两位小数。"),
+    t("保存后用「计费模拟器」按真实时间验证一遍。"),
+  ];
+
   return (
     <div className="grid gap-8">
       <Figure
@@ -38,12 +117,44 @@ export function BillingExplainer() {
       >
         <CheckoutChart />
       </Figure>
+      <section ref={fields} className="grid scroll-mt-20 gap-6">
+        <h3 className="text-base font-semibold">{t("字段说明")}</h3>
+        <ManualRows title={t("计费方式")} rows={kinds} />
+        <ManualRows title={t("基本信息")} rows={basics} />
+        <ManualRows title={t("按时计费的时段")} rows={periods} />
+        <ManualRows title={t("固定收费")} rows={fixed} />
+        <ManualRows title={t("消费封顶")} rows={cap} />
+      </section>
+      <section className="grid gap-3">
+        <h3 className="text-base font-semibold">{t("配置注意事项")}</h3>
+        <ol className="grid list-decimal gap-2 pl-5 text-sm leading-relaxed text-ink/75">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ol>
+      </section>
       <p className="text-sm text-ink/60">
         {t("想用本店的规则算一笔？")}{" "}
         <Link className="underline" to={`/merchant/${encodeURIComponent(shopCode)}/pricing?simulate=1`}>
           {t("打开计费模拟器")}
         </Link>
       </p>
+    </div>
+  );
+}
+
+function ManualRows({ title, rows }: { title: string; rows: [string, string][] }) {
+  return (
+    <div className="grid gap-3">
+      <h4 className="text-sm font-semibold">{title}</h4>
+      <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
+        {rows.map(([name, text]) => (
+          <div key={name} className="contents">
+            <dt className="font-medium">{name}</dt>
+            <dd className="text-ink/70 max-sm:mb-2">{text}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
