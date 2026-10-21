@@ -2,7 +2,14 @@ import type { AssetGrant, AssetHolding, GrantAssetsResult } from "./assets";
 import { grantAssets, isActiveInWindow } from "./assets";
 import { PrismDomainError } from "./errors";
 
-export type PresentGrant = Omit<AssetGrant, "reason" | "refId">;
+export type PresentGrant = Omit<AssetGrant, "reason" | "refId"> & {
+  /**
+   * How many times one player may receive this item from the present. The
+   * present itself can still be redeemed again (with another code); redemptions
+   * past the limit just skip this item. Unset means unlimited.
+   */
+  maxPerPlayer?: number;
+};
 
 export type Present = {
   id: string;
@@ -74,28 +81,37 @@ export function redeemGift(input: RedeemGiftInput): RedeemGiftResult {
     );
   }
 
-  const playerRedeemedPresent = input.redeemRecords.some(
+  const playerPresentRedeemCount = input.redeemRecords.filter(
     (record) =>
       record.playerId === input.playerId &&
       record.presentId === input.present.id,
-  );
-  if (input.present.oncePerPlayer && playerRedeemedPresent) {
+  ).length;
+  if (input.present.oncePerPlayer && playerPresentRedeemCount > 0) {
     throw new PrismDomainError(
       "Present has already been redeemed by this player.",
       "PRESENT_ONCE_PER_PLAYER_REDEEMED",
     );
   }
 
+  const activeGrants = input.present.grants.filter((grant) => isActiveInWindow(grant, input.now));
+  const grantable = activeGrants.filter(
+    (grant) => grant.maxPerPlayer === undefined || playerPresentRedeemCount < grant.maxPerPlayer,
+  );
+  if (activeGrants.length > 0 && grantable.length === 0) {
+    throw new PrismDomainError(
+      "Every item in this present has reached its per-player limit.",
+      "PRESENT_GRANT_LIMIT_REACHED",
+    );
+  }
+
   const grantResult = grantAssets({
     playerId: input.playerId,
     existingHoldings: input.existingHoldings,
-    grants: input.present.grants
-      .filter((grant) => isActiveInWindow(grant, input.now))
-      .map((grant) => ({
-        ...grant,
-        reason: "gift.redeem",
-        refId: input.code.id,
-      })),
+    grants: grantable.map(({ maxPerPlayer: _maxPerPlayer, ...grant }) => ({
+      ...grant,
+      reason: "gift.redeem",
+      refId: input.code.id,
+    })),
     idFactory: input.idFactory,
     now: input.now,
   });

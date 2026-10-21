@@ -44,6 +44,17 @@ export type StaffRedeemService = {
 export function createStaffRedeemService(dependencies: StaffRedeemServiceDependencies): StaffRedeemService {
   return {
     async createPresent(input) {
+      for (const grant of input.grants) {
+        if (
+          grant.maxPerPlayer !== undefined &&
+          (!Number.isInteger(grant.maxPerPlayer) || grant.maxPerPlayer < 1)
+        ) {
+          throw new PrismDomainError(
+            "Grant maxPerPlayer must be a positive integer.",
+            "INVALID_PRESENT_GRANT_LIMIT",
+          );
+        }
+      }
       await assertPresentGrantAssetDefinitionsActive(dependencies, input.grants, dependencies.now?.() ?? new Date());
       const present: Present = {
         id: dependencies.id(),

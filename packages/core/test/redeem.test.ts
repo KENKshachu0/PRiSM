@@ -322,4 +322,71 @@ describe("redeemGift", () => {
       presentId: "present-1",
     });
   });
+
+  describe("per-item claim limit (maxPerPlayer)", () => {
+    const grant = (assetCode: string, extra: { maxPerPlayer?: number } = {}) => ({
+      assetType: "ticket",
+      assetCode,
+      amount: 1,
+      mergeStrategy: "stack" as const,
+      activeAt: null,
+      expiresAt: null,
+      ...extra,
+    });
+    const redeem = (priorRedemptions: number, grants = [grant("welcome", { maxPerPlayer: 2 }), grant("bonus")]) => {
+      let next = 0;
+      return redeemGift({
+        playerId: "player-1",
+        code: {
+          id: `redeem-${priorRedemptions + 1}`,
+          code: "TOPUP",
+          presentId: "present-1",
+          activeAt: null,
+          expiresAt: null,
+          maxUseCount: 10,
+        },
+        present: { id: "present-1", name: "Top-up pack", oncePerPlayer: false, grants },
+        existingHoldings: [],
+        redeemRecords: Array.from({ length: priorRedemptions }, (_, i) => ({
+          playerId: "player-1",
+          codeId: `redeem-${i + 1}`,
+          presentId: "present-1",
+          redeemedAt: new Date("2026-06-07T09:00:00.000Z"),
+        })),
+        now: new Date("2026-06-07T10:00:00.000Z"),
+        idFactory: () => `asset-${next++}`,
+      });
+    };
+
+    it("grants a limited item only while the player is under the limit", () => {
+      expect(redeem(0).assetLedgerEntries.map((e) => e.assetCode)).toEqual(["welcome", "bonus"]);
+      expect(redeem(1).assetLedgerEntries.map((e) => e.assetCode)).toEqual(["welcome", "bonus"]);
+      expect(redeem(2).assetLedgerEntries.map((e) => e.assetCode)).toEqual(["bonus"]);
+    });
+
+    it("still records the redemption when only unlimited items remain", () => {
+      expect(redeem(5).redeemRecord).toMatchObject({ playerId: "player-1", presentId: "present-1" });
+    });
+
+    it("rejects when every item has hit its limit", () => {
+      expect(() => redeem(1, [grant("welcome", { maxPerPlayer: 1 })])).toThrow(
+        expect.objectContaining({ code: "PRESENT_GRANT_LIMIT_REACHED" }) as PrismDomainError,
+      );
+    });
+
+    it("counts only this player's redemptions of this present", () => {
+      const result = redeemGift({
+        playerId: "player-2",
+        code: { id: "redeem-9", code: "TOPUP", presentId: "present-1", activeAt: null, expiresAt: null, maxUseCount: 10 },
+        present: { id: "present-1", name: "Top-up pack", oncePerPlayer: false, grants: [grant("welcome", { maxPerPlayer: 1 })] },
+        existingHoldings: [],
+        redeemRecords: [
+          { playerId: "player-1", codeId: "redeem-1", presentId: "present-1", redeemedAt: new Date("2026-06-07T09:00:00.000Z") },
+        ],
+        now: new Date("2026-06-07T10:00:00.000Z"),
+        idFactory: () => "asset-new",
+      });
+      expect(result.assetLedgerEntries.map((e) => e.assetCode)).toEqual(["welcome"]);
+    });
+  });
 });

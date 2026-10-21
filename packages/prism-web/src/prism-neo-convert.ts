@@ -95,6 +95,8 @@ type NeoPresentGrant = {
   mergeStrategy?: string;
   activeAt?: string | null;
   expireAt?: string | null;
+  durationMs?: number | string | null;
+  oncePerUser?: boolean | string | number | null;
 };
 type NeoRedeem = {
   id: number | string;
@@ -622,13 +624,22 @@ export function convertPrismNeoSnapshot(
     const grants = (parseLegacyJson(present.body) as NeoPresentGrant[]).map((grant) => {
       const resolved = resolveGrantAsset(grant, definitionsById);
       const mapped = mapLegacyAsset(resolved.type, resolved.assetId);
+      const count = grant.count === undefined || grant.count === null ? 1 : parseLegacyNumber(grant.count);
       return {
         assetType: mapped.type,
         assetCode: mapped.code,
-        amount: grant.count === undefined || grant.count === null ? 1 : parseLegacyNumber(grant.count),
+        // grants_json holds stored units like holdings do: currency in cents.
+        amount: mapped.type === "currency" ? cents(count) : Math.trunc(count),
         mergeStrategy: toMergeStrategy(grant.mergeStrategy),
         activeAt: iso(grant.activeAt),
         expiresAt: iso(grant.expireAt),
+        ...(grant.durationMs !== undefined && grant.durationMs !== null
+          ? { durationMs: parseLegacyNumber(grant.durationMs) }
+          : {}),
+        // prism-neo's per-item `oncePerUser` means "only the first redemption".
+        ...(grant.oncePerUser !== undefined && grant.oncePerUser !== null && parseLegacyBoolean(grant.oncePerUser)
+          ? { maxPerPlayer: 1 }
+          : {}),
       };
     });
     tables.presents.push({
