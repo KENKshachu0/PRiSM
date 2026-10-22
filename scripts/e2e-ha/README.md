@@ -20,7 +20,7 @@ bunx wrangler dev --config wrangler.jsonc --ip 127.0.0.1 --port 8787 --persist-t
   --var APP_ORIGIN:http://127.0.0.1:8787 --var EXTRA_ALLOWED_ORIGINS:http://localhost:8787 \
   --var SESSION_SECRET:e2e-session-secret --var URL_ENCRYPTION_KEY:e2e-url-encryption-key
 
-# 3. 造数据：店主/玩家、店铺、三台设备（走平台自己的接口）、IO 配置 → .e2e/platform.json、.e2e/io/{a,b}.ini
+# 3. 造数据：店主/玩家/平台管理员、店铺和 Bot 令牌、三台设备（走平台自己的接口）、IO 配置 → .e2e/platform.json、.e2e/io/{a,b}.ini
 bun run scripts/e2e-ha/seed.ts
 
 # 4. IO 模拟器
@@ -38,9 +38,10 @@ bun run scripts/e2e-ha/seed.ts
 ## 运行
 
 ```sh
-bun run scripts/e2e-ha/scenarios.ts [baseline live dedupe handover poweroff lease hadown readonly idle]   # 平台 ↔ IO ↔ HA，约 7 分钟（lease 要等满 90 秒租约，idle 要等满 1 分钟）
+bun run scripts/e2e-ha/scenarios.ts [baseline live dedupe handover poweroff lease hadown backfill urls readonly idle bots]   # 平台 ↔ IO ↔ HA，约 8 分钟（lease 要等满 90 秒租约，idle 要等满 1 分钟）
 PRISM_PLAYWRIGHT_MODULE=/path/to/playwright node scripts/e2e-ha/browser-board.cjs            # 商户看板，桌面 + 手机
 PRISM_PLAYWRIGHT_MODULE=/path/to/playwright node scripts/e2e-ha/browser-player.cjs           # 玩家扫码页
+PRISM_PLAYWRIGHT_MODULE=/path/to/playwright node scripts/e2e-ha/browser-watchers.cjs         # 设备页「HA 监听器」区域：店主只读、管理员可改
 (cd ../hinata_go && test/native/run-prism-real-check.sh)                                      # App Clip 视图模型
 ```
 
@@ -55,8 +56,11 @@ PRISM_PLAYWRIGHT_MODULE=/path/to/playwright node scripts/e2e-ha/browser-player.c
 - `poweroff`：平台给监听器所在机台断电，监听立刻让出（几十毫秒，不等租约）；两个监听器时只断一台的电连接仍实时。
 - `lease`：进程冻结、连接不断，90 秒租约到期后变非实时，恢复后 hub 重新下发监听并重新实时。
 - `hadown`：HA 重启，看板几秒内变非实时，HA 不可用时读取不报错不卡住（返回空值，客户端保留旧值），HA 回来后重新实时且快照与 HA 一致。
+- `urls`：把连接的内部地址设成不可达（192.0.2.1），IO 上线约 10 秒（一个连接超时）后用第二个地址变成实时；HA 重启后 16 秒内重新实时。没有连接超时时是 75 秒，且每一轮重连都要再等一次。
 - `readonly`：平台自动建的只读令牌能读实体、调用开关和空调服务被 Home Assistant 拒绝且状态不变，店家给的控制令牌仍然有效。
+- `backfill`：把一条连接改成功能上线之前存下的样子（没有只读令牌、`readAccess` 为空），IO 一上线平台就在真实 HA 里补建账号并变成实时（约 1 秒）；旧令牌失效（换掉而不是叠加），`needs_admin` 的连接不会被反复尝试。
 - `idle`：「店里没人 1 分钟后关机」生效后，五个电源和空调实体全部被关掉，包括没有任何存储状态的休息室；被关掉的机台 IO 立刻让出监听。
+- `bots`：用插件真实代码跑的 Bot（`bot-sim.ts`）当监听器：Bot 上线顶掉机台、两个 Bot 占满、让位期间看板没有听到一次「不再实时」、Bot 和机台同时监听同一个变化只推一次、Bot 掉线机台补位、店主改数量 403 / 管理员改成功、数量 1 / 4 / 回 2 各自的结果、越界 422、只有一个 Bot 没有机台时连接也能实时。
 - 浏览器：看板的「实时 / 非实时」标签、全店一个刷新按钮只对非实时设备生效、进入页面只读一次、面板操作后的读取规则、IO 掉线后保留最后的值；玩家页的「正在获取电源状态」、无状态时只读一次且不开 WebSocket、开机以 HA 200 为准、调温 1 秒防抖、事件驱动时页面完全靠推送、IO 掉线后只读一次、回来后不再读。
 - App Clip：同样的玩家页行为，经真实 `URLSessionWebSocketTask`。
 

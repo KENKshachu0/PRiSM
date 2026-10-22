@@ -188,6 +188,7 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 
 - 新建连接后，平台在后台（`waitUntil`）用连接的控制令牌执行：`auth/current_user` 确认是管理员 → `config/auth/create`（`group_ids: ["system-read-only"]`）建用户 → `config/auth_provider/homeassistant/create` 给它随机用户名和密码 → 走 HA 登录流程（`/auth/login_flow` + `/auth/token`，`client_id` 为平台地址）以该用户登录 → 以该用户身份 `auth/long_lived_access_token`（3650 天）→ `config/auth_provider/homeassistant/delete` 删掉它的密码，长期令牌成为这个账号唯一的入口。顺带读 `GET /api/config` 的 `internal_url` 存为 `internalUrl`，供店内机台优先使用。重做时先删除旧的只读用户。
 - 控制令牌不是管理员的，`readAccess` 为 `needs_admin`：设备编辑器提示贴一次管理员令牌，`POST /ha-connections/:id/read-access?shopId=`（`{ adminToken? }`）只在这一次请求里使用它，不保存。其它失败记为 `failed` 并带原因，可以重试。本地 Bun 服务端没有 `waitUntil`，只能用这个接口手动触发。
+- **旧连接补建**：只读账号只在新建连接、改连接的地址或令牌时自动创建，而功能上线之前存下的连接是第一次读取时由旧绑定「采纳」出来的，`readAccess` 为空，从没有人尝试过，编辑器里会一直显示「正在启用实时状态…」。所以店铺 Hub 在构建监听任务时（IO 上线、设备或连接变化、闹钟补位都会走到），对**有设备在用、`readAccess` 为空**的连接补建一次：用控制令牌走上面的流程，成功后立刻重建监听。补建放在 Hub 里而不是请求里，因为每个店铺只有这一个对象，能看到「已经在跑」，同一条连接同一时间只会跑一次；两次并发会在 HA 里各建一个用户，先建的那个留下仍然有效的令牌。结果是 `needs_admin` 或 `failed` 的不会再自动重试，由编辑器提示原因。没有 IO 在线的店铺不会触发，也就不会在没有人需要实时状态时去动店家的 Home Assistant。
 - 依赖 Home Assistant 默认的用户名密码登录方式；店家关掉它时这一步失败，需要手动提供令牌。只读用户仍可调用少数不针对实体的服务（如发通知），但控制不了任何设备。整条流程已在真实 Home Assistant（官方 docker 镜像）上跑过：管理员令牌得到 `ready`，非管理员令牌得到 `needs_admin`，IO 固件用只读令牌订阅事件并收到完整快照；见 [开发环境](dev-environment.md#真实-home-assistant-与-hinata-io-的端到端测试)。
 
 能力目录写在 `packages/server/src/devices/capabilities.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
@@ -270,7 +271,7 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 
 ### 店铺 Hub：谁替店里盯着 Home Assistant，以及设备状态的两种模式
 
-每家店有一个 `ShopHub` Durable Object（binding `SHOP_HUB`，迁移 tag `shop-hub-v1`，名字是店铺 ID），它从店里**在线的直连 HINATA IO 中挑最多两台**，让它们在局域网里用只读令牌订阅 Home Assistant（`subscribe_entities`），把状态变化经已有的设备连接报回来。HA 不必暴露到公网，机台连进来的 WebSocket 照常可以休眠。
+每家店有一个 `ShopHub` Durable Object（binding `SHOP_HUB`，迁移 tag `shop-hub-v1`，名字是店铺 ID），它从店里**在线的 Bot 和直连 HINATA IO 中挑最多两个**（默认两个，平台管理员可按店铺调整，见下），让它们用只读令牌订阅 Home Assistant（`subscribe_entities`），把状态变化经已有的连接报回来。HA 不必暴露到公网（监听者在局域网里也行），机台连进来的 WebSocket 照常可以休眠。Bot 的 WebSocket、玩家设备页和商户看板的 WebSocket 都进这个对象；只有机台直连走每台一个的 `MachineRelay`。
 
 #### 两种模式（按 Home Assistant 连接）
 
@@ -282,13 +283,21 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 #### 监听者
 
 - **谁能被选**：`CLIENT_HELLO` 的 `body.features` 含 `ha.watch` 的机台。`MachineRelay` 收到这样的 hello 就告诉 Hub 自己上线（`relayOnline`），最后一个这样的连接断开时告诉 Hub 下线（`relayOffline`）。网关把通道名放在 `x-prism-relay-channel` 头里交给 `MachineRelay`，Hub 用它回头找到这台机台。
-- **选谁**：在线最久的两台（`WATCHERS = 2`）；刚失败过的（连不上 HA、没能下发、租约过期）5 分钟内排在后面。第二台的作用是**不让状态断流**：一台掉线时另一台仍在报，模式不会闪回无状态，空出来的位置由下一台在线的机台补上。令牌只在监听者的内存里。
-- **下发**：`{"action":"HA_WATCH","body":{"term":3,"connections":[{"id":"ha_…","urls":["http://ha.local:8123","https://ha.example"],"token":"<只读令牌>","entities":["switch.a","climate.b"]}]}}`。`urls` 按顺序尝试，店内地址（HA 的 `internal_url`）在前；每次下发用新的任期号。换人时给原来那台发 `{"action":"HA_UNWATCH","body":{}}`。只有已经签好只读账号、且有设备用到的连接会下发；一条都没有就不选人。
+- **选谁**：名额是这家店的监听器数量（默认 2，平台管理员可改，见下）。**Bot 优先于机台**：一个 Bot 在线就占一个名额，两个 Bot 就占满，机台只补空位；同类里在线最久的优先；刚失败过的（连不上 HA、没能下发、租约过期）5 分钟内排在后面，不论是 Bot 还是机台，所以一个连不上 HA 的 Bot 不会把名额一直占着。两个监听者同时报同一个事件，谁先到谁生效，另一份按下面的去重丢弃，不分高低。第二个名额的作用是**不让状态断流**：一个掉线时另一个仍在报，模式不会闪回无状态，空出来的位置由下一个在线的候选补上。令牌只在监听者的内存里。
+- **让位没有空窗**：Bot 上线或名额调小，会让原来在监听的机台被「挤出去」。被挤的监听者要等**留下的监听者对每条已宣布为事件驱动的连接都交付了完整状态**才收到 `HA_UNWATCH`；在那之前它继续报，每一份新的全量状态到达时 Hub 再判断一次。所以只有一个名额时，Bot 先交完全量，机台才退出，连接不会闪成无状态。
+- **Bot 作为监听者**：Koishi 插件的 `hello` 带 `{ha: true, name}` 才会被考虑（旧插件不声明，永远不会被分配）。Hub 用 `bot:<连接 id>` 记它，下发 `{"type":"ha.watch","watch":{term,connections}}`（内容与机台的 `HA_WATCH` 相同）、撤销 `{"type":"ha.unwatch"}`；Bot 上报 `{"type":"ha","method":"ha.status|ha.states","params":{…}}`，字段与机台一致，所以后面的任期、租约、去重、记录对两者完全相同。Bot 的连接断开（包括出错）立即让位给下一个候选；部署会让连接静默丢失，每次重新分配时都会对照仍在线的 Bot 连接清理，不等租约。Bot 重连是一个新连接、新 id，要重新 hello 才再被分配。令牌会发到 Bot 所在的机器，只给店家自己运维的 Bot 开（插件 `watchHomeAssistant`）。
+- **下发**：`{"action":"HA_WATCH","body":{"term":3,"connections":[{"id":"ha_…","urls":["http://ha.local:8123","https://ha.example"],"token":"<只读令牌>","entities":["switch.a","climate.b"]}]}}`。`urls` 按顺序尝试，店内地址（HA 的 `internal_url`）在前，所有监听器收到的是同一个列表，平台不区分它在哪、是什么：HA 可能托管在别处，监听器也可能在店外，哪个地址通就用哪个。监听器侧每个地址有 10 秒连接超时，上次连上的排在最前，一轮全部失败才上报断开（见固件 `docs/remote-protocol.md`）；真实环境实测内部地址不可达时 10.2 秒变成实时（没有超时时是 75.2 秒）。每次下发用新的任期号。换人时给原来那台发 `{"action":"HA_UNWATCH","body":{}}`。只有已经签好只读账号、且有设备用到的连接会下发；一条都没有就不选人。
 - **上报**（JSON-RPC 通知，无 `id`）：`ha.status {term, connection, connected, error?}`，订阅建立或断开时、以及每 30 秒一次作为心跳；`ha.states {term, connection, full, states:[{entity_id, state, last_changed, last_updated, attributes}]}`，第一次是全量，之后只报变化；时间是 HA 压缩状态里的 Unix 秒（也接受 ISO 文本），`attributes` 只带平台用到的空调属性。任何上报都给租约续期 90 秒；`term` 不是该监听者当前的任期，一律丢弃，所以交接时新旧两个任期短暂同时上报也无害。
 - **去重与乱序**：两台监听者看到同一个事件，只记一次。Hub 按每个实体最近一次已应用的 `last_updated`（旧固件没有这个字段时退回 `last_changed`）判断：不比已应用的新就丢弃，所以一台晚到的旧事件不会把状态改回去。`last_updated` 要单独带，因为空调的温度、风速变化不会动 `last_changed`。设备事件的去重另有 SQL 保证：状态值没变就既不写事件也不写状态。两份报告同一时刻到达时 Hub 一份一份处理（`haReport` 排队），第二份要等第一份存完才判断，否则两份都会认为事件是新的、各推送一次。
 - **换人**：监听者下线时立即补位；90 秒没有任何上报，Hub 的 alarm 把它排到后面并补位。**平台自己把监听者所在的机台关机**（玩家、店员、闲置自动关机的 `power.off` 成功后），Hub 立刻认定它下线（`markDown`），不等租约，且在它再次 hello 之前不再选它。`ha.status` 报告连不上 HA 而店里还有没在盯的候选，立即换人；没有候选就保留，该连接回到无状态直到它重新订阅并交付全量。部署会让所有连接断开且没有关闭回调，也靠租约兜底。
 - **记录**：上报的状态一批写入 D1（`bus.reportMany`，一次往返）。电源写 `power/power`（`on`/`off`/`null`）；空调写两个键：`climate/climate` 只含设定（模式、目标温度、风速），变化时记 `change` 事件，`climate/view` 是完整视图（含室温、可选模式、范围），只存储不记事件，因为室温会自己漂移。**时间用 HA 的 `last_changed`**，所以在米家或物理按钮开机，也能知道真正的开机时间。写入失败时不宣布该连接，并让监听者用新任期重新订阅（30 秒内最多一次），换回一份全量状态重写。
 - **成本**：每次心跳只写一行存储（租约），且不重设 alarm，只在租约可能到期时才醒来；设备状态本身只在变化时写 D1。
+
+#### 监听器数量与看板上的监听器区域
+
+- **数量只有平台管理员能改，范围是单个店铺。** `PUT /api/v1/merchant/ha-watchers?shopId=`，body `{"count": 1–4}`，非管理员（包括这家店的店主）返回 403，越界或不是整数返回 422，店铺不存在返回 404。存在这家店的 `app_settings`（键 `devices.ha_watcher_limit`），默认 2，上限 `MAX_WATCHERS = 4`。写入后 Hub 重读（`refresh`），名额变大就补人，变小就按上面的规则让位。限制值读不出来或越界一律回到默认。
+- **看板能看到谁在监听。** 设备页（有电源或空调设备时）的「HA 监听器」区域，数据来自看板那条 WebSocket 的 `watchers` 帧：`{"type":"watchers","limit":2,"max":4,"standby":1,"watchers":[{"id":"bot:…","kind":"bot","name":"前台","state":"watching"},{"id":"<机台 ID>","kind":"device","deviceId":"<机台 ID>","state":"starting"}]}`。连接建立时发一次，之后只在内容变化时发（监听者上线、让位、报告连不上 HA、数量变化）。Bot 排在前面，用它 hello 里的名字；机台用设备页已有的设备名。`state` 是 `watching`（已交付完整状态）、`subscribing`（已订阅、完整状态还在路上）、`starting`（刚下发）、`unreachable`（报告连不上 Home Assistant）；租约过期的不列。`standby` 是在线但没拿到名额的候选数。没有任何监听者时区域写明设备状态是非实时。
+- 所有人都能看到这个区域和名额；下拉框只对平台管理员显示，店主看到的是「由平台管理员设置」。
 
 #### 读取的接口
 

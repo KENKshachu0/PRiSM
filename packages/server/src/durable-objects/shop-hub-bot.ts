@@ -5,15 +5,25 @@
  * token fails on its next request.
  */
 import type { Env } from "../bindings.js";
+import { parseHaReport, type HaReport } from "../hardware/aimeio-relay.js";
 
 export type BotFrame =
-  | { type: "hello"; reminderLeadSeconds?: number }
-  | { type: "request"; id: string; method: "GET" | "POST" | "PUT"; path: string; query?: Record<string, unknown>; body?: unknown };
+  /**
+   * `ha` says the bot can watch Home Assistant for the shop; `name` is how the board calls it.
+   * Neither is sent by a bot that predates watching, which is then never asked to.
+   */
+  | { type: "hello"; reminderLeadSeconds?: number; ha?: true; name?: string }
+  | { type: "request"; id: string; method: "GET" | "POST" | "PUT"; path: string; query?: Record<string, unknown>; body?: unknown }
+  /** What a watching bot reports, in the shape an IO reports it: `ha.status` and `ha.states`. */
+  | { type: "ha"; report: HaReport };
 
 /** `serverMs` is how long the platform spent on the request, so the Bot can tell the network from the server. */
 export type BotResponse = { type: "response"; id: string; status: number; body: unknown; serverMs?: number };
 
-/** A request frame or hello, or null for anything malformed. */
+/** What a bot is called on the board when it does not say. */
+export const DEFAULT_BOT_NAME = "Bot";
+
+/** A request frame, hello or watcher report, or null for anything malformed. */
 export function parseBotFrame(raw: string): BotFrame | null {
   let value: Record<string, unknown>;
   try {
@@ -24,7 +34,17 @@ export function parseBotFrame(raw: string): BotFrame | null {
   if (!value || typeof value !== "object") return null;
   if (value.type === "hello") {
     const lead = value.reminderLeadSeconds;
-    return { type: "hello", ...(typeof lead === "number" && lead >= 0 && lead <= 24 * 3600 ? { reminderLeadSeconds: lead } : {}) };
+    const name = typeof value.name === "string" ? value.name.trim().slice(0, 40) : "";
+    return {
+      type: "hello",
+      ...(typeof lead === "number" && lead >= 0 && lead <= 24 * 3600 ? { reminderLeadSeconds: lead } : {}),
+      ...(value.ha === true ? { ha: true as const } : {}),
+      ...(name ? { name } : {}),
+    };
+  }
+  if (value.type === "ha") {
+    const report = parseHaReport(value);
+    return report ? { type: "ha", report } : null;
   }
   if (value.type !== "request") return null;
   const { id, method, path, query, body } = value;

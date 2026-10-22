@@ -4,17 +4,23 @@ import { decryptSecret } from "../crypto.js";
 import type { DeviceBus } from "../devices/bus.js";
 import { climateState, createRuntimeBus, type ClimateState } from "../devices/runtime.js";
 import { listHaConnections } from "../devices/ha-connections.js";
+import { provisionReadAccess } from "../devices/ha-read-access.js";
+import { DEFAULT_WATCHERS, MAX_WATCHERS, readWatcherLimit } from "../devices/ha-watchers.js";
 import { loadDevice } from "../devices/device.js";
 import { readBoardStates, readDeviceFacts, writeEventConnections } from "../devices/state-view.js";
 import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
 import type { HaEntityState, HaReport } from "../hardware/aimeio-relay.js";
 import type { HaWatch } from "./machine-relay.js";
 import { emptyIdleMemory, runIdleCheck, type IdleMemory, type IdleNotice } from "./shop-hub-idle.js";
-import { parseBotFrame, revokedCredentials, runBotRequest, type BotResponse } from "./shop-hub-bot.js";
+import { DEFAULT_BOT_NAME, parseBotFrame, revokedCredentials, runBotRequest, type BotResponse } from "./shop-hub-bot.js";
 import { app } from "../app.js";
 
-/** A shop bot's connection, kept on the socket so it survives hibernation. */
-type BotAttachment = { kind: "bot"; token: string; shopCode: string; reminderLeadMs: number | null };
+/**
+ * A shop bot's connection, kept on the socket so it survives hibernation. `id` tells this connection
+ * from another bot's; `ha` and `name` come from its hello, and a bot that never said it can watch
+ * Home Assistant is never given a watch.
+ */
+type BotAttachment = { kind: "bot"; token: string; shopCode: string; reminderLeadMs: number | null; id?: string; ha?: boolean; name?: string };
 /** A player's device page, listening for that device's state and for changes to its own page. */
 type PageAttachment = { kind: "page"; deviceId: string; userId: string };
 /** A merchant's device board, listening for the state of every device in the shop. */
@@ -40,26 +46,39 @@ const BENCH_MS = 5 * 60_000;
 /** Bursts of activity are folded into one idle check this long after the first. */
 const TOUCH_DELAY_MS = 2000;
 /**
- * How many IOs watch Home Assistant at once. The second keeps the state
- * flowing while the first is replaced, so losing one IO never leaves a gap.
+ * The default number of clients watching at once. The second keeps the state flowing while the first
+ * is replaced, so losing one never leaves a gap. A shop's own number is the platform administrator's
+ * to set (`ha-watchers.ts`).
  */
-export const WATCHERS = 2;
+export const WATCHERS = DEFAULT_WATCHERS;
 /** A failed state write restarts the watch, but not more often than this. */
 const RESYNC_MS = 30_000;
 
-/** An online IO able to watch Home Assistant for the shop. */
+/** A bot's key among candidates and watchers; an IO's is its machine id. */
+const BOT_PREFIX = "bot:";
+const botKey = (id: string) => `${BOT_PREFIX}${id}`;
+const isBot = (key: string) => key.startsWith(BOT_PREFIX);
+
+/**
+ * Something online that can watch Home Assistant for the shop: a HINATA IO, keyed by its machine id, or
+ * a shop bot, keyed by `bot:<connection id>`. `machineId` is that key either way, so records written
+ * before bots existed read as what they were.
+ */
 type Candidate = {
   machineId: string;
+  /** The relay channel an IO is reached through; a bot is reached on its own socket. */
   channel: string;
   since: number;
-  /** Chosen last for this long after it failed to take the watch. */
+  /** A bot's name for the board. */
+  label?: string;
+  /** Ranked after the others for this long after it failed to take the watch. */
   benchedUntil?: number;
   /** Not chosen at all: the platform switched it off. Its next hello clears this. */
   downUntil?: number;
 };
 /** What one watcher said about one Home Assistant connection. */
 type Link = {
-  /** The IO is subscribed to it. */
+  /** The watcher is subscribed to it. */
   connected: boolean;
   /** Its full state was stored, so the stored facts are complete. */
   snapshot: boolean;
@@ -67,6 +86,7 @@ type Link = {
 type Watcher = {
   machineId: string;
   channel: string;
+  label?: string;
   term: number;
   leaseUntil: number;
   links: Record<string, Link>;
@@ -117,14 +137,19 @@ type StateWrite = Parameters<DeviceBus["reportMany"]>[0][number];
 const WRITE_CHUNK = 40;
 
 /**
- * One per shop, named by shop id. It decides which online HINATA IOs watch the
- * shop's Home Assistants, keeps their reports in `device_state`, and tells the
- * rest of the platform which Home Assistant connections can be believed.
+ * One per shop, named by shop id. It decides which online clients watch the shop's Home Assistants,
+ * keeps their reports in `device_state`, and tells the rest of the platform which Home Assistant
+ * connections can be believed.
  *
- * Up to two IOs watch at once. Each holds a lease renewed by every report; one
- * that leaves, is switched off, fails or goes quiet past the lease is dropped
- * and the next IO online longest takes its place. Every report carries the term
- * of the assignment it answers, so a replaced watcher's reports are ignored.
+ * A watcher is a shop bot or a HINATA IO. Up to the shop's number of them (two unless the platform
+ * administrator changed it) watch at once, and bots come first: while a bot is online it holds a slot,
+ * and a second bot takes the other one. An IO fills a slot no bot wants, and is sent home when a bot
+ * arrives once the watchers that stay have delivered what it carried, so the handover has no gap. A
+ * candidate that just failed (it cannot reach Home Assistant, or went quiet) ranks behind healthy
+ * ones for a while, whatever it is. Each watcher holds a lease renewed by every report; one that
+ * leaves, is switched off, fails or goes quiet past the lease is dropped and the next candidate takes
+ * its place. Every report carries the term of the assignment it answers, so a replaced watcher's
+ * reports are ignored.
  *
  * A connection is *watched* when some live watcher has it subscribed and has
  * delivered its full state. Only then does `ha_event_connections` hold it, and
@@ -138,6 +163,8 @@ export class ShopHub extends BaseDurableObject<Env> {
   private readonly running = new Set<string>();
   private shop: string | null = null;
   private lastResync = 0;
+  /** The last watcher list sent to the boards, so a board hears only about a change. */
+  private lastWatchers = "";
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -165,7 +192,7 @@ export class ShopHub extends BaseDurableObject<Env> {
     await this.rememberShop(shopId);
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server!, ["bot"]);
-    server!.serializeAttachment({ kind: "bot", token, shopCode, reminderLeadMs: null } satisfies BotAttachment);
+    server!.serializeAttachment({ kind: "bot", token, shopCode, reminderLeadMs: null, id: crypto.randomUUID() } satisfies BotAttachment);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -226,6 +253,11 @@ export class ShopHub extends BaseDurableObject<Env> {
     // What is stored now, so the board catches up on anything that moved between its read and this connection.
     const snapshot = await this.boardSnapshot(shopId);
     if (snapshot) server!.send(JSON.stringify(snapshot));
+    try {
+      server!.send(JSON.stringify(await this.watchersFrame(await this.load<Watchers>("watchers", {}))));
+    } catch (error) {
+      console.error("Shop hub watcher list failed", error);
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -262,6 +294,50 @@ export class ShopHub extends BaseDurableObject<Env> {
     const shopId = await this.shopId();
     const snapshot = shopId ? await this.boardSnapshot(shopId) : null;
     if (snapshot) this.toBoards(snapshot);
+  }
+
+  /**
+   * Who is watching Home Assistant right now, for the board: each watcher by kind (a bot by name, a
+   * device by id), how far it has got, the shop's number of slots, and how many more are online and
+   * waiting their turn. A watcher whose lease has lapsed is not listed.
+   */
+  private async watchersFrame(watchers: Watchers): Promise<Record<string, unknown>> {
+    const now = Date.now();
+    const candidates = await this.load<Candidates>("candidates", {});
+    const list = Object.values(watchers)
+      .filter((watcher) => watcher.leaseUntil > now)
+      .sort((a, b) => Number(!isBot(a.machineId)) - Number(!isBot(b.machineId)) || a.machineId.localeCompare(b.machineId))
+      .map((watcher) => {
+        const links = Object.values(watcher.links);
+        const state = links.some((link) => link.connected && link.snapshot)
+          ? "watching"
+          : links.some((link) => link.connected)
+            ? "subscribing"
+            : links.length
+              ? "unreachable"
+              : "starting";
+        return isBot(watcher.machineId)
+          ? { id: watcher.machineId, kind: "bot", name: watcher.label ?? DEFAULT_BOT_NAME, state }
+          : { id: watcher.machineId, kind: "device", deviceId: watcher.machineId, state };
+      });
+    const standby = Object.values(candidates).filter((candidate) => !watchers[candidate.machineId] && (candidate.downUntil ?? 0) <= now).length;
+    return { type: "watchers", limit: await this.limit(), max: MAX_WATCHERS, watchers: list, standby };
+  }
+
+  /** Tell the open boards who is watching, when that changed. */
+  private async announceWatchers(watchers: Watchers) {
+    if (!this.ctx.getWebSockets("board").length) return;
+    const frame = await this.watchersFrame(watchers);
+    const encoded = JSON.stringify(frame);
+    if (encoded === this.lastWatchers) return;
+    this.lastWatchers = encoded;
+    this.toBoards(frame);
+  }
+
+  /** How many clients watch at once in this shop. */
+  private async limit(): Promise<number> {
+    const stored = await this.ctx.storage.get<number>("limit");
+    return typeof stored === "number" && Number.isInteger(stored) && stored >= 1 && stored <= MAX_WATCHERS ? stored : DEFAULT_WATCHERS;
   }
 
   /** Tell the open device pages of one user that something they show changed. */
@@ -324,9 +400,24 @@ export class ShopHub extends BaseDurableObject<Env> {
     const frame = parseBotFrame(message);
     if (!frame) return;
     if (frame.type === "hello") {
-      ws.serializeAttachment({ ...attachment, reminderLeadMs: frame.reminderLeadSeconds === undefined ? null : frame.reminderLeadSeconds * 1000 });
+      const id = attachment.id ?? crypto.randomUUID();
+      ws.serializeAttachment({
+        ...attachment,
+        id,
+        reminderLeadMs: frame.reminderLeadSeconds === undefined ? null : frame.reminderLeadSeconds * 1000,
+        ha: frame.ha === true,
+        ...(frame.name ? { name: frame.name } : {}),
+      } satisfies BotAttachment);
+      const shopId = (await this.shopId()) ?? "";
+      if (frame.ha) await this.botOnline(shopId, id, frame.name);
       // Reminders may now be due earlier than the next planned check.
-      await this.touch((await this.shopId()) ?? "");
+      await this.touch(shopId);
+      return;
+    }
+    if (frame.type === "ha") {
+      // Only a bot that said it can watch has anything to report; a stale or unassigned one is ignored.
+      const shopId = await this.shopId();
+      if (shopId && attachment.ha && attachment.id) await this.haReport(shopId, botKey(attachment.id), frame.report);
       return;
     }
     const replayKey = `req:${frame.id}`;
@@ -385,6 +476,24 @@ export class ShopHub extends BaseDurableObject<Env> {
     } catch {
       // Already closed.
     }
+    await this.botGone(ws);
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    await this.botGone(ws);
+  }
+
+  /** A bot that was a candidate has left: its watch, if it had one, moves to the next. */
+  private async botGone(ws: WebSocket): Promise<void> {
+    const attachment = ws.deserializeAttachment() as BotAttachment | null;
+    if (attachment?.kind !== "bot" || !attachment.ha || !attachment.id) return;
+    const key = botKey(attachment.id);
+    const candidates = await this.load<Candidates>("candidates", {});
+    if (candidates[key]) {
+      delete candidates[key];
+      await this.ctx.storage.put("candidates", candidates);
+    }
+    await this.drop(key);
   }
 
   private async load<T>(key: string, fallback: T): Promise<T> {
@@ -405,13 +514,25 @@ export class ShopHub extends BaseDurableObject<Env> {
   /** An IO announcing it can watch Home Assistant has connected. */
   async relayOnline(shopId: string, machineId: string, channel: string): Promise<void> {
     await this.rememberShop(shopId);
+    await this.addCandidate({ machineId, channel, since: Date.now() });
+  }
+
+  /** A bot that can watch Home Assistant has said hello. */
+  private async botOnline(shopId: string, id: string, name: string | undefined): Promise<void> {
+    await this.rememberShop(shopId);
+    await this.addCandidate({ machineId: botKey(id), channel: "", since: Date.now(), ...(name ? { label: name } : {}) });
+  }
+
+  /** A client that can watch has connected: it is a candidate, and may take a slot at once. */
+  private async addCandidate(candidate: Candidate): Promise<void> {
     const candidates = await this.load<Candidates>("candidates", {});
-    candidates[machineId] = { machineId, channel, since: candidates[machineId]?.since ?? Date.now() };
+    const key = candidate.machineId;
+    candidates[key] = { ...candidate, since: candidates[key]?.since ?? candidate.since };
     await this.ctx.storage.put("candidates", candidates);
-    // A reconnecting IO lost its assignment with the old connection.
+    // A reconnecting client lost its assignment with the old connection.
     const watchers = await this.load<Watchers>("watchers", {});
-    if (watchers[machineId]) {
-      delete watchers[machineId];
+    if (watchers[key]) {
+      delete watchers[key];
       await this.ctx.storage.put("watchers", watchers);
     }
     await this.fill();
@@ -450,15 +571,16 @@ export class ShopHub extends BaseDurableObject<Env> {
     await this.fill();
   }
 
-  /** Devices or connections changed: rebuild what is watched and tell the watchers. */
+  /** Devices, connections or the shop's number of watchers changed: rebuild what is watched and tell the watchers. */
   async refresh(shopId: string): Promise<void> {
     await this.rememberShop(shopId);
+    // The platform administrator's number for this shop; this object keeps its own copy.
+    await this.ctx.storage.put("limit", await readWatcherLimit(this.env.DB, shopId));
     // Which devices an entity drives may have changed; the next full snapshot rewrites every fact.
     await this.ctx.storage.put("states", {});
     const watchers = await this.load<Watchers>("watchers", {});
     const watch = await this.buildWatch(shopId);
-    const relay = machineRelayNamespace(this.env);
-    if (!watch || !relay) {
+    if (!watch) {
       await this.release(watchers);
       return;
     }
@@ -471,11 +593,42 @@ export class ShopHub extends BaseDurableObject<Env> {
 
   /** Stop every watcher: nothing is left to watch. */
   private async release(watchers: Watchers) {
-    const relay = machineRelayNamespace(this.env);
-    for (const watcher of Object.values(watchers)) await relay?.getByName(watcher.channel).watchHa(null).catch(() => undefined);
+    for (const watcher of Object.values(watchers)) await this.tell(watcher, null);
     await this.ctx.storage.put("watchers", {});
     await this.schedule();
     await this.publish({});
+  }
+
+  /**
+   * Hand a watcher what to watch, or with null take it away. An IO is reached through its relay, a bot
+   * on its own socket. False when it could not be told.
+   */
+  private async tell(watcher: Pick<Watcher, "machineId" | "channel">, watch: HaWatch | null): Promise<boolean> {
+    if (isBot(watcher.machineId)) {
+      const socket = this.botSocket(watcher.machineId);
+      if (!socket) return false;
+      try {
+        socket.send(JSON.stringify(watch ? { type: "ha.watch", watch } : { type: "ha.unwatch" }));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    const relay = machineRelayNamespace(this.env);
+    if (!relay) return false;
+    try {
+      return (await relay.getByName(watcher.channel).watchHa(watch)).ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The connection of the bot with this key, if it is still there. */
+  private botSocket(key: string): WebSocket | undefined {
+    return this.bots().find((ws) => {
+      const attachment = ws.deserializeAttachment() as BotAttachment | null;
+      return !!attachment?.id && botKey(attachment.id) === key;
+    });
   }
 
   /** Whether some IO is watching right now. */
@@ -502,7 +655,7 @@ export class ShopHub extends BaseDurableObject<Env> {
   private async takeReport(shopId: string, machineId: string, report: HaReport): Promise<void> {
     await this.rememberShop(shopId);
     const current = (await this.load<Watchers>("watchers", {}))[machineId];
-    // An earlier assignment, or an IO that is not a watcher: not ours to trust.
+    // An earlier assignment, or a client that is not a watcher: not ours to trust.
     if (!current || current.term !== report.params.term) return;
     const { term } = current;
     const connection = report.params.connection;
@@ -525,7 +678,7 @@ export class ShopHub extends BaseDurableObject<Env> {
       link.connected = report.params.connected;
       if (!link.connected) {
         link.snapshot = false;
-        // This IO cannot reach Home Assistant; another one that is not watching yet may.
+        // This client cannot reach Home Assistant; another one that is not watching yet may.
         const now = Date.now();
         const spare = Object.values(await this.load<Candidates>("candidates", {}))
           .some((candidate) => !watchers[candidate.machineId] && (candidate.downUntil ?? 0) <= now);
@@ -533,6 +686,8 @@ export class ShopHub extends BaseDurableObject<Env> {
           await this.bench(machineId);
           delete watchers[machineId];
           await this.ctx.storage.put("watchers", watchers);
+          // It is not coming back soon, and left alone it would go on trying in the background.
+          await this.tell(watcher, null);
           await this.fill();
           return;
         }
@@ -544,6 +699,9 @@ export class ShopHub extends BaseDurableObject<Env> {
     await this.ctx.storage.put("watchers", watchers);
     await this.schedule();
     await this.publish(watchers);
+    // A watcher that was outranked keeps going until the ones that stay have this; a snapshot may be
+    // what lets it go.
+    if (Object.keys(watchers).length > (await this.limit())) await this.fill();
   }
 
   /**
@@ -637,60 +795,136 @@ export class ShopHub extends BaseDurableObject<Env> {
     await this.ctx.storage.put("candidates", candidates);
   }
 
-  /** Candidates that could take a watch now, the ones that have not just failed first. */
-  private free(candidates: Candidates, watchers: Watchers, now: number): Candidate[] {
+  /**
+   * Who may watch, best first. One that just failed goes last, unless it is watching fine right now
+   * (it need not be swapped out for a newcomer); then bots before IOs; then the longest online.
+   */
+  private ranked(candidates: Candidates, watchers: Watchers, now: number): Candidate[] {
+    const benched = (candidate: Candidate) =>
+      (candidate.benchedUntil ?? 0) > now &&
+      !Object.values(watchers[candidate.machineId]?.links ?? {}).some((link) => link.connected);
     return Object.values(candidates)
-      .filter((candidate) => !watchers[candidate.machineId] && (candidate.downUntil ?? 0) <= now)
-      .sort((a, b) => Number((a.benchedUntil ?? 0) > now) - Number((b.benchedUntil ?? 0) > now) || a.since - b.since);
+      .filter((candidate) => (candidate.downUntil ?? 0) <= now)
+      .sort(
+        (a, b) =>
+          Number(benched(a)) - Number(benched(b)) ||
+          Number(!isBot(a.machineId)) - Number(!isBot(b.machineId)) ||
+          a.since - b.since,
+      );
   }
 
-  /** Give the open watch slots to the IOs online longest. */
+  /** Forget bots whose connection is gone without a close (a deploy drops them silently). True if anything changed. */
+  private pruneBots(candidates: Candidates, watchers: Watchers): boolean {
+    const live = new Set(
+      this.bots()
+        .map((ws) => ws.deserializeAttachment() as BotAttachment | null)
+        .filter((attachment): attachment is BotAttachment & { id: string } => !!attachment?.ha && !!attachment.id)
+        .map((attachment) => botKey(attachment.id)),
+    );
+    let changed = false;
+    for (const key of Object.keys(candidates)) {
+      if (isBot(key) && !live.has(key)) {
+        delete candidates[key];
+        changed = true;
+      }
+    }
+    for (const key of Object.keys(watchers)) {
+      if (isBot(key) && !live.has(key)) {
+        delete watchers[key];
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * Make the watchers match the ranking: the first `limit` candidates watch, bots ahead of IOs. One
+   * that cannot be told is ranked last for a while and the next is tried. A watcher that is no
+   * longer among them (a bot came online, the number came down) is sent home, but only once the ones
+   * that stay hold a full state for every connection announced as watched; until then it keeps going,
+   * so a handover has no gap, and the next snapshot that arrives calls this again.
+   */
   private async fill(): Promise<void> {
     const watchers = await this.load<Watchers>("watchers", {});
     const candidates = await this.load<Candidates>("candidates", {});
     const shopId = await this.shopId();
-    const relay = machineRelayNamespace(this.env);
-    const free = Object.keys(watchers).length < WATCHERS ? this.free(candidates, watchers, Date.now()) : [];
-    if (!shopId || !relay || !free.length) {
-      await this.schedule();
-      await this.publish(watchers);
-      return;
+    let changed = this.pruneBots(candidates, watchers);
+    const limit = await this.limit();
+    const now = Date.now();
+    const kept = new Set<string>();
+    let built = false;
+    let watch: Omit<HaWatch, "term"> | null = null;
+    if (shopId) {
+      for (const candidate of this.ranked(candidates, watchers, now)) {
+        if (kept.size >= limit) break;
+        if (watchers[candidate.machineId]) {
+          kept.add(candidate.machineId);
+          continue;
+        }
+        if (!built) {
+          watch = await this.buildWatch(shopId);
+          built = true;
+        }
+        if (!watch) {
+          // Nothing to watch: no Home Assistant has a read-only account yet.
+          await this.release(watchers);
+          return;
+        }
+        const watcher: Watcher = {
+          machineId: candidate.machineId,
+          channel: candidate.channel,
+          ...(candidate.label ? { label: candidate.label } : {}),
+          term: 0,
+          leaseUntil: 0,
+          links: {},
+        };
+        if (await this.reassign(watcher, watch, false)) {
+          watchers[candidate.machineId] = watcher;
+          kept.add(candidate.machineId);
+        } else {
+          candidates[candidate.machineId] = { ...candidate, benchedUntil: Date.now() + BENCH_MS };
+        }
+        changed = true;
+      }
+      if (await this.retire(watchers, kept)) changed = true;
     }
-    const watch = await this.buildWatch(shopId);
-    if (!watch) {
-      // Nothing to watch: no Home Assistant has a read-only account yet.
-      await this.release(watchers);
-      return;
+    if (changed) {
+      await this.ctx.storage.put("candidates", candidates);
+      await this.ctx.storage.put("watchers", watchers);
     }
-    for (const candidate of free) {
-      if (Object.keys(watchers).length >= WATCHERS) break;
-      const watcher: Watcher = { machineId: candidate.machineId, channel: candidate.channel, term: 0, leaseUntil: 0, links: {} };
-      if (await this.reassign(watcher, watch, false)) watchers[candidate.machineId] = watcher;
-      else candidates[candidate.machineId] = { ...candidate, benchedUntil: Date.now() + BENCH_MS };
-    }
-    await this.ctx.storage.put("candidates", candidates);
-    await this.ctx.storage.put("watchers", watchers);
     await this.schedule();
     await this.publish(watchers);
   }
 
+  /** Send outranked watchers home when the ones that stay already hold everything announced as watched. */
+  private async retire(watchers: Watchers, kept: ReadonlySet<string>): Promise<boolean> {
+    const excess = Object.keys(watchers).filter((key) => !kept.has(key));
+    if (!excess.length) return false;
+    const now = Date.now();
+    const announced = await this.load<string[]>("eventConnections", []);
+    const covered = announced.every((connection) =>
+      [...kept].some((key) => {
+        const link = watchers[key]?.links[connection];
+        return !!watchers[key] && watchers[key]!.leaseUntil > now && !!link?.connected && link.snapshot;
+      }),
+    );
+    if (!covered) return false;
+    for (const key of excess) {
+      await this.tell(watchers[key]!, null);
+      delete watchers[key];
+    }
+    return true;
+  }
+
   /**
-   * Send the watch to one IO under a new term. False when it could not be told.
+   * Send the watch to one watcher under a new term. False when it could not be told.
    * With `keepSnapshots` the connections it already delivered stay announced
    * while its new term catches up; they are dropped if they left the watch.
    */
   private async reassign(watcher: Watcher, watch: Omit<HaWatch, "term">, keepSnapshots: boolean): Promise<boolean> {
-    const relay = machineRelayNamespace(this.env);
-    if (!relay) return false;
     const term = (await this.load<number>("term", 0)) + 1;
     await this.ctx.storage.put("term", term);
-    let sent = false;
-    try {
-      sent = (await relay.getByName(watcher.channel).watchHa({ ...watch, term })).ok;
-    } catch {
-      sent = false;
-    }
-    if (!sent) return false;
+    if (!(await this.tell(watcher, { ...watch, term }))) return false;
     const wanted = new Set(watch.connections.map((connection) => connection.id));
     watcher.links = Object.fromEntries(
       Object.entries(watcher.links)
@@ -698,7 +932,7 @@ export class ShopHub extends BaseDurableObject<Env> {
         .map(([id, link]) => [id, { connected: link.connected, snapshot: keepSnapshots && link.snapshot }]),
     );
     watcher.term = term;
-    // The IO has one lease period to report; its first report is the full state.
+    // It has one lease period to report; its first report is the full state.
     watcher.leaseUntil = Date.now() + LEASE_MS;
     return true;
   }
@@ -739,9 +973,13 @@ export class ShopHub extends BaseDurableObject<Env> {
     await this.ctx.storage.put("targets", targets);
     const connections: HaWatch["connections"] = [];
     for (const connection of await listHaConnections(this.env.DB, shopId)) {
-      if (!connection.readToken) continue;
       const entities = [...new Set(rows.filter((row) => row.connection_id === connection.id && row.entity_id).map((row) => row.entity_id!))];
       if (!entities.length) continue;
+      if (!connection.readToken) {
+        // Saved before read-only accounts existed, so nobody ever tried; nothing else would.
+        if (connection.readAccess === null) this.makeReadAccess(shopId, connection.id);
+        continue;
+      }
       let token: string;
       try {
         token = await decryptSecret(connection.readToken, key);
@@ -753,6 +991,30 @@ export class ShopHub extends BaseDurableObject<Env> {
       connections.push({ id: connection.id, urls, token, entities });
     }
     return connections.length ? { connections } : null;
+  }
+
+  /** Connections a read-only account is being made for right now. */
+  private makingReadAccess = new Set<string>();
+  /** What makes the account; a test replaces it. */
+  private provision: typeof provisionReadAccess = provisionReadAccess;
+
+  /**
+   * Make the read-only account for a connection that never had one, once an IO is here to use it,
+   * and start the watch when it is ready. Done here and not in a request because this object is
+   * the one place per shop that can see it already running: two runs would each create a user in
+   * Home Assistant and leave the first with a token that still works. A connection that ends up
+   * `needs_admin` or `failed` is not tried again; the board's editor says why.
+   */
+  private makeReadAccess(shopId: string, connectionId: string) {
+    const key = this.env.URL_ENCRYPTION_KEY;
+    const origin = this.env.APP_ORIGIN;
+    if (!key || !origin || this.makingReadAccess.has(connectionId)) return;
+    this.makingReadAccess.add(connectionId);
+    const run = this.provision(this.env.DB, shopId, connectionId, key, { origin })
+      .then((result) => (result.access === "ready" ? this.refresh(shopId) : undefined))
+      .catch((error) => console.error("Home Assistant read access failed", error))
+      .finally(() => this.makingReadAccess.delete(connectionId));
+    this.ctx.waitUntil?.(run);
   }
 
   /**
@@ -833,6 +1095,8 @@ export class ShopHub extends BaseDurableObject<Env> {
    * moved. A failed write is retried by the next call.
    */
   private async publish(watchers: Watchers) {
+    // Who is watching is told to the boards on its own: it changes without a connection starting or stopping.
+    await this.announceWatchers(watchers);
     const shopId = await this.shopId();
     if (!shopId) return;
     const now = Date.now();
@@ -863,8 +1127,8 @@ export class ShopHub extends BaseDurableObject<Env> {
     const touchAt = await this.ctx.storage.get<number>("touchAt");
     const idle = await this.ctx.storage.get<IdleMemory>("idle");
     const candidates = await this.load<Candidates>("candidates", {});
-    // An open slot is retried when a benched or switched-off IO becomes eligible again.
-    const retry = Object.keys(watchers).length < WATCHERS
+    // An open slot is retried when a benched or switched-off candidate becomes eligible again.
+    const retry = Object.keys(watchers).length < (await this.limit())
       ? Object.values(candidates)
           .filter((candidate) => !watchers[candidate.machineId])
           .flatMap((candidate) => [candidate.benchedUntil, candidate.downUntil])

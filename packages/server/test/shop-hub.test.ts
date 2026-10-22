@@ -4,7 +4,7 @@ import { createD1DatabaseFromSqlite } from "../src/local-server.js";
 import { deviceEventSchema } from "@prism/storage-sql";
 import { encryptSecret } from "../src/crypto.js";
 import { loadDevice } from "../src/devices/device.js";
-import { newHaConnection, writeHaConnection } from "../src/devices/ha-connections.js";
+import { getHaConnection, newHaConnection, writeHaConnection } from "../src/devices/ha-connections.js";
 import { readDeviceFacts } from "../src/devices/state-view.js";
 import { LEASE_MS, ShopHub } from "../src/durable-objects/shop-hub.js";
 import type { HaWatch } from "../src/durable-objects/machine-relay.js";
@@ -12,7 +12,7 @@ import type { HaWatch } from "../src/durable-objects/machine-relay.js";
 const KEY = "hub-test-key";
 const SHOP = "shop-1";
 
-async function fixture(options: { climate?: boolean } = {}) {
+async function fixture(options: { climate?: boolean; legacy?: boolean } = {}) {
   const sqlite = new Database(":memory:");
   sqlite.run(`CREATE TABLE players(shop_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(shop_id, id))`);
   sqlite.run(
@@ -22,13 +22,17 @@ async function fixture(options: { climate?: boolean } = {}) {
   sqlite.run(`CREATE TABLE app_settings(shop_id TEXT, key TEXT, value_json TEXT, updated_at TEXT, PRIMARY KEY(shop_id, key))`);
   for (const statement of deviceEventSchema) sqlite.run(statement);
   const db = createD1DatabaseFromSqlite(sqlite);
-  const connection = {
+  const made = {
     ...(await newHaConnection("https://ha.example", "control", KEY)),
     internalUrl: "http://ha.local:8123",
+  };
+  const connection = {
+    ...made,
     readToken: await encryptSecret("reader", KEY),
     readAccess: "ready" as const,
   };
-  await writeHaConnection(db, SHOP, connection).run();
+  // A connection from before read-only accounts existed has neither.
+  await writeHaConnection(db, SHOP, options.legacy ? made : connection).run();
   const bind = (device: string, capability: string, entity: string) => {
     sqlite.run(
       `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
@@ -49,6 +53,7 @@ async function fixture(options: { climate?: boolean } = {}) {
   const env = {
     DB: db,
     URL_ENCRYPTION_KEY: KEY,
+    APP_ORIGIN: "https://prism.test",
     MACHINE_RELAY: {
       getByName: (channel: string) => ({
         async watchHa(watch: HaWatch | null) {
@@ -218,6 +223,62 @@ describe("ShopHub watchers", () => {
     expect(await facts("m1")).toEqual({ watching: false, power: null, climate: null });
   });
 
+  /** The read-only account maker, with the moment it finishes and what it leaves behind in the test's hands. */
+  const readAccessMaker = (hub: ShopHub, db: ReturnType<typeof createD1DatabaseFromSqlite>, outcome: "ready" | "needs_admin") => {
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    (hub as any).provision = async (_db: unknown, shop: string, id: string) => {
+      started.push(id);
+      await gate;
+      const stored = (await getHaConnection(db, shop, id))!;
+      await writeHaConnection(db, shop, outcome === "ready"
+        ? { ...stored, readToken: await encryptSecret("reader", KEY), readAccess: "ready" }
+        : { ...stored, readAccess: "needs_admin" }).run();
+      return { access: outcome, error: null };
+    };
+    return { started, release };
+  };
+  const settled = async (done: () => boolean) => {
+    for (let waited = 0; waited < 500 && !done(); waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  };
+
+  it("makes the read-only account for a connection that never had one, once, then starts the watch", async () => {
+    const { hub, sqlite, assigned, watches, connectionId } = await fixture({ legacy: true });
+    const maker = readAccessMaker(hub, createD1DatabaseFromSqlite(sqlite), "ready");
+    await hub.relayOnline(SHOP, "a", "chan-a");
+    await hub.relayOnline(SHOP, "b", "chan-b");
+    // Both IOs are here and the account is still being made: it is not made twice, and nothing watches yet.
+    expect(maker.started).toEqual([connectionId]);
+    expect(assigned()).toEqual([]);
+    maker.release();
+    await settled(() => assigned().length === 2);
+    expect(maker.started).toEqual([connectionId]);
+    expect(assigned().map(([channel]) => channel).sort()).toEqual(["chan-a", "chan-b"]);
+    const watch = watches.find((entry) => entry.watch)!.watch!;
+    expect(watch.connections.map((connection) => [connection.id, connection.token])).toEqual([[connectionId, "reader"]]);
+  });
+
+  it("does not try again for a connection whose account could not be made", async () => {
+    const { hub, sqlite, assigned, connectionId } = await fixture({ legacy: true });
+    const maker = readAccessMaker(hub, createD1DatabaseFromSqlite(sqlite), "needs_admin");
+    maker.release();
+    await hub.relayOnline(SHOP, "a", "chan-a");
+    await settled(() => maker.started.length > 0 && (hub as any).makingReadAccess.size === 0);
+    await hub.relayOnline(SHOP, "b", "chan-b");
+    await hub.alarm();
+    expect(maker.started).toEqual([connectionId]);
+    expect(assigned()).toEqual([]);
+  });
+
+  it("makes no account for a connection no device uses", async () => {
+    const { hub, sqlite } = await fixture({ legacy: true });
+    const maker = readAccessMaker(hub, createD1DatabaseFromSqlite(sqlite), "ready");
+    sqlite.run("DELETE FROM device_capabilities");
+    await hub.relayOnline(SHOP, "a", "chan-a");
+    expect(maker.started).toEqual([]);
+  });
+
   it("settles what is due before scheduling, so the next alarm is never set in the past", async () => {
     const { hub, state, alarmHistory, clearAlarm, connectionId } = await fixture();
     await hub.relayOnline(SHOP, "a", "chan-a");
@@ -373,10 +434,14 @@ describe("ShopHub watchers", () => {
 
 describe("ShopHub device pages", () => {
   class PageSocket {
-    readonly sent: any[] = [];
+    /** Everything sent to it, in order. */
+    readonly all: any[] = [];
+    /** What it was sent about devices. The board's watcher list is asserted on its own, in `watchers`. */
+    get sent() { return this.all.filter((frame) => frame.type !== "watchers"); }
+    get watchers() { return this.all.filter((frame) => frame.type === "watchers"); }
     attachment: unknown = null;
     tags: string[] = [];
-    send(data: string) { this.sent.push(JSON.parse(data)); }
+    send(data: string) { this.all.push(JSON.parse(data)); }
     close() {}
     serializeAttachment(value: unknown) { this.attachment = value; }
     deserializeAttachment() { return this.attachment; }
@@ -547,6 +612,207 @@ describe("ShopHub device pages", () => {
     // A board only listens: whatever it sends is not a bot request.
     await hub.webSocketMessage(board as any, JSON.stringify({ type: "request", id: "1", method: "GET", path: "integration/sessions/active" }));
     expect(board!.sent.at(-1)?.type).not.toBe("response");
+  });
+
+  describe("bots as watchers", () => {
+    /** A bot connects and says hello; `ha` is whether it can watch Home Assistant. */
+    const connectBot = async (hub: ShopHub, sockets: unknown[], options: { name?: string; ha?: boolean } = {}) => {
+      (globalThis as any).WebSocketPair = class { 0 = new PageSocket(); 1 = new PageSocket(); };
+      try {
+        const response = await hub.fetch(new Request("https://prism.test/api/v1/shops/code/integration/ws", {
+          headers: { Upgrade: "websocket", "x-prism-hub-shop": SHOP, "x-prism-hub-shop-code": "code", authorization: "Bearer bot-token" },
+        }));
+        expect(response.status).toBe(101);
+      } finally {
+        delete (globalThis as any).WebSocketPair;
+      }
+      const socket = sockets.at(-1) as PageSocket;
+      await hub.webSocketMessage(
+        socket as any,
+        JSON.stringify({ type: "hello", ...(options.ha === false ? {} : { ha: true }), name: options.name ?? "Koishi" }),
+      );
+      return socket;
+    };
+    const told = (socket: PageSocket) => socket.all.filter((frame) => frame.type === "ha.watch" || frame.type === "ha.unwatch");
+    /** The bot reports the full state of `switch.a`, answering the watch it was last sent. */
+    const botSnapshot = async (hub: ShopHub, socket: PageSocket, connection: string) => {
+      const watch = told(socket).filter((frame) => frame.type === "ha.watch").at(-1);
+      await hub.webSocketMessage(socket as any, JSON.stringify({ type: "ha", ...states(watch.watch.term, connection, [["switch.a", "on", NOON, NOON]]) }));
+    };
+    /** Who is watching: IOs by machine id, every bot as "bot", in a stable order. */
+    const ids = async (hub: ShopHub) =>
+      (await hub.watching()).map((entry) => (entry.machineId.startsWith("bot:") ? "bot" : entry.machineId)).sort();
+    const stopped = (watches: Array<{ channel: string; watch: HaWatch | null }>, channel: string) =>
+      watches.filter((entry) => entry.channel === channel).at(-1)?.watch === null;
+
+    it("gives a bot a slot ahead of the IOs and sends the IO that is outranked home without a gap", async () => {
+      const { hub, sockets, watches, watched, connectionId } = await fixture();
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      await hub.relayOnline(SHOP, "b", "chan-b");
+      await hub.haReport(SHOP, "a", states(1, connectionId, [["switch.a", "on", NOON, NOON]]));
+      await hub.haReport(SHOP, "b", states(2, connectionId, [["switch.a", "on", NOON, NOON]]));
+      expect(await ids(hub)).toEqual(["a", "b"]);
+
+      const bot = await connectBot(hub, sockets);
+      const [watch] = told(bot);
+      expect(watch.type).toBe("ha.watch");
+      expect(watch.watch.connections[0].token).toBe("reader");
+      // The oldest IO still holds the connection, so the newest can go at once.
+      expect(stopped(watches, "chan-b")).toBe(true);
+      expect(stopped(watches, "chan-a")).toBe(false);
+      expect(await ids(hub)).toEqual(["a", "bot"]);
+      expect(watched()).toEqual([connectionId]);
+    });
+
+    it("keeps the last IO going until the bot has delivered the state, then sends it home", async () => {
+      const { hub, sockets, state, watches, watched, connectionId } = await fixture();
+      state.set("limit", 1);
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      await hub.haReport(SHOP, "a", states(1, connectionId, [["switch.a", "on", NOON, NOON]]));
+
+      const bot = await connectBot(hub, sockets);
+      // The bot outranks the IO but has delivered nothing: the IO carries the connection meanwhile.
+      expect(await ids(hub)).toEqual(["a", "bot"]);
+      expect(stopped(watches, "chan-a")).toBe(false);
+      expect(watched()).toEqual([connectionId]);
+
+      await botSnapshot(hub, bot, connectionId);
+      expect(await ids(hub)).toEqual(["bot"]);
+      expect(stopped(watches, "chan-a")).toBe(true);
+      expect(watched()).toEqual([connectionId]);
+    });
+
+    it("gives every slot to two bots", async () => {
+      const { hub, sockets, watches, connectionId } = await fixture();
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      await hub.relayOnline(SHOP, "b", "chan-b");
+      await hub.haReport(SHOP, "a", states(1, connectionId, [["switch.a", "on", NOON, NOON]]));
+      await hub.haReport(SHOP, "b", states(2, connectionId, [["switch.a", "on", NOON, NOON]]));
+      const first = await connectBot(hub, sockets, { name: "一号" });
+      await botSnapshot(hub, first, connectionId);
+      const second = await connectBot(hub, sockets, { name: "二号" });
+      await botSnapshot(hub, second, connectionId);
+      expect(await ids(hub)).toEqual(["bot", "bot"]);
+      expect(stopped(watches, "chan-a")).toBe(true);
+      expect(stopped(watches, "chan-b")).toBe(true);
+    });
+
+    it("lets an IO take the slot back when the bot leaves", async () => {
+      const { hub, sockets, watches, assigned, connectionId } = await fixture();
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      const bot = await connectBot(hub, sockets);
+      await botSnapshot(hub, bot, connectionId);
+      await hub.relayOnline(SHOP, "b", "chan-b");
+      // A bot and the oldest IO watch; the second IO waits.
+      expect(await ids(hub)).toEqual(["a", "bot"]);
+      expect(assigned().some(([channel]) => channel === "chan-b")).toBe(false);
+
+      await hub.webSocketClose(bot as any, 1006, "");
+      expect(await ids(hub)).toEqual(["a", "b"]);
+      expect(assigned().at(-1)![0]).toBe("chan-b");
+      expect(watches.length).toBeGreaterThan(0);
+    });
+
+    it("never asks a bot that did not say it can watch", async () => {
+      const { hub, sockets, connectionId } = await fixture();
+      const bot = await connectBot(hub, sockets, { ha: false });
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      expect(told(bot)).toEqual([]);
+      expect(await ids(hub)).toEqual(["a"]);
+      // And what it sends as a report is not believed.
+      await hub.webSocketMessage(bot as any, JSON.stringify({ type: "ha", ...states(1, connectionId, [["switch.a", "off", NOON, NOON]]) }));
+      expect(await ids(hub)).toEqual(["a"]);
+    });
+
+    it("stores what a bot reports the way it stores an IO's, so a shop with only a bot is live", async () => {
+      const { hub, sockets, watched, power, facts, connectionId } = await fixture();
+      const bot = await connectBot(hub, sockets);
+      expect(watched()).toEqual([]);
+      await botSnapshot(hub, bot, connectionId);
+      expect(watched()).toEqual([connectionId]);
+      expect(power()[0]!.value_json).toBe('"on"');
+      expect(await facts("m1")).toMatchObject({ watching: true, power: "on" });
+      await hub.webSocketMessage(bot as any, JSON.stringify({ type: "ha", ...states(told(bot).at(-1).watch.term, connectionId, [["switch.a", "off", "2026-10-21T09:30:00.000Z", "2026-10-21T09:30:00.000Z"]], false) }));
+      expect(await facts("m1")).toMatchObject({ watching: true, power: "off" });
+    });
+
+    it("hands over to an IO that can try when the bot cannot reach Home Assistant", async () => {
+      const { hub, sockets, state, watches, connectionId } = await fixture();
+      state.set("limit", 1);
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      const bot = await connectBot(hub, sockets);
+      expect(await ids(hub)).toEqual(["bot"]);
+      const term = told(bot).at(-1).watch.term;
+      await hub.webSocketMessage(bot as any, JSON.stringify({ type: "ha", ...status(term, connectionId, false) }));
+      // The bot ranks behind a healthy IO for a while, so the IO takes the only slot.
+      expect(await ids(hub)).toEqual(["a"]);
+      expect(told(bot).at(-1).type).toBe("ha.unwatch");
+      expect(watches.some((entry) => entry.channel === "chan-a" && entry.watch)).toBe(true);
+    });
+
+    it("forgets a bot that vanished without closing, at once and not after its lease", async () => {
+      const { hub, sockets, connectionId } = await fixture();
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      const bot = await connectBot(hub, sockets);
+      await botSnapshot(hub, bot, connectionId);
+      expect(await ids(hub)).toEqual(["a", "bot"]);
+      // A deploy drops the connection and no close arrives.
+      sockets.splice(sockets.indexOf(bot), 1);
+      await hub.alarm();
+      expect(await ids(hub)).toEqual(["a"]);
+    });
+
+    it("follows the shop's number of watchers when the administrator changes it", async () => {
+      const { hub, sqlite, watches, connectionId } = await fixture();
+      for (const [machine, channel] of [["a", "chan-a"], ["b", "chan-b"], ["c", "chan-c"]] as const) await hub.relayOnline(SHOP, machine, channel);
+      await hub.haReport(SHOP, "a", states(1, connectionId, [["switch.a", "on", NOON, NOON]]));
+      await hub.haReport(SHOP, "b", states(2, connectionId, [["switch.a", "on", NOON, NOON]]));
+      expect(await ids(hub)).toEqual(["a", "b"]);
+
+      const setLimit = (count: number) => sqlite.run(
+        `INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,?,?,'2026-01-01')
+         ON CONFLICT(shop_id,key) DO UPDATE SET value_json=excluded.value_json`,
+        [SHOP, "devices.ha_watcher_limit", JSON.stringify({ count })],
+      );
+      setLimit(1);
+      await hub.refresh(SHOP);
+      expect(await ids(hub)).toEqual(["a"]);
+      expect(stopped(watches, "chan-b")).toBe(true);
+
+      setLimit(3);
+      await hub.refresh(SHOP);
+      expect(await ids(hub)).toEqual(["a", "b", "c"]);
+      // A value out of range is not believed.
+      setLimit(9);
+      await hub.refresh(SHOP);
+      expect(await ids(hub)).toEqual(["a", "b"]);
+    });
+
+    it("tells a board who is watching, as it changes", async () => {
+      const { hub, sockets, connectionId } = await fixture();
+      await openBoard(hub);
+      const board = sockets[0] as PageSocket;
+      expect(board.watchers).toEqual([{ type: "watchers", limit: 2, max: 4, watchers: [], standby: 0 }]);
+
+      await hub.relayOnline(SHOP, "a", "chan-a");
+      expect(board.watchers.at(-1)).toEqual({ type: "watchers", limit: 2, max: 4, standby: 0, watchers: [{ id: "a", kind: "device", deviceId: "a", state: "starting" }] });
+      await hub.haReport(SHOP, "a", states(1, connectionId, [["switch.a", "on", NOON, NOON]]));
+      expect(board.watchers.at(-1)!.watchers[0].state).toBe("watching");
+
+      const bot = await connectBot(hub, sockets, { name: "前台 Bot" });
+      const latest = board.watchers.at(-1)!;
+      // A bot is listed first, by the name it gave.
+      expect(latest.watchers.map((watcher: any) => [watcher.kind, watcher.name ?? watcher.deviceId, watcher.state])).toEqual([
+        ["bot", "前台 Bot", "starting"],
+        ["device", "a", "watching"],
+      ]);
+      await botSnapshot(hub, bot, connectionId);
+      expect(board.watchers.at(-1)!.watchers[0].state).toBe("watching");
+      // Nothing changed: the board is not told again.
+      const count = board.watchers.length;
+      await hub.haReport(SHOP, "a", status(1, connectionId, true));
+      expect(board.watchers.length).toBe(count);
+    });
   });
 
   it("needs the shop that the route names", async () => {

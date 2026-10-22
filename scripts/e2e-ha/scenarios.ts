@@ -17,10 +17,11 @@ import { decryptSecret } from "../../packages/server/src/crypto.ts";
 const root = resolve(import.meta.dir, "../..");
 process.chdir(root);
 const cfg = JSON.parse(readFileSync(".e2e/platform.json", "utf8"));
-const { origin, shop, owner, ha, devices } = cfg as {
+const { origin, shop, owner, admin, ha, devices } = cfg as {
   origin: string;
   shop: { id: string };
   owner: { token: string };
+  admin: { token: string };
   ha: { url: string; adminToken: string };
   devices: Record<"a" | "b" | "lounge", { id: string; relayToken?: string }>;
 };
@@ -94,8 +95,12 @@ async function resetHa(): Promise<void> {
 // ---------------------------------------------------------------- platform
 
 const headers = { authorization: `Bearer ${owner.token}`, "content-type": "application/json" };
-async function api(path: string, init: RequestInit = {}): Promise<{ status: number; body: any }> {
-  const response = await fetch(`${origin}${path}`, { ...init, headers: { ...headers, ...(init.headers as object) } });
+async function api(path: string, init: RequestInit & { as?: string } = {}): Promise<{ status: number; body: any }> {
+  const { as, ...rest } = init;
+  const response = await fetch(`${origin}${path}`, {
+    ...rest,
+    headers: { ...headers, ...(as ? { authorization: `Bearer ${as}` } : {}), ...(rest.headers as object) },
+  });
   const text = await response.text();
   let body: any = null;
   try {
@@ -140,6 +145,8 @@ async function until<T>(what: string, produce: () => T | Promise<T>, ms = 15_000
 
 // ---------------------------------------------------------------- the board's WebSocket
 
+type Watcher = { id: string; kind: "bot" | "device"; name?: string; deviceId?: string; state: string };
+type WatchersFrame = { type: "watchers"; limit: number; max: number; standby: number; watchers: Watcher[] };
 type Frame = { type: string; deviceId?: string; power?: string | null; climate?: any; states?: Record<string, Facts> };
 class Board {
   frames: { at: number; frame: Frame }[] = [];
@@ -154,6 +161,19 @@ class Board {
     this.opened = new Promise((done) => (this.ws.onopen = () => done()));
     this.ws.onmessage = (event) => this.frames.push({ at: Date.now(), frame: JSON.parse(String(event.data)) });
     this.ws.onclose = () => (this.closed = true);
+  }
+  /** Who the hub last said is watching Home Assistant, as `bot:<name>` and `io:<A|B>`, in a stable order. */
+  watchers(): string[] {
+    const frame = this.frames.map((entry) => entry.frame as unknown as WatchersFrame).filter((item) => item.type === "watchers").at(-1);
+    return (frame?.watchers ?? []).map((watcher) => (watcher.kind === "bot" ? `bot:${watcher.name}` : `io:${watcher.deviceId === A ? "A" : "B"}`)).sort();
+  }
+  lastWatchers(): WatchersFrame | undefined {
+    return this.frames.map((entry) => entry.frame as unknown as WatchersFrame).filter((item) => item.type === "watchers").at(-1);
+  }
+  /** Wait until exactly these are watching, every one of them with its state delivered. */
+  async watchedBy(expected: string[], ms = 25_000): Promise<boolean> {
+    const want = [...expected].sort().join(",");
+    return !!(await until(`the watchers to be ${want || "nobody"}`, () => this.watchers().join(",") === want && (this.lastWatchers()?.watchers.every((watcher) => watcher.state === "watching") ?? false), ms));
   }
   mark(): number {
     return this.frames.length;
@@ -221,10 +241,39 @@ class Io {
 }
 const ioA = new Io("a");
 const ioB = new Io("b");
+
+/** A shop bot: the real plugin in its own process (`bot-sim.ts`), called by name on the board. */
+class Bot {
+  private child: ChildProcess | null = null;
+  constructor(readonly name: string, private readonly slot: number) {}
+  start(): void {
+    if (this.alive) throw new Error(`bot ${this.name} is already running`);
+    const fd = openSync(`.e2e/bot-${this.slot}.log`, "w");
+    this.child = spawn(process.execPath, ["run", "scripts/e2e-ha/bot-sim.ts"], {
+      cwd: root,
+      env: { ...process.env, BOT_NAME: this.name },
+      stdio: ["ignore", fd, fd],
+    });
+    closeSync(fd);
+  }
+  get alive(): boolean {
+    return !!this.child && this.child.exitCode === null && this.child.signalCode === null;
+  }
+  async kill(): Promise<void> {
+    if (!this.alive) return;
+    this.child!.kill("SIGKILL");
+    await until("bot exit", () => !this.alive, 3000);
+  }
+}
+const botFront = new Bot("前台", 1);
+const botBack = new Bot("后台", 2);
 const stopAllIo = async () => {
   spawnSync("pkill", ["-x", "io_sim"]);
+  spawnSync("pkill", ["-f", "e2e-ha/bot-sim.ts"]);
   await ioA.kill();
   await ioB.kill();
+  await botFront.kill();
+  await botBack.kill();
 };
 
 // ---------------------------------------------------------------- scenarios
@@ -261,12 +310,13 @@ scenarios.baseline = async () => {
   const board = new Board();
   await board.opened;
   await Bun.sleep(1200);
-  const framesOnOpen = board.frames.map((entry) => entry.frame);
+  // Besides the devices, the hub also says who is watching; that is asserted on its own (scenario 18).
+  const framesOnOpen = board.frames.map((entry) => entry.frame).filter((frame) => frame.type !== "watchers");
   info(`看板 WS 刚连上收到：${JSON.stringify(framesOnOpen).slice(0, 200)}`);
   const carriesValue = (facts: Facts) => facts.power !== null || facts.climate !== null;
   check(
     "没有实时设备时 WS 只告知「非实时」，不带任何设备状态",
-    framesOnOpen.every((frame) => frame.type === "states" && Object.values(frame.states ?? {}).every((facts) => !facts.watching && !carriesValue(facts))),
+    framesOnOpen.length > 0 && framesOnOpen.every((frame) => frame.type === "states" && Object.values(frame.states ?? {}).every((facts) => !facts.watching && !carriesValue(facts))),
     framesOnOpen,
   );
   const t2 = new Date().toISOString();
@@ -543,6 +593,72 @@ scenarios.hadown = async () => {
   board.close();
 };
 
+scenarios.backfill = async () => {
+  section("16 功能上线前存下的连接（没有只读账号）：IO 上线时自动补建，换掉而不是叠加");
+  const KEY = "e2e-url-encryption-key";
+  type Row = { key: string; readAccess?: string; readToken?: string | null; url: string };
+  const rows = () => (d1().query("SELECT key, value_json FROM app_settings WHERE shop_id=? AND key LIKE 'devices.ha_connection:%'").all(shop.id) as { key: string; value_json: string }[])
+    .map((row) => ({ key: row.key, ...JSON.parse(row.value_json) }) as Row);
+  const watched = rows().find((row) => row.readToken)!;
+  const unreachable = rows().find((row) => row.readAccess === "needs_admin")!;
+  const before = await decryptSecret(watched.readToken!, KEY);
+  const state = (token: string) => fetch(`${ha.url}/api/states/switch.decorative_lights`, { headers: { authorization: `Bearer ${token}` } }).then((response) => response.status);
+  check("补建前：原来的只读令牌有效", (await state(before)) === 200);
+
+  // What a connection saved before read-only accounts existed looks like: no token, never tried.
+  const stripped = spawnSync("scripts/e2e-ha/d1.sh", [
+    `UPDATE app_settings SET value_json=json_remove(json_remove(value_json,'$.readAccess'),'$.readToken') WHERE shop_id='${shop.id}' AND key='${watched.key}'`,
+  ], { encoding: "utf8" });
+  check("把这条连接改成「从没尝试过」的样子", stripped.status === 0 && rows().find((row) => row.key === watched.key)!.readAccess === undefined, stripped.stdout + stripped.stderr);
+
+  const board = new Board();
+  await board.opened;
+  const started = Date.now();
+  const live = await goLive(board, ioA, 60_000);
+  check("机台A 的 IO 上线 → 平台自动建了只读账号，随后变成实时（不用任何人点按钮）", !!live);
+  if (live) info(`IO 上线 → 实时 ${((live.at - started) / 1000).toFixed(1)}s（含在真实 HA 里建账号）`);
+  const after = rows().find((row) => row.key === watched.key)!;
+  check("这条连接现在是 ready，且有新的只读令牌", after.readAccess === "ready" && !!after.readToken, after);
+  const next = after.readToken ? await decryptSecret(after.readToken, KEY) : "";
+  check("新令牌与原来的不同，并且能读", !!next && next !== before && (await state(next)) === 200);
+  check("原来的只读账号被换掉了（旧令牌失效），HA 里没有留下第二个能用的账号", (await state(before)) === 401, await state(before));
+  const other = rows().find((row) => row.key === unreachable.key)!;
+  check("非管理员令牌的那条连接没有被反复尝试：仍是 needs_admin", other.readAccess === "needs_admin" && !other.readToken, other);
+  board.close();
+};
+
+scenarios.urls = async () => {
+  section("17 内部地址不可达（HA 在别处托管，或监听器不在店里）：连接超时后转到下一个地址");
+  const row = (d1().query("SELECT key, value_json FROM app_settings WHERE shop_id=? AND key LIKE 'devices.ha_connection:%'").all(shop.id) as { key: string; value_json: string }[])
+    .find((entry) => JSON.parse(entry.value_json).readToken)!;
+  const set = (expression: string) => spawnSync("scripts/e2e-ha/d1.sh", [`UPDATE app_settings SET value_json=${expression} WHERE shop_id='${shop.id}' AND key='${row.key}'`], { encoding: "utf8" });
+  // 192.0.2.0/24 is reserved for documentation: nothing answers, nothing refuses, the connection just hangs.
+  set("json_set(value_json,'$.internalUrl','http://192.0.2.1:8123')");
+  const board = new Board();
+  try {
+    await board.opened;
+    const started = Date.now();
+    const live = await goLive(board, ioA, 40_000);
+    const seconds = live ? (live.at - started) / 1000 : null;
+    check("第一个地址不可达：约一个连接超时（10s）后用第二个地址变成实时，而不是等操作系统放弃（macOS 约 75s）", !!live && seconds! < 25, seconds);
+    if (seconds !== null) info(`IO 上线 → 实时 ${seconds.toFixed(1)}s`);
+
+    // The address that worked is tried first, so a restart costs a round or two, not a wait on the dead one each time.
+    const mark = board.mark();
+    const restarted = Date.now();
+    spawnSync("docker", ["restart", "-t", "2", "prism-e2e-ha"]);
+    const down = await board.wait(watchingFrame(A, false), mark, 60_000);
+    check("HA 重启：看板变成非实时", !!down);
+    const back = down ? await board.wait(watchingFrame(A, true), board.frames.indexOf(down) + 1, 120_000) : null;
+    const recovered = back ? (back.at - restarted) / 1000 : null;
+    check("HA 回来后重新实时，不被不可达的内部地址拖住（旧行为每一轮都要等 75s）", !!back && recovered! < 45, recovered);
+    if (recovered !== null) info(`HA 重启 → 重新实时 ${recovered.toFixed(1)}s`);
+  } finally {
+    set("json_remove(value_json,'$.internalUrl')");
+    board.close();
+  }
+};
+
 scenarios.readonly = async () => {
   section("14 平台自动建的只读账号：能读不能控（真实 Home Assistant）");
   const rows = d1().query("SELECT value_json FROM app_settings WHERE shop_id=? AND key LIKE 'devices.ha_connection:%'").all(shop.id) as { value_json: string }[];
@@ -601,6 +717,96 @@ scenarios.idle = async () => {
     check("D1 的实时连接被撤销", liveConnections().length === 0, liveConnections());
   } finally {
     await api(`/api/v1/merchant/idle-power?shopId=${shop.id}`, { method: "PUT", body: JSON.stringify({ shopEmpty: { enabled: false, minutes: 15 } }) });
+    board.close();
+  }
+};
+
+scenarios.bots = async () => {
+  section("18 Bot 当监听器：Bot 优先于机台，让位没有空窗，数量由平台管理员按店铺设置");
+  const board = new Board();
+  await board.opened;
+  const setLimit = (count: number, as: string) =>
+    api(`/api/v1/merchant/ha-watchers?shopId=${shop.id}`, { method: "PUT", body: JSON.stringify({ count }), as });
+  /** The board never heard the connection stop being live since `from`. */
+  const noGap = (from: number) => !board.frames.slice(from).some((entry) => entry.frame.type === "states" && entry.frame.states?.[A]?.watching === false);
+  const pushesOf = (from: number) =>
+    board.frames.slice(from).filter((entry) => entry.frame.type === "state" && entry.frame.deviceId === A && entry.frame.power !== undefined);
+  /** Flip the switch A is on and say how many times the board was told. */
+  const flip = async (to: "on" | "off") => {
+    const from = board.mark();
+    await haCall("switch", to === "on" ? "turn_on" : "turn_off", { entity_id: "switch.decorative_lights" });
+    await board.wait((frame) => frame.type === "state" && frame.deviceId === A && frame.power === to, from, 6000);
+    await Bun.sleep(1200);
+    return pushesOf(from).length;
+  };
+  try {
+    // The hub sends who is watching right after the board connects, a moment after the socket opens.
+    const first = await until("the first watcher list", () => board.lastWatchers(), 5000);
+    check("没有任何监听器时，看板收到「名额 2、最多 4、没有人在监听」", first?.limit === 2 && first.max === 4 && first.watchers.length === 0, first);
+
+    ioA.start();
+    await until("A to take the watch", () => /Watching 1 Home Assistant/.test(ioA.log), 15_000);
+    ioB.start();
+    check("只有两台机台在线：两个名额都是机台", await board.watchedBy(["io:A", "io:B"]), board.watchers());
+
+    let m = board.mark();
+    botFront.start();
+    check("前台 Bot 上线：Bot 顶掉一台机台，另一个名额仍是先上线的机台 A", await board.watchedBy(["bot:前台", "io:A"]), board.watchers());
+    check("让位没有空窗：整个过程看板没有听到一次「不再实时」", noGap(m));
+    check("Bot 和机台同时在监听，同一个变化只推一次", (await flip("off")) === 1);
+    await flip("on");
+
+    m = board.mark();
+    botBack.start();
+    check("后台 Bot 也上线：两个名额都给 Bot，机台让出", await board.watchedBy(["bot:前台", "bot:后台"]), board.watchers());
+    check("让位没有空窗", noGap(m));
+    check("两个 Bot 同时监听，同一个变化也只推一次", (await flip("off")) === 1);
+    await flip("on");
+
+    m = board.mark();
+    await botFront.kill();
+    check("一个 Bot 掉线：机台立刻补上空位，另一个 Bot 继续", await board.watchedBy(["bot:后台", "io:A"], 15_000), board.watchers());
+    check("掉线与补位期间没有空窗", noGap(m));
+    m = board.mark();
+    await botBack.kill();
+    check("两个 Bot 都掉线：回到两台机台", await board.watchedBy(["io:A", "io:B"], 15_000), board.watchers());
+    check("没有空窗（机台 A 一直在监听）", noGap(m));
+
+    const asOwner = await setLimit(1, owner.token);
+    check("店主不能改监听器数量（403）", asOwner.status === 403, asOwner);
+    await Bun.sleep(500);
+    check("数量没变", board.lastWatchers()?.limit === 2, board.lastWatchers());
+    const asAdmin = await setLimit(1, admin.token);
+    check("平台管理员可以改（200）", asAdmin.status === 200, asAdmin);
+    check("数量改成 1：只剩一台机台在监听，看板收到新的数量", (await board.watchedBy(["io:A"])) && board.lastWatchers()?.limit === 1, board.lastWatchers());
+
+    botFront.start();
+    await until("the first bot to hello", () => board.watchers().some((entry) => entry.startsWith("bot:")), 15_000);
+    await Bun.sleep(1500);
+    botBack.start();
+    // The second bot only counts once the hub has heard from it, which is after the first one already held the slot.
+    check("多出来的在线客户端算候补（机台 A、机台 B、后台 Bot 共 3 个）", !!(await until("three standing by", () => board.lastWatchers()?.standby === 3, 10_000)), board.lastWatchers());
+    check("数量为 1 时，一个 Bot 就占满，后上线的 Bot 和机台都不监听", await board.watchedBy(["bot:前台"]), board.watchers());
+
+    check("数量改成 4：两个 Bot 和两台机台都在监听", (await setLimit(4, admin.token)).status === 200 && (await board.watchedBy(["bot:前台", "bot:后台", "io:A", "io:B"])), board.watchers());
+    check("超过最多 4 个、或小于 1，被拒绝（422）", (await setLimit(5, admin.token)).status === 422 && (await setLimit(0, admin.token)).status === 422);
+    check("改回 2：两个 Bot 占满，机台让出", (await setLimit(2, admin.token)).status === 200 && (await board.watchedBy(["bot:前台", "bot:后台"])), board.watchers());
+
+    await stopAllIo();
+    check("全部掉线后看板变成没有监听器", await board.watchedBy([], 15_000), board.watchers());
+    check("连接回到非实时", !!(await until("not live", () => liveConnections().length === 0, 10_000)), liveConnections());
+
+    m = board.mark();
+    botFront.start();
+    check("店里只有一个 Bot、没有机台：Bot 单独监听，连接变成实时", (await board.watchedBy(["bot:前台"])) && liveConnections().length === 1, [board.watchers(), liveConnections()]);
+    check("它报的变化推到看板", (await flip("off")) === 1);
+    await flip("on");
+    m = board.mark();
+    await botFront.kill();
+    check("Bot 掉线：看板立刻收到「不再实时」", !!(await board.wait(watchingFrame(A, false), m, 10_000)));
+    check("D1 的实时连接被撤销", liveConnections().length === 0, liveConnections());
+  } finally {
+    await setLimit(2, admin.token);
     board.close();
   }
 };

@@ -1673,5 +1673,18 @@
   "刷新设备状态": "Refresh device status",
   "实时": "Live",
   "非实时": "Not live",
-  "所有设备都在实时监听": "Every device is monitored live"
+  "所有设备都在实时监听": "Every device is monitored live",
+  "HA 监听器": "Home Assistant watchers",
+  "{count} / {limit} 个监听器": "{count} of {limit} watchers",
+  "监听器数量": "Number of watchers",
+  "由平台管理员设置": "Set by the platform administrator",
+  "监听中": "Watching",
+  "正在订阅…": "Subscribing…",
+  "正在启动…": "Starting…",
+  "连不上 Home Assistant": "Cannot reach Home Assistant",
+  "未知设备": "Unknown device",
+  "Bot": "Bot",
+  "没有监听器在线：设备状态为非实时，进入页面和点「刷新设备状态」时才读取。": "No watcher is online, so device status is not live: it is read when you open this page and when you press Refresh device status.",
+  "Bot 优先，不够的名额由店里的机台补上。": "Bots come first; the shop's machines fill any slots left.",
+  "另有 {count} 个在线，等待空位": "{count} more online, waiting for a slot"
 }

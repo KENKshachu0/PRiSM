@@ -40,14 +40,29 @@ export function hasUnwatched(states: BoardStates | null): boolean {
   return !!states && Object.values(states).some((state) => !state.watching);
 }
 
+/** Who is watching Home Assistant for the shop: one entry per bot or HINATA IO the platform has handed the watch. */
+export type WatcherPhase = "watching" | "subscribing" | "starting" | "unreachable";
+export type BoardWatcher =
+  | { id: string; kind: "bot"; name: string; state: WatcherPhase }
+  | { id: string; kind: "device"; deviceId: string; state: WatcherPhase };
+/**
+ * `limit` is the shop's number of slots, which the platform administrator sets up to `max`; `standby` is how many
+ * more are online and waiting for one.
+ */
+export type BoardWatchers = { limit: number; max: number; watchers: BoardWatcher[]; standby: number };
+
 /** A frame the shop hub pushes to the board. */
 export type BoardFrame =
   /** The whole shop: when the board connects, and again whenever which devices are live changes. */
   | { type: "states"; states: BoardStates }
   /** A live device's state changed; a key that is absent was not part of the change. */
-  | { type: "state"; deviceId: string; power?: "on" | "off" | null; climate?: ClimateState | null };
+  | { type: "state"; deviceId: string; power?: "on" | "off" | null; climate?: ClimateState | null }
+  /** Who is watching, when the board connects and whenever that changes. */
+  | ({ type: "watchers" } & BoardWatchers);
 
 const powerOf = (value: unknown): "on" | "off" | null => (value === "on" || value === "off" ? value : null);
+const phaseOf = (value: unknown): WatcherPhase =>
+  value === "watching" || value === "subscribing" || value === "unreachable" ? value : "starting";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -60,6 +75,22 @@ export function parseBoardFrame(raw: string): BoardFrame | null {
     return null;
   }
   if (!isRecord(frame)) return null;
+  if (frame.type === "watchers" && Array.isArray(frame.watchers) && typeof frame.limit === "number") {
+    const watchers: BoardWatcher[] = [];
+    for (const item of frame.watchers) {
+      if (!isRecord(item) || typeof item.id !== "string") continue;
+      if (item.kind === "bot") watchers.push({ id: item.id, kind: "bot", name: typeof item.name === "string" ? item.name : "Bot", state: phaseOf(item.state) });
+      else if (item.kind === "device" && typeof item.deviceId === "string")
+        watchers.push({ id: item.id, kind: "device", deviceId: item.deviceId, state: phaseOf(item.state) });
+    }
+    return {
+      type: "watchers",
+      limit: frame.limit,
+      max: typeof frame.max === "number" ? frame.max : Math.max(frame.limit, 1),
+      watchers,
+      standby: typeof frame.standby === "number" ? frame.standby : 0,
+    };
+  }
   if (frame.type === "states" && isRecord(frame.states)) {
     const states: BoardStates = {};
     for (const [id, value] of Object.entries(frame.states)) {
@@ -89,6 +120,8 @@ export function parseBoardFrame(raw: string): BoardFrame | null {
  * if the board has that device.
  */
 export function applyBoardFrame(states: BoardStates | null, frame: BoardFrame): BoardStates | null {
+  // Who is watching is not about any device's state; the board keeps it apart.
+  if (frame.type === "watchers") return states;
   // The hub's word about which devices are live and what they show is the newest there is.
   if (frame.type === "states")
     return Object.fromEntries(Object.entries(frame.states).map(([id, state]) => [id, learnBoardState(states?.[id], state)]));

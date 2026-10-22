@@ -17,6 +17,7 @@ import {
   type StoredHaConnection,
 } from "../../devices/ha-connections.js";
 import { provisionReadAccess } from "../../devices/ha-read-access.js";
+import { MAX_WATCHERS, writeWatcherLimit } from "../../devices/ha-watchers.js";
 import { refreshShopHub } from "../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
@@ -135,6 +136,26 @@ merchantHaRouter.delete("/ha-connections/:id", async (c) => {
   if ((await usage(c, shopId)).get(connection.id)) jsonError(409, "还有设备在使用这个 Home Assistant", "HA_CONNECTION_IN_USE");
   await deleteHaConnection(c.env.DB, shopId, connection.id).run();
   return c.json({ ok: true });
+});
+
+const watcherLimitInput = z.object({ count: z.number().int().min(1).max(MAX_WATCHERS) });
+
+/**
+ * How many clients (shop bots and HINATA IOs) watch this one shop's Home Assistant at once. Shop
+ * owners see the number on the device board but cannot change it: it decides how much the shop asks
+ * of its own Home Assistant and of the platform, so it is the platform administrator's alone.
+ */
+merchantHaRouter.put("/ha-watchers", async (c) => {
+  const user = requireUser(c);
+  if (user.role !== "admin") jsonError(403, "只有平台管理员可以修改监听器数量", "FORBIDDEN");
+  const shopId = c.req.query("shopId");
+  if (!shopId) jsonError(400, "请选择店铺", "SHOP_REQUIRED");
+  const body = watcherLimitInput.parse(await c.req.json());
+  if (!(await c.env.DB.prepare("SELECT 1 FROM shops WHERE id = ?").bind(shopId).first())) jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
+  await writeWatcherLimit(c.env.DB, shopId, body.count);
+  // The shop hub picks the new number up, and the board is told who watches now.
+  afterHaChange(c, shopId);
+  return c.json({ count: body.count });
 });
 
 /** Entities a device can bind to, read live with the control token. */

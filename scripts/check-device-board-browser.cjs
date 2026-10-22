@@ -51,12 +51,12 @@ const until = async (condition, what) => {
  * and the test sends it whatever frames it wants to push. The "database" says the live machine is
  * off, which is older than what the test pushes; Home Assistant says the other one is on.
  */
-async function openBoard(browser, { watchedIo, viewport, clock = false, silentHub = false }) {
+async function openBoard(browser, { watchedIo, viewport, clock = false, silentHub = false, role = "user" }) {
   const context = await browser.newContext({ viewport, locale: "zh-CN", timezoneId: "Asia/Shanghai" });
   await context.addInitScript(() => sessionStorage.setItem("prism.active-shop", "demo"));
   const page = await context.newPage();
   if (clock) await page.clock.install();
-  const exceptions = [], calls = [], sockets = [], received = [];
+  const exceptions = [], calls = [], sockets = [], received = [], puts = [];
   page.on("pageerror", (error) => exceptions.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") exceptions.push(message.text()); });
   const snapshot = {
@@ -70,10 +70,14 @@ async function openBoard(browser, { watchedIo, viewport, clock = false, silentHu
   });
   await page.route("**/api/**", async (route) => {
     const request = route.request(), url = new URL(request.url()), p = url.pathname;
-    if (request.method() !== "GET") { calls.push(`${request.method()} ${p}`); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: {} }) }); }
+    if (request.method() !== "GET") {
+      calls.push(`${request.method()} ${p}`);
+      if (request.method() === "PUT") puts.push({ path: p, query: url.search.slice(1), body: JSON.parse(request.postData() || "null") });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: {} }) });
+    }
     calls.push(p + url.search);
     let data = {};
-    if (p === "/api/v1/me") data = { user: { id: "owner", username: "owner", displayName: "owner", role: "user", hasShops: true } };
+    if (p === "/api/v1/me") data = { user: { id: "owner", username: "owner", displayName: "owner", role, hasShops: true } };
     else if (p === "/api/v1/merchant/shops") data = { shops: [shop] };
     else if (p === "/api/v1/merchant/machines") data = { machines };
     else if (p === "/api/v1/merchant/machines/states") {
@@ -90,7 +94,7 @@ async function openBoard(browser, { watchedIo, viewport, clock = false, silentHu
   });
   await page.goto(`${origin}/merchant/demo/devices`);
   await page.getByText("机台A", { exact: true }).waitFor();
-  return { page, context, calls, exceptions, sockets, received };
+  return { page, context, calls, exceptions, sockets, received, puts };
 }
 
 const card = (page, name) => page.locator("article", { has: page.getByRole("heading", { name, exact: true }) });
@@ -205,6 +209,53 @@ async function operate(page, name, button) {
       assert.deepEqual(stateReads(watched.calls), [], "Nothing is read when every device is live");
       assert.deepEqual(watched.exceptions, []);
       await watched.context.close();
+
+      // Who is watching Home Assistant. Nothing is shown until the hub says; then each watcher by name and
+      // how far it has got, bots first. A shop owner only sees the number of slots.
+      const owner = await openBoard(browser, { watchedIo: false, viewport });
+      const panel = owner.page.getByRole("region", { name: "HA 监听器" });
+      await until(() => owner.sockets.length === 1, "the board's WebSocket");
+      await pause(200);
+      assert.equal(await panel.count(), 0, "No watcher list before the hub has said anything about it");
+      push(owner, { type: "watchers", limit: 2, max: 4, standby: 1, watchers: [
+        { id: "bot:1", kind: "bot", name: "前台 Bot", state: "watching" },
+        { id: "io", kind: "device", deviceId: "io", state: "starting" },
+      ] });
+      await panel.getByText("前台 Bot").waitFor();
+      assert.equal(await panel.getByText("机台B").count(), 1, "A watching machine is named as the board names it");
+      assert.equal(await panel.getByText("监听中").count(), 1);
+      assert.equal(await panel.getByText("正在启动…").count(), 1);
+      assert.equal(await panel.getByText("2 / 2 个监听器").count(), 1);
+      assert.equal(await panel.getByText(/另有 1 个在线/).count(), 1);
+      assert.equal(await panel.locator("select").count(), 0, "A shop owner cannot change the number");
+      assert.equal(await panel.getByText("由平台管理员设置").count(), 1);
+      await owner.page.screenshot({ path: `${output}/device-board-watchers-${label}.png`, fullPage: true });
+      // The hub changes who watches: the list follows, and a watcher that left is gone.
+      push(owner, { type: "watchers", limit: 2, max: 4, standby: 0, watchers: [{ id: "io", kind: "device", deviceId: "io", state: "unreachable" }] });
+      await panel.getByText("连不上 Home Assistant").waitFor();
+      assert.equal(await panel.getByText("前台 Bot").count(), 0);
+      push(owner, { type: "watchers", limit: 2, max: 4, standby: 0, watchers: [] });
+      await panel.getByText(/没有监听器在线/).waitFor();
+      assert.deepEqual(owner.exceptions, []);
+      await owner.context.close();
+
+      // The platform administrator can change it, and it is sent for this shop.
+      const admin = await openBoard(browser, { watchedIo: false, viewport, role: "admin" });
+      const adminPanel = admin.page.getByRole("region", { name: "HA 监听器" });
+      await until(() => admin.sockets.length === 1, "the board's WebSocket");
+      push(admin, { type: "watchers", limit: 2, max: 4, standby: 0, watchers: [{ id: "bot:1", kind: "bot", name: "前台 Bot", state: "watching" }] });
+      const select = adminPanel.getByRole("combobox", { name: "监听器数量" });
+      await select.waitFor();
+      assert.equal(await select.inputValue(), "2");
+      assert.deepEqual(await select.locator("option").allTextContents(), ["1", "2", "3", "4"], "Up to the most the platform allows");
+      await select.selectOption("1");
+      await until(() => admin.puts.length === 1, "the number being sent");
+      assert.deepEqual(admin.puts[0], { path: "/api/v1/merchant/ha-watchers", query: "shopId=shop", body: { count: 1 } });
+      await adminPanel.getByText("1 / 1 个监听器").waitFor();
+      assert.equal(await select.inputValue(), "1");
+      assert.equal(await adminPanel.getByText("由平台管理员设置").count(), 0);
+      assert.deepEqual(admin.exceptions, []);
+      await admin.context.close();
 
       console.log(`PASS ${label}: live devices only from the hub, devices with no state of their own read once and never unknown, one read after an action on them, refresh only fills them`);
     }

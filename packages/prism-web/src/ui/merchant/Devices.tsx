@@ -49,8 +49,11 @@ import {
   type BoardFrame,
   type BoardState,
   type BoardStates,
+  type BoardWatchers,
 } from "./board-state";
+import { HaWatchersPanel } from "./HaWatchers";
 import { useBoardLive } from "./use-board-live";
+import { useAuth } from "../AuthContext";
 
 type Filter = "all" | CapabilityId | "unconfigured";
 
@@ -74,6 +77,7 @@ const machineCache = new Map<string, Machine[]>();
 
 export function DevicesPage() {
   const { shopId, canWrite } = useMerchant();
+  const { user } = useAuth();
   const { t } = useI18n();
   const [devices, setDevices] = useState<Machine[] | null>(
     () => machineCache.get(shopId) ?? null,
@@ -95,6 +99,8 @@ export function DevicesPage() {
     setParams(next, { replace: true });
   }, [params, setParams, canWrite]);
   const [states, setStates] = useState<BoardStates | null>(null);
+  // Who is watching Home Assistant, as the hub last said. Not part of any device's state.
+  const [watchers, setWatchers] = useState<BoardWatchers | null>(null);
   const [statesFailed, setStatesFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Whether the devices with no state of their own have been read since the board opened.
@@ -103,6 +109,7 @@ export function DevicesPage() {
   // Another shop's states are not this one's.
   useEffect(() => {
     setStates(null);
+    setWatchers(null);
     setStatesFailed(false);
     setFirstRead(false);
     askedRef.current = false;
@@ -157,7 +164,10 @@ export function DevicesPage() {
   useBoardLive(
     shopId,
     hasStateDevices,
-    useCallback((frame: BoardFrame) => setStates((previous) => applyBoardFrame(previous, frame)), []),
+    useCallback((frame: BoardFrame) => {
+      if (frame.type === "watchers") setWatchers(frame);
+      else setStates((previous) => applyBoardFrame(previous, frame));
+    }, []),
   );
   // A device with no state of its own is read once, as soon as the board knows which they are.
   useEffect(() => {
@@ -212,6 +222,16 @@ export function DevicesPage() {
           )}
         </div>
       </header>
+      {hasStateDevices && watchers && (
+        <HaWatchersPanel
+          shopId={shopId}
+          watchers={watchers}
+          devices={devices ?? []}
+          // The number of watchers is the platform administrator's, for this one shop.
+          canEdit={user?.role === "admin"}
+          onLimit={(limit) => setWatchers((current) => (current ? { ...current, limit } : current))}
+        />
+      )}
       <div
         className="flex flex-wrap gap-2"
         role="group"

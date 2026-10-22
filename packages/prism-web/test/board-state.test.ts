@@ -114,4 +114,67 @@ describe("device board frames", () => {
     expect(next).toEqual({ a: found("on"), b: found("on"), c: watched("off") });
     expect(applyBoardFrame(null, { type: "states", states: { a: watched("on") } })).toEqual({ a: watched("on") });
   });
+
+  test("who is watching is not about any device, so it leaves the device states alone", () => {
+    const board: BoardStates = { a: watched("on") };
+    expect(applyBoardFrame(board, { type: "watchers", limit: 2, max: 4, watchers: [], standby: 0 })).toBe(board);
+    expect(applyBoardFrame(null, { type: "watchers", limit: 2, max: 4, watchers: [], standby: 0 })).toBeNull();
+  });
+});
+
+describe("the hub's word on who is watching", () => {
+  test("reads each watcher by kind and how far it has got", () => {
+    const frame = parseBoardFrame(JSON.stringify({
+      type: "watchers",
+      limit: 2,
+      max: 4,
+      standby: 1,
+      watchers: [
+        { id: "bot:1", kind: "bot", name: "前台", state: "watching" },
+        { id: "m1", kind: "device", deviceId: "m1", state: "unreachable" },
+      ],
+    }));
+    expect(frame).toEqual({
+      type: "watchers",
+      limit: 2,
+      max: 4,
+      standby: 1,
+      watchers: [
+        { id: "bot:1", kind: "bot", name: "前台", state: "watching" },
+        { id: "m1", kind: "device", deviceId: "m1", state: "unreachable" },
+      ],
+    });
+  });
+
+  test("an empty list is an answer: nobody is watching", () => {
+    expect(parseBoardFrame('{"type":"watchers","limit":2,"max":4,"watchers":[],"standby":0}'))
+      .toEqual({ type: "watchers", limit: 2, max: 4, watchers: [], standby: 0 });
+  });
+
+  test("a state it does not know reads as starting, a bot without a name as Bot, and a malformed entry is skipped", () => {
+    const frame = parseBoardFrame(JSON.stringify({
+      type: "watchers",
+      limit: 1,
+      watchers: [
+        { id: "bot:1", kind: "bot", state: "somewhere" },
+        { id: "x", kind: "device", state: "watching" },
+        { kind: "bot", name: "no id", state: "watching" },
+        { id: "y", kind: "toaster", state: "watching" },
+        "nonsense",
+      ],
+    }));
+    expect(frame).toEqual({
+      type: "watchers",
+      limit: 1,
+      // Without a bound from the hub, the board offers no more than what is set.
+      max: 1,
+      standby: 0,
+      watchers: [{ id: "bot:1", kind: "bot", name: "Bot", state: "starting" }],
+    });
+  });
+
+  test("a frame without a number of slots or a list is not one", () => {
+    expect(parseBoardFrame('{"type":"watchers","watchers":[]}')).toBeNull();
+    expect(parseBoardFrame('{"type":"watchers","limit":2}')).toBeNull();
+  });
 });
