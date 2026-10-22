@@ -240,7 +240,7 @@ export function createDeviceEventRepository(executor: SqlExecutor): DeviceEventR
         const target = { ...write, value };
         // Order matters: the change guard must read the old value before the
         // upsert below replaces it.
-        statements.push(insertChangeIfDifferent(shop, event, target));
+        if (event) statements.push(insertChangeIfDifferent(shop, event, target));
         statements.push({
           sql: `INSERT INTO device_state (shop_id, device_id, capability, key, value_json, authority, event_id, changed_at)
                 VALUES (${shop}, ?, ?, ?, ?, ?, ?, ?)
@@ -256,8 +256,8 @@ export function createDeviceEventRepository(executor: SqlExecutor): DeviceEventR
             write.key,
             value,
             write.authority,
-            event.id,
-            event.occurredAt.toISOString(),
+            event?.id ?? null,
+            (event?.occurredAt ?? write.at ?? new Date()).toISOString(),
           ],
         });
       }

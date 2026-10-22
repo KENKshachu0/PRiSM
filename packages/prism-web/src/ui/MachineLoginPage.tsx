@@ -1,5 +1,5 @@
 import { SessionPasskeySetup } from "./SessionPasskeySetup";
-import { DeviceControls } from "./DeviceControls";
+import { DeviceControls, type DeviceState } from "./DeviceControls";
 import { useI18n } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
@@ -53,18 +53,22 @@ function MachineSessionLoader({
   const [page, setPage] = useState<
     | { kind: "loading" }
     | { kind: "failed"; message: string }
-    | { kind: "session"; machine: PublicMachine }
+    | { kind: "session"; machine: PublicMachine; state: DeviceState | null }
   >({ kind: "loading" });
   const [machineAttempt, setMachineAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setPage({ kind: "loading" });
-    Api.publicMachine(ticket)
+    // One request for the machine and the page's state; an older address form has only the machine.
+    const first = ticket.startsWith("v1.")
+      ? Api.bootstrap<DeviceState>(ticket)
+      : Api.publicMachine(ticket).then((result) => ({ machine: result.machine, state: null }));
+    first
       .then((result) => {
         if (!cancelled) {
           setActiveShop(result.machine.shop.publicId ?? "");
-          setPage({ kind: "session", machine: result.machine });
+          setPage({ kind: "session", machine: result.machine, state: result.state });
         }
       })
       .catch((caught) => {
@@ -103,6 +107,7 @@ function MachineSessionLoader({
       return (
         <MachineSessionPage
           machine={page.machine}
+          initialState={page.state}
           ticket={ticket}
           onExpired={onExpired}
         />
@@ -112,14 +117,18 @@ function MachineSessionLoader({
 
 function MachineSessionPage({
   machine,
+  initialState,
   ticket, onExpired,
 }: {
   machine: PublicMachine;
+  initialState: DeviceState | null;
   ticket: string;
   onExpired: () => void;
 }) {
   const { t, errorText } = useI18n();
   const { user, loading } = useAuth();
+  /** The machine's power is being asked for; the page is usable meanwhile. */
+  const [checkingPower, setCheckingPower] = useState(false);
   const [cards, setCards] = useState<Card[]>([]);
   const [cardsLoading, setCardsLoading] = useState(true);
   const [cardsError, setCardsError] = useState<string | null>(null);
@@ -209,7 +218,11 @@ function MachineSessionPage({
   const busy = status !== "idle";
   return (
     <section className="machine-session">
-      <ShopHero name={machine.shop.name} heroUrl={machine.shop.heroUrl} subtitle={machine.name} />
+      <ShopHero
+        name={machine.shop.name}
+        heroUrl={machine.shop.heroUrl}
+        subtitle={checkingPower ? `${machine.name} · ${t("正在获取电源状态")}` : machine.name}
+      />
 
       {!Object.values(machine.capabilities).some(Boolean) ? (
         <div className="device-controls"><p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p></div>
@@ -222,6 +235,8 @@ function MachineSessionPage({
           key={reload}
           machine={machine}
           ticket={ticket}
+          initialState={initialState}
+          onCheckingPower={setCheckingPower}
           onExpired={onExpired}
           cardBusy={status === "locating" || status === "sending"}
         >

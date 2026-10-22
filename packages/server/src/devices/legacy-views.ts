@@ -7,19 +7,19 @@ import type { DeviceState, MachineConnection } from "@prism/core";
 import { createD1Executor } from "@prism/adapter-d1";
 import { createDeviceEventRepository } from "@prism/storage-sql";
 import { loadDevices } from "./device.js";
-import { createRuntimeBus, type DeviceRuntime } from "./runtime.js";
+import { readPower, type DeviceRuntime } from "./runtime.js";
 
 /**
- * Power of every enabled device that has it, read live. A source that cannot
- * be reached right now reports its last observation as `offline`, or
- * `unknown` when it was never observed.
+ * Power of every enabled device that has it: the stored fact while its Home
+ * Assistant is watched, otherwise read from Home Assistant now. A source that
+ * cannot be reached right now reports its last stored value as `offline`, or
+ * `unknown` when there never was one.
  */
 export async function listDeviceStates(runtime: DeviceRuntime): Promise<DeviceState[]> {
   const now = runtime.now ?? (() => new Date());
   const devices = (await loadDevices(runtime.db, runtime.shopId, runtime.env.URL_ENCRYPTION_KEY))
     .filter((device) => device.enabled && device.capabilities.has("power"));
   if (!devices.length) return [];
-  const bus = createRuntimeBus(runtime);
   const stored = new Map(
     (await createDeviceEventRepository(createD1Executor(runtime.db, runtime.shopId))
       .listState(devices.map((device) => device.id)))
@@ -27,7 +27,7 @@ export async function listDeviceStates(runtime: DeviceRuntime): Promise<DeviceSt
       .map((state) => [state.deviceId, state]),
   );
   return Promise.all(devices.map(async (device): Promise<DeviceState> => {
-    const live = await bus.observe(device, "power", "power").catch(() => null);
+    const live = await readPower(runtime, device).catch(() => null);
     const last = stored.get(device.id);
     const reachable = live === "on" || live === "off";
     return {

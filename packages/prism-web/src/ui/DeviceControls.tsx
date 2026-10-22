@@ -1,8 +1,8 @@
 import { isTransientReadFailure, usePagePolling } from "./use-page-polling";
-import { useDeviceLive } from "./use-device-live";
+import { idleLive, useDeviceLive, type DeviceFacts, type FactsChange, type LiveStatus } from "./use-device-live";
 import { billTime } from "./bill-time";
 import { PlatformBinding } from "./SessionContent";
-import { PlayerClimate, type ClimateState } from "./ClimateControls";
+import { PlayerClimate, settleClimate, type ClimateState } from "./ClimateControls";
 import {
   useCallback,
   useEffect,
@@ -45,30 +45,43 @@ function InlineNoticeLine({ note }: { note: Notice }) {
 const localNote = (body: string, level: Notice["level"] = "warning"): Notice =>
   ({ code: "CLIENT", level, display: "inline", flow: "none", title: null, body, actions: [] });
 
-type DeviceState = {
+/** How long a power-on waits for the machine to report on before the button comes back. */
+const POWER_ON_WAIT_MS = 15_000;
+
+export type DeviceState = {
   gate: "ready" | "binding" | "entry";
-  power: "on" | "off" | "unknown" | "unmanaged";
   coinUsed: boolean;
-  climate?: ClimateState | null;
   mahjong?: {capacity:number;seats:{name:string;mine:boolean;playing:boolean}[]} | null;
+  /** What is known of the device's Home Assistant state; `watching` says it is current and pushed. */
+  device: DeviceFacts;
 };
+type PowerState = "on" | "off" | "unknown";
+
 export function DeviceControls({
   machine,
   ticket,
   children,
   cardBusy, onExpired,
+  initialState = null,
+  onCheckingPower,
 }: {
   machine: PublicMachine;
   ticket: string;
   children: ReactNode;
   cardBusy: boolean;
   onExpired: () => void;
+  /** The page state the first read of the scan already returned; the page starts from it. */
+  initialState?: DeviceState | null;
+  /** Whether the machine's power is being asked for, so the page header can say so. */
+  onCheckingPower?: (checking: boolean) => void;
 }) {
   const { t, errorText } = useI18n();
   const code = machine.shop.publicId!;
   const { setBillingActive } = useAuth();
-  const [state, setState] = useState<DeviceState | null>(null);
-  const [power, setPower] = useState<DeviceState["power"]>("unknown");
+  const hasHa = !!(machine.capabilities.power || machine.capabilities.climate);
+  const [state, setState] = useState<DeviceState | null>(initialState);
+  const [power, setPower] = useState<PowerState>(() => (initialState?.device.watching ? initialState.device.power ?? "unknown" : "unknown"));
+  const [climateState, setClimateState] = useState<ClimateState | null>(() => (initialState?.device.watching ? initialState.device.climate : null));
   const [info, setInfo] = useState<ShopInfo | null>(null);
   const [password, setPassword] = useState<{
     temporaryPassword: string;
@@ -78,19 +91,11 @@ export function DeviceControls({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [waitingPower, setWaitingPower] = useState(false);
+  const [checking, setChecking] = useState(false);
+  /** The device turned out to be watched after the first read said it was not. */
+  const [watchHint, setWatchHint] = useState(false);
   const refreshError = useRef("");
-  // Pushed state while the shop's Home Assistant is watched; polling covers the rest.
-  const live = useDeviceLive(ticket, !!(machine.capabilities.power || machine.capabilities.climate) && state?.gate === "ready");
-  const livePower = live.watching ? live.power : null;
-  useEffect(() => {
-    if (!livePower) return;
-    setPower(livePower);
-    if (livePower === "on") setWaitingPower(false);
-  }, [livePower]);
-  useEffect(() => {
-    if (!live.watching || !live.climate) return;
-    setState((current) => (current ? { ...current, climate: live.climate as ClimateState } : current));
-  }, [live.watching, live.climate]);
+  const liveRef = useRef<LiveStatus>(idleLive);
   const showNotice = useNotice();
   const [note, showNote] = useInlineNotice();
   const [noteAnchor, setNoteAnchor] = useState("");
@@ -111,15 +116,76 @@ export function DeviceControls({
     },
     [onExpired, showNotice, showNoteAt],
   );
+
+  /** What was learned about the device's state, from a read, a pushed frame or the hub's greeting. */
+  const applyFacts = useCallback((facts: FactsChange) => {
+    if (facts.power !== undefined) {
+      setPower(facts.power ?? "unknown");
+      if (facts.power === "on") setWaitingPower(false);
+    }
+    if (facts.climate !== undefined) setClimateState(facts.climate);
+  }, []);
+
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const current = await api<DeviceState>(
-      `/api/v1/devices/session/state?ticket=${encodeURIComponent(ticket)}&includePower=0`, { signal });
+      `/api/v1/devices/session/state?ticket=${encodeURIComponent(ticket)}&includePower=0&includeClimate=0`, { signal });
     if (signal?.aborted) return;
     setState(current);
+    // A pushed state is fresher than this read; with no push, a watched device's stored state is the answer.
+    if (current.device.watching && !liveRef.current.connected) applyFacts(current.device);
     const previousRefreshError = refreshError.current;
     setError(previous => previous === previousRefreshError ? "" : previous);
     refreshError.current = "";
-  }, [ticket]);
+  }, [ticket, applyFacts]);
+
+  // A watched device's state and the page's own changes (a bot confirmed the binding) are pushed;
+  // the page asks for them only while nothing pushes.
+  const live = useDeviceLive(ticket, hasHa && (!!state?.device.watching || watchHint), {
+    onFacts: applyFacts,
+    onChange: applyFacts,
+    onRefresh: () => { void refresh().catch(() => undefined); },
+  });
+  liveRef.current = live;
+  const pushed = live.connected && live.watching;
+  const eventMode = live.dropped ? false : live.connected ? live.watching : !!state?.device.watching;
+  const unpushed = hasHa && state !== null && !eventMode;
+
+  // Nothing pushes this device's state, so ask for it once, without holding the page back:
+  // the page is usable meanwhile, and a machine found off simply switches to its power page.
+  useEffect(() => {
+    if (!unpushed) return;
+    const controller = new AbortController();
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const load = async (attempt: number) => {
+      setChecking(true);
+      try {
+        const facts = await api<DeviceFacts>(`/api/v1/devices/session/device?ticket=${encodeURIComponent(ticket)}`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (facts.watching) setWatchHint(true);
+        applyFacts(facts);
+        setChecking(false);
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        if (attempt === 0 && isTransientReadFailure(e)) {
+          retry = setTimeout(() => void load(1), 3000);
+          return;
+        }
+        setChecking(false);
+        failed(e, "power", true);
+      }
+    };
+    void load(0);
+    return () => {
+      controller.abort();
+      clearTimeout(retry);
+      setChecking(false);
+    };
+  }, [unpushed, ticket, applyFacts, failed]);
+
+  const checkingPower = checking && !!machine.capabilities.power;
+  useEffect(() => { onCheckingPower?.(checkingPower); }, [checkingPower, onCheckingPower]);
+  useEffect(() => () => onCheckingPower?.(false), [onCheckingPower]);
+
   usePagePolling(async signal => {
     try { await refresh(signal); }
     catch (e) {
@@ -130,7 +196,10 @@ export function DeviceControls({
       }
       throw e;
     }
-  }, !busy && !cardBusy, ticket, !state || state.gate === "binding" || !!machine.capabilities.mahjong);
+  }, !busy && !cardBusy, ticket,
+  // Only the binding (until a push can tell) and the mahjong seats change without the player acting.
+  !state || (state.gate === "binding" && !pushed) || !!machine.capabilities.mahjong,
+  initialState !== null);
   const previousGate = useRef<DeviceState["gate"] | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
@@ -139,20 +208,6 @@ export function DeviceControls({
     api<ShopInfo>(shopApi(code)).then(shop => { if (!cancelled) setInfo(shop); }).catch(failed);
     return () => { cancelled = true; };
   }, [code, state?.gate, failed]);
-  usePagePolling(async signal => {
-    try {
-      const current = await api<{ power: DeviceState["power"] }>(
-        `/api/v1/devices/session/power?ticket=${encodeURIComponent(ticket)}`, { signal });
-      if (signal.aborted) return;
-      setPower(current.power);
-      if (current.power === "on") setWaitingPower(false);
-      if (current.power === "unknown") throw new TypeError("Power state unavailable");
-    } catch (error) {
-      if (!signal.aborted && !isTransientReadFailure(error)) failed(error, "power", true);
-      throw error;
-    }
-  }, !!machine.capabilities.power && state?.gate === "ready" && !busy && !cardBusy, ticket,
-    !livePower && (waitingPower || power === "unknown"));
   useEffect(() => {
     let cancelled = false;
     if (info?.shop.billingEnabled && info.membership) {
@@ -190,19 +245,29 @@ export function DeviceControls({
     const timer = setTimeout(() => {
       setWaitingPower(false);
       showNoteAt("power", localNote(t("未检测到开机，请重试")));
-    }, 30_000);
+    }, POWER_ON_WAIT_MS);
     return () => clearTimeout(timer);
   }, [waitingPower, showNoteAt, t]);
+  // The push that would say the machine is on is gone (the connection dropped, or nothing
+  // watches the device any more). Home Assistant accepted the request; that is all there is to wait for.
+  useEffect(() => {
+    if (waitingPower && !pushed) {
+      setWaitingPower(false);
+      setPower("on");
+    }
+  }, [waitingPower, pushed]);
   function climate(action: string, extra?: Record<string, unknown>) {
     return act(action, async () => {
       const location = await operationLocation(!!(machine.shop.locationEnabled ?? machine.shop.machineGeo));
-      const result = await playerOperation<{ climate?: ClimateState | null }>("/api/v1/devices/session/actions", {
+      await playerOperation("/api/v1/devices/session/actions", {
         ticket,
         action,
         location,
         ...extra,
       });
-      if (result.climate) setState((current) => (current ? { ...current, climate: result.climate } : current));
+      // Home Assistant accepted it. A watched device reports the new state as an event; otherwise
+      // there is no state to wait for and the page shows what was asked.
+      if (!pushed) setClimateState((current) => settleClimate(current, action, extra));
     });
   }
   function operate(action: "power.on" | "coin" | "door.open" | "mahjong.join" | "mahjong.leave") {
@@ -227,7 +292,12 @@ export function DeviceControls({
           temporaryPassword: result.temporaryPassword,
           expiresAt: result.expiresAt!,
         });
-      if (action === "power.on") setWaitingPower(true);
+      // A watched machine reports when it is on, and the page moves on then; otherwise Home
+      // Assistant answering is the end of it.
+      if (action === "power.on") {
+        if (pushed) setWaitingPower(true);
+        else setPower("on");
+      }
       if (action === "coin")
         setState((current) =>
           current ? { ...current, coinUsed: true } : current,
@@ -352,7 +422,7 @@ export function DeviceControls({
           )}
           {state.gate === "ready" && cap.climate && (
             <PlayerClimate
-              state={state.climate ?? null}
+              state={climateState}
               busy={busy.startsWith("climate.") ? busy : ""}
               blocked={!!busy || cardBusy}
               send={(action, extra) => void climate(action, extra)}

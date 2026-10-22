@@ -17,11 +17,12 @@ import {
 import { normalizeHinataUrl, sendHinataCard, sendHinataCoin } from "../hardware/hinata.js";
 import { TTLockClient } from "../hardware/ttlock.js";
 import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
-import { createDeviceBus, type ActionRunner, type RunOutcome, type StateReader } from "./bus.js";
+import { createDeviceBus, type ActionRunner, type PerformInput, type PerformResult, type RunOutcome } from "./bus.js";
 import type { HaEntityConfig } from "./capabilities.js";
 import { doorConfigOf, hinataConfigOf, readSecret, type Device } from "./device.js";
 import { openHaConnection } from "./ha-connections.js";
-import { watchedState } from "../durable-objects/shop-hub-client.js";
+import { markWatcherDown } from "../durable-objects/shop-hub-client.js";
+import { readDeviceFacts } from "./state-view.js";
 
 const KEY_PRESS_TTL_MS = 30_000;
 const HA_TIMEOUT_MS = 10_000;
@@ -41,6 +42,11 @@ export type DeviceRuntime = {
   fetcher?: typeof fetch;
   now?: () => Date;
   id?: () => string;
+  /**
+   * Tell the shop hub when an action switches a HINATA IO off, so it stops
+   * waiting for that IO. The hub's own idle power-off sets this to false.
+   */
+  notifyHub?: boolean;
 };
 
 async function haBinding(
@@ -66,24 +72,21 @@ async function haBinding(
   }
 }
 
-/** What the shop's Home Assistant watcher last reported for this capability's entity. */
-async function watched(runtime: DeviceRuntime, device: Device, capability: "power" | "climate") {
-  const config = device.capabilities.get(capability)?.config as HaEntityConfig | undefined;
-  if (!config?.connectionId || !config.entityId) return null;
-  return watchedState(runtime.env, device.shopId, config.connectionId, config.entityId);
+/**
+ * Power state: "on", "off", or null when it cannot be read.
+ *
+ * While the device's Home Assistant is watched the stored fact is the answer
+ * and Home Assistant is not asked. Otherwise nothing is known, so Home
+ * Assistant is asked now and the answer is not recorded: only a watcher's
+ * events and the platform's own actions write device state.
+ */
+export async function readPower(runtime: DeviceRuntime, device: Device): Promise<"on" | "off" | null> {
+  const facts = await readDeviceFacts(runtime.db, runtime.shopId, device);
+  if (facts.watching) return facts.power;
+  return askPower(runtime, device);
 }
 
-/**
- * Home Assistant power state: "on", "off", or null when it cannot be read. A
- * watched "on" is used as is; "off" is confirmed live, because turning a player
- * away from a machine that is actually on is the costly mistake.
- */
-export async function readPower(
-  runtime: DeviceRuntime,
-  device: Device,
-  options: { live?: boolean } = {},
-): Promise<"on" | "off" | null> {
-  if (!options.live && (await watched(runtime, device, "power"))?.state === "on") return "on";
+async function askPower(runtime: DeviceRuntime, device: Device): Promise<"on" | "off" | null> {
   const binding = await haBinding(runtime, device);
   if (!binding) return null;
   const state = await getHomeAssistantEntityState({
@@ -103,7 +106,7 @@ export async function readPower(
  */
 function keepRunner(runtime: DeviceRuntime): ActionRunner {
   return async ({ device }) => {
-    const power = await readPower(runtime, device, { live: false });
+    const power = await readPower(runtime, device);
     if (power === "on") return { outcome: "ok" };
     return { outcome: "failed", message: power === "off" ? "设备已关机" : "读取不到设备电源状态" };
   };
@@ -143,14 +146,18 @@ const numberOrNull = (value: unknown) =>
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
-/** Climate state from what the watcher reported, else read live; null when neither works. */
-export async function readClimate(
-  runtime: DeviceRuntime,
-  device: Device,
-  options: { live?: boolean } = {},
-): Promise<ClimateState | null> {
-  const known = options.live ? null : await watched(runtime, device, "climate");
-  if (known && known.state !== "unavailable" && known.state !== "unknown") return climateState(known.state, known.attributes);
+/**
+ * Climate state, from the stored fact while the device's Home Assistant is
+ * watched and from Home Assistant itself otherwise (not recorded). Null when
+ * neither works.
+ */
+export async function readClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
+  const facts = await readDeviceFacts(runtime.db, runtime.shopId, device);
+  if (facts.watching) return facts.climate;
+  return askClimate(runtime, device);
+}
+
+async function askClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
   const binding = await haBinding(runtime, device, "climate");
   if (!binding) return null;
   const entity = await getHomeAssistantEntity({
@@ -162,6 +169,20 @@ export async function readClimate(
   });
   if (!entity || entity.state === "unavailable" || entity.state === "unknown") return null;
   return climateState(entity.state, entity.attributes);
+}
+
+/** Power and climate of a device in one read: stored facts when watched, else both asked of Home Assistant at once. */
+export async function readDeviceState(
+  runtime: DeviceRuntime,
+  device: Device,
+): Promise<{ watching: boolean; power: "on" | "off" | null; climate: ClimateState | null }> {
+  const facts = await readDeviceFacts(runtime.db, runtime.shopId, device);
+  if (facts.watching) return facts;
+  const [power, climate] = await Promise.all([
+    device.capabilities.has("power") ? askPower(runtime, device).catch(() => null) : null,
+    device.capabilities.has("climate") ? askClimate(runtime, device).catch(() => null) : null,
+  ]);
+  return { watching: false, power, climate };
 }
 
 /** A climate state from a Home Assistant state and its attributes. */
@@ -320,40 +341,29 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
     coin: coinRunner(runtime),
     "door.open": doorRunner(runtime),
   };
-  const readers: Record<string, StateReader> = {
-    "power.power": (device, options) => readPower(runtime, device, options),
-    "climate.climate": async (device, options) => {
-      const state = await readClimate(runtime, device, options);
-      return state ? climateSetting(state) : null;
-    },
-  };
-  return createDeviceBus({
-    events: createDeviceEventRepository(createD1Executor(runtime.db, runtime.shopId)),
-    now: runtime.now ?? (() => new Date()),
-    id: runtime.id ?? (() => crypto.randomUUID()),
-    runners,
-    readers,
-  });
-}
-
-/**
- * Read a climate device for display and record its setting when it moved,
- * with a single Home Assistant request.
- */
-export async function observeClimate(
-  runtime: DeviceRuntime,
-  device: Device,
-  options: { live?: boolean } = {},
-): Promise<ClimateState | null> {
-  const state = await readClimate(runtime, device, options).catch(() => null);
-  if (!state) return null;
   const bus = createDeviceBus({
     events: createDeviceEventRepository(createD1Executor(runtime.db, runtime.shopId)),
     now: runtime.now ?? (() => new Date()),
     id: runtime.id ?? (() => crypto.randomUUID()),
-    runners: {},
-    readers: { "climate.climate": async () => climateSetting(state) },
+    runners,
+    readers: {
+      "power.power": (device) => readPower(runtime, device),
+      "climate.climate": async (device) => {
+        const state = await readClimate(runtime, device);
+        return state ? climateSetting(state) : null;
+      },
+    },
   });
-  await bus.observe(device, "climate", "climate").catch(() => null);
-  return state;
+  if (runtime.notifyHub === false) return bus;
+  return {
+    ...bus,
+    async perform(input: PerformInput): Promise<PerformResult> {
+      const result = await bus.perform(input);
+      // A HINATA IO that was just powered off will not report again; the hub
+      // need not wait out its lease to hand the watch to another.
+      if (input.action === "power.off" && result.operation.status === "succeeded" && input.device.capabilities.has("hinata_io"))
+        await markWatcherDown(runtime.env, runtime.shopId, input.device.id);
+      return result;
+    },
+  };
 }

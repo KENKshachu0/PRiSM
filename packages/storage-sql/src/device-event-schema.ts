@@ -65,6 +65,12 @@ export const deviceEventSchema = [
     changed_at TEXT NOT NULL,
     PRIMARY KEY (shop_id, device_id, capability, key)
   )`,
+  `CREATE TABLE IF NOT EXISTS ha_event_connections (
+    shop_id TEXT NOT NULL,
+    connection_id TEXT NOT NULL,
+    since TEXT NOT NULL,
+    PRIMARY KEY (shop_id, connection_id)
+  )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS device_capabilities_credential ON device_capabilities(credential_hash) WHERE credential_hash IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS device_events_device ON device_events(shop_id, device_id, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS device_events_operation ON device_events(shop_id, operation_id)`,

@@ -10,16 +10,40 @@ const fs=require('node:fs');const assert=require('node:assert/strict');
  if(url.pathname==='/api/v1/me'){await meHeld;meDone=true;data={user:{id:'u',username:'test',displayName:'测试玩家',role:'user',hasShops:false}};}
  else if(url.pathname==='/api/v1/machines/session') data={machine};
  else if(url.pathname==='/api/v1/cards') data={cards:[{id:'card',label:'测试 Aime',accessCode:'12345678901234567890',disabledAt:null}],authorizationRequired:false};
- else if(url.pathname==='/api/v1/devices/session/state') data={gate:'ready',power:'unmanaged',coinUsed:false,mahjong:{capacity:4,seats:[]}};
- else if(url.pathname==='/api/v1/devices/session/power'){await powerHeld;powerDone=true;data={power:'unknown'};}
+ else if(url.pathname==='/api/v1/devices/session/state') data={gate:'ready',power:'unmanaged',coinUsed:false,mahjong:{capacity:4,seats:[]},device:{watching:false,power:null,climate:null}};
+ else if(url.pathname==='/api/v1/devices/session/device'){await powerHeld;powerDone=true;data={watching:false,power:null,climate:null};}
  else if(url.pathname==='/api/v1/shops/demo')data={shop:{publicId:'demo',name:'测试店铺',billingEnabled:false,locationEnabled:false},membership:null,pricing:[]};
  else data={};
  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data})});});
  await page.goto(`${process.env.PRISM_SCAN_ORIGIN || 'http://127.0.0.1:4173'}/m#ticket=opaque-test`);await page.getByText('测试店铺',{exact:true}).waitFor();assert.equal(meDone,false);
  fs.mkdirSync(output,{recursive:true});await page.screenshot({path:`${output}/scan-auth-loading.png`,fullPage:true});
- releaseMe();await page.getByText('测试 Aime',{exact:true}).waitFor();assert.equal(powerDone,false);await page.screenshot({path:`${output}/scan-cards-before-power.png`,fullPage:true});
- await page.waitForTimeout(7000);assert.equal(counts['/api/v1/shops/demo'],1);assert.ok(counts['/api/v1/devices/session/state']>=2);assert.equal(counts['/api/v1/devices/session/power'],1);
- console.log('PASS hero before auth, cards before HA, one shop metadata GET during dynamic polling',counts);releasePower();
+ releaseMe();await page.getByText('测试 Aime',{exact:true}).waitFor();assert.equal(powerDone,false);
+ // The machine's power is asked for without holding the cards back, and the header says so while it is.
+ const checking=page.getByText(/^测试机台 · (正在获取电源状态|Checking power status)$/);
+ await checking.waitFor();
+ await page.screenshot({path:`${output}/scan-cards-before-power.png`,fullPage:true});
+ await page.waitForTimeout(7000);assert.equal(counts['/api/v1/shops/demo'],1);assert.ok(counts['/api/v1/devices/session/state']>=2);assert.equal(counts['/api/v1/devices/session/device'],1);assert.equal(counts['/api/v1/devices/session/power'],undefined);
+ console.log('PASS hero before auth, cards before HA, one shop metadata GET during dynamic polling, one power read and no power polling',counts);releasePower();
+ await checking.waitFor({state:'detached'});
+ // A watched device arrives with its power in the first read: the page uses it as is, with no state read
+ // before the next poll is due and no read of Home Assistant at all.
+ {
+  const watched=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,locale:'zh-CN'});const seen={};
+  await watched.route('**/api/**',async route=>{const url=new URL(route.request().url());seen[url.pathname]=(seen[url.pathname]||0)+1;let data;
+   if(url.pathname==='/api/v1/me')data={user:{id:'u',username:'test',displayName:'测试玩家',role:'user',hasShops:false}};
+   else if(url.pathname==='/api/v1/devices/session/bootstrap')data={machine:{...machine,capabilities:{card:true,power:true,coin:false,door:false}},state:{gate:'ready',coinUsed:false,mahjong:null,device:{watching:true,power:'off',climate:null}}};
+   else if(url.pathname==='/api/v1/cards')data={cards:[],authorizationRequired:false};
+   else if(url.pathname==='/api/v1/shops/demo')data={shop:{publicId:'demo',name:'测试店铺',billingEnabled:false,locationEnabled:false},membership:null,pricing:[]};
+   else data={};
+   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data})});});
+  await watched.goto(`${process.env.PRISM_SCAN_ORIGIN || 'http://127.0.0.1:4173'}/m#ticket=v1.opaque-test`);
+  await watched.getByText('设备尚未开机',{exact:true}).waitFor();
+  assert.equal(seen['/api/v1/devices/session/bootstrap'],1);assert.equal(seen['/api/v1/machines/session'],undefined);
+  assert.equal(seen['/api/v1/devices/session/state'],undefined);assert.equal(seen['/api/v1/devices/session/device'],undefined);assert.equal(seen['/api/v1/devices/session/power'],undefined);
+  assert.equal(await watched.getByText('正在获取电源状态').count(),0);
+  await watched.screenshot({path:`${output}/scan-watched-power-off.png`,fullPage:true});await watched.close();
+  console.log('PASS watched device shows its power from the first read without asking again',seen);
+ }
  for (const [locale,copy,checkout,billing] of [['zh-CN','余额不足，请充值后再结账，计费会继续','结账','计费中'],['en-US','Not enough balance. Top up and check out again; billing continues.','Check out','Billing in progress']]) {
   const checkoutPage=await browser.newPage({viewport:{width:390,height:844},locale});let confirmations=0;
   await checkoutPage.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname;let data;

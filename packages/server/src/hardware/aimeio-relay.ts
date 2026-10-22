@@ -167,6 +167,12 @@ export type HaEntityState = {
   entity_id: string;
   state: string;
   last_changed: string | null;
+  /**
+   * When the state or any attribute last changed. Unlike `last_changed` it moves
+   * on an attribute-only change, so it orders reports from two watchers. Absent
+   * from an IO that predates the field.
+   */
+  last_updated: string | null;
   attributes: Record<string, unknown>;
 };
 
@@ -201,6 +207,7 @@ export function parseHaReport(value: unknown): HaReport | null {
       entity_id: item.entity_id,
       state: item.state,
       last_changed: changedAt(item.last_changed),
+      last_updated: changedAt(item.last_updated),
       attributes: isRecord(item.attributes) ? item.attributes : {},
     });
   }

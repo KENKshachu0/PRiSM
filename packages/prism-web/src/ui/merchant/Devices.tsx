@@ -12,6 +12,7 @@ import {
   Power,
   Printer,
   QrCode,
+  RefreshCw,
   Ungroup,
 } from "lucide-react";
 import { Api, api, playerOperation, type DeviceEvent, type Machine } from "../../api";
@@ -40,6 +41,16 @@ import {
   type CapabilityId,
 } from "./device-capabilities";
 import { DeviceEditor } from "./DeviceEditor";
+import {
+  applyBoardFrame,
+  hasUnwatched,
+  learnBoardState,
+  mergeBoardStates,
+  type BoardFrame,
+  type BoardState,
+  type BoardStates,
+} from "./board-state";
+import { useBoardLive } from "./use-board-live";
 
 type Filter = "all" | CapabilityId | "unconfigured";
 
@@ -83,6 +94,47 @@ export function DevicesPage() {
     next.delete("add");
     setParams(next, { replace: true });
   }, [params, setParams, canWrite]);
+  const [states, setStates] = useState<BoardStates | null>(null);
+  const [statesFailed, setStatesFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  // Whether the devices with no state of their own have been read since the board opened.
+  const [firstRead, setFirstRead] = useState(false);
+  const askedRef = useRef(false);
+  // Another shop's states are not this one's.
+  useEffect(() => {
+    setStates(null);
+    setStatesFailed(false);
+    setFirstRead(false);
+    askedRef.current = false;
+  }, [shopId]);
+  /**
+   * The state of the whole shop over HTTP. A live device answers from what is stored and the board
+   * already has it from the hub; a device with no state of its own has none stored, so Home
+   * Assistant is asked for it. This is how those devices get a value: once when the board opens,
+   * by the refresh button, and as the fallback while the hub's connection gives the board nothing.
+   */
+  const readStates = useCallback(async () => {
+    askedRef.current = true;
+    try {
+      const r = await api<{ states: BoardStates }>(`/api/v1/merchant/machines/states?shopId=${encodeURIComponent(shopId)}`);
+      setStates((previous) => mergeBoardStates(r.states, previous));
+      setStatesFailed(false);
+    } catch {
+      setStatesFailed(true);
+    }
+    setFirstRead(true);
+  }, [shopId]);
+  /** What the panel read of one device, put where the board shows it. */
+  const setDeviceState = useCallback(
+    (id: string, next: BoardState) =>
+      setStates((previous) => (previous ? { ...previous, [id]: learnBoardState(previous[id], next) } : previous)),
+    [],
+  );
+  async function refresh() {
+    setRefreshing(true);
+    await readStates();
+    setRefreshing(false);
+  }
   const load = useCallback(
     () =>
       Api.machines(shopId).then((r) => {
@@ -94,6 +146,31 @@ export function DevicesPage() {
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [load]);
+  const hasStateDevices = (devices ?? []).some((device) => {
+    const caps = deviceCapabilities(device);
+    return caps.power || caps.climate;
+  });
+  const allWatched = states !== null && !hasUnwatched(states);
+  // The board's state is what the hub sends: the whole shop when the connection opens, again
+  // whenever which devices are live changes, and every change of a live device. A live device is
+  // never read: its changes arrive on their own, after an action as well.
+  useBoardLive(
+    shopId,
+    hasStateDevices,
+    useCallback((frame: BoardFrame) => setStates((previous) => applyBoardFrame(previous, frame)), []),
+  );
+  // A device with no state of its own is read once, as soon as the board knows which they are.
+  useEffect(() => {
+    if (states === null || askedRef.current || !hasUnwatched(states)) return;
+    void readStates();
+  }, [states, readStates]);
+  // If the hub gives the board no state (it cannot connect, or says nothing), read it over HTTP.
+  const unread = states === null;
+  useEffect(() => {
+    if (!hasStateDevices || !unread) return;
+    const timer = setTimeout(() => void readStates(), statesFailed ? 15_000 : 3_000);
+    return () => clearTimeout(timer);
+  }, [hasStateDevices, unread, statesFailed, readStates]);
   const counts = useMemo(() => {
     const result: Record<string, number> = { all: devices?.length ?? 0 };
     for (const device of devices ?? []) {
@@ -114,12 +191,26 @@ export function DevicesPage() {
     <div className="grid gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <h2 className="text-xl font-semibold">{t("店内设备")}</h2>
-        {canWrite && (
-          <button className={primary} onClick={() => setEditing("new")}>
-            <Plus size={17} />
-            {t("添加设备")}
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {hasStateDevices && (
+            <button
+              type="button"
+              className={button}
+              disabled={refreshing || (states === null && !statesFailed) || allWatched}
+              title={allWatched ? t("所有设备都在实时监听") : undefined}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} aria-hidden="true" />
+              {t("刷新设备状态")}
+            </button>
+          )}
+          {canWrite && (
+            <button className={primary} onClick={() => setEditing("new")}>
+              <Plus size={17} />
+              {t("添加设备")}
+            </button>
+          )}
+        </div>
       </header>
       <div
         className="flex flex-wrap gap-2"
@@ -181,6 +272,10 @@ export function DevicesPage() {
               key={device.id}
               device={device}
               canWrite={canWrite}
+              state={states?.[device.id] ?? null}
+              stateFailed={statesFailed && states === null}
+              // The first read of a device with no state of its own is still on its way.
+              pending={!firstRead && !!states?.[device.id] && !states[device.id]!.watching}
               onAct={() => setActing(device)}
               onQR={() => setQR(device)}
               onHistory={() => setHistory(device)}
@@ -196,6 +291,8 @@ export function DevicesPage() {
         >
           <DeviceActions
             device={acting}
+            state={states?.[acting.id] ?? null}
+            onState={(next) => setDeviceState(acting.id, next)}
             onChanged={() => void load()}
           />
         </Modal>
@@ -292,6 +389,9 @@ function DeviceQR({ device }: { device: Machine }) {
 function DeviceCard({
   device,
   canWrite,
+  state,
+  stateFailed,
+  pending,
   onAct,
   onQR,
   onHistory,
@@ -299,6 +399,11 @@ function DeviceCard({
 }: {
   device: Machine;
   canWrite: boolean;
+  /** What the board knows of this device's power and air conditioner; null until it is read. */
+  state: BoardState | null;
+  stateFailed: boolean;
+  /** A device with no state of its own whose first read has not come back yet. */
+  pending: boolean;
   onAct: () => void;
   onQR: () => void;
   onHistory: () => void;
@@ -382,7 +487,9 @@ function DeviceCard({
       )}
       {(caps.power || caps.climate || isDirectConnect(device)) && (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 px-5 text-xs">
-          {(caps.power || caps.climate) && <LiveStatus device={device} power={caps.power} climate={caps.climate} />}
+          {(caps.power || caps.climate) && (
+            <LiveStatus state={state} failed={stateFailed} pending={pending} power={caps.power} climate={caps.climate} />
+          )}
           {isDirectConnect(device) && (
             <span className="flex items-center gap-1.5 text-ink/60">
               <span
@@ -450,36 +557,41 @@ function DeviceCard({
   );
 }
 
-/** Live power and air conditioner state, read with one request per card. */
+/**
+ * A device's power and air conditioner as the board knows them, with a tag for
+ * how: 实时 when a HINATA IO reports every change, 非实时 when the device has no
+ * state of its own and shows only what the last refresh found.
+ */
 function LiveStatus({
-  device,
+  state,
+  failed,
+  pending,
   power: hasPower,
   climate: hasClimate,
 }: {
-  device: Machine;
+  state: BoardState | null;
+  failed: boolean;
+  pending: boolean;
   power: boolean;
   climate: boolean;
 }) {
   const { t } = useI18n();
-  const [state, setState] = useState<{ power: string; climate: ClimateState | null } | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let current = true;
-    api<{ power: string; climate?: ClimateState | null }>(`/api/v1/merchant/machines/${device.id}/state`)
-      .then((r) => {
-        if (current) setState({ power: r.power, climate: r.climate ?? null });
-      })
-      .catch(() => {
-        if (current) setFailed(true);
-      });
-    return () => {
-      current = false;
-    };
-  }, [device]);
-  const power = failed ? "unknown" : state?.power ?? "loading";
+  // Waiting for a read is not "unknown": a device with no state of its own is read once, and
+  // only a read that found nothing (or failed) leaves it without a value.
+  const waiting = !failed && (!state || (pending && state.power === null && state.climate === null));
+  const power = failed ? "unknown" : waiting ? "loading" : state?.power ?? "unknown";
   const running = !!state?.climate && state.climate.mode !== "off";
   return (
     <>
+      {state && (
+        <span
+          className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
+            state.watching ? "bg-mint/10 text-mint" : "bg-ink/5 text-ink/55"
+          }`}
+        >
+          {t(state.watching ? "实时" : "非实时")}
+        </span>
+      )}
       {hasPower && (
         <span className={`flex items-center gap-1.5 ${power === "on" ? "text-mint" : "text-ink/50"}`}>
           <span
@@ -500,7 +612,7 @@ function LiveStatus({
       {hasClimate && (
         <span className={`flex items-center gap-1.5 ${running ? "text-mint" : "text-ink/50"}`}>
           <AirVent size={13} aria-hidden="true" />
-          {!state && !failed
+          {waiting
             ? t("读取空调状态…")
             : t("空调：{mode}", { mode: climateSummary(state?.climate ?? null, t) })}
         </span>
@@ -581,9 +693,15 @@ const capabilityMeta: Record<
  */
 function DeviceActions({
   device,
+  state,
+  onState,
   onChanged,
 }: {
   device: Machine;
+  /** Power and air conditioner as the board has them: pushed for a live device, last read otherwise. */
+  state: BoardState | null;
+  /** Hands the board what this panel read of the device. */
+  onState: (next: BoardState) => void;
   onChanged: () => void;
 }) {
   const { t } = useI18n();
@@ -595,24 +713,38 @@ function DeviceActions({
   const [selectedPlayer, setSelectedPlayer] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [coinKey, setCoinKey] = useState("");
-  const [power, setPower] = useState<string | null>(null);
-  const [climate, setClimate] = useState<ClimateState | null>(null);
+  const power = state?.power ?? null;
+  const climate = state?.climate ?? null;
   const [table, setTable] = useState<MahjongTable | null>(null);
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
-  const refreshState = useCallback(() => {
-    api<{ power: string; climate?: ClimateState | null; mahjong: MahjongTable | null }>(
-      `/api/v1/merchant/machines/${device.id}/state`,
-    )
-      .then((r) => {
-        setPower(r.power);
-        setClimate(r.climate ?? null);
-        setTable(r.mahjong);
-      })
-      .catch(() => {});
-  }, [device.id]);
-  useEffect(refreshState, [refreshState]);
+  const onStateRef = useRef(onState);
+  onStateRef.current = onState;
+  /**
+   * A device with no state of its own, asked of Home Assistant: its power and air conditioner go to the board.
+   */
+  const readState = useCallback(
+    () =>
+      api<{ watching: boolean; power: "on" | "off" | null; climate: ClimateState | null }>(
+        `/api/v1/merchant/machines/${device.id}/state`,
+      )
+        .then((r) => onStateRef.current({ watching: r.watching, power: r.power, climate: r.climate ?? null }))
+        .catch(() => {}),
+    [device.id],
+  );
+  /** The mahjong table is not Home Assistant state and nothing pushes it, so it is read on its own. */
+  const readTable = useCallback(
+    () =>
+      api<{ mahjong: MahjongTable | null }>(`/api/v1/merchant/machines/${device.id}/mahjong`)
+        .then((r) => setTable(r.mahjong))
+        .catch(() => {}),
+    [device.id],
+  );
+  // Opening the panel reads nothing about power or the air conditioner; the board already has it.
+  useEffect(() => {
+    if (caps.mahjong) void readTable();
+  }, [caps.mahjong, readTable]);
   async function send(action: string, extra?: Record<string, unknown>) {
     if (busy) return;
     setBusy(action);
@@ -622,7 +754,6 @@ function DeviceActions({
       const r = await playerOperation<{
         temporaryPassword?: string;
         mahjong?: MahjongTable;
-        climate?: ClimateState | null;
       }>(`/api/v1/merchant/machines/${device.id}/actions`, {
         action,
         ...extra,
@@ -633,9 +764,10 @@ function DeviceActions({
           : t("已发送"),
       );
       if (r?.mahjong) setTable(r.mahjong);
-      if (r?.climate) setClimate(r.climate);
-      // Home Assistant can take a moment to report the new setting.
-      else refreshState();
+      else if (action.startsWith("mahjong.")) void readTable();
+      // A device that reports its own changes needs nothing read: the change arrives on its own.
+      // One with no state of its own is asked once, since nothing else will say what the action did.
+      if (/^(power|climate)\./.test(action) && !state?.watching) void readState();
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("操作失败"));

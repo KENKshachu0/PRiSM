@@ -11,6 +11,7 @@ export class PagePolling {
   private running = false;
   private failures = 0;
   private nextReadAt = 0;
+  private deferred = false;
   private timer?: ReturnType<typeof setTimeout>;
   private controller?: AbortController;
   constructor(
@@ -18,11 +19,23 @@ export class PagePolling {
     private readonly interval = 3000,
     private readonly shouldPoll: () => boolean = () => true,
   ) {}
+  /**
+   * Wait one interval before the first read, and read then only if polling is
+   * still wanted: for a page that was handed what the first read would fetch.
+   */
+  deferFirst() {
+    this.deferred = true;
+    this.nextReadAt = Date.now() + this.interval;
+  }
   refresh = () => {
     clearTimeout(this.timer);
     if (this.stopped || !this.visible) return;
     const remaining = this.nextReadAt - Date.now();
     if (remaining > 0) { this.timer = setTimeout(this.refresh, remaining); return; }
+    if (this.deferred) {
+      this.deferred = false;
+      if (!this.shouldPoll()) return;
+    }
     if (this.running) { this.pending = true; return; }
     void this.run();
   };

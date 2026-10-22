@@ -231,6 +231,8 @@ export type DeviceStateWrite = {
   key: string;
   value: unknown;
   authority: DeviceStateAuthority;
+  /** When the value took effect at its source; used when no change event carries a time. */
+  at?: Date;
 };
 
 /**
@@ -250,7 +252,11 @@ export type DeviceRecord = {
   };
   /** Only an operation aimed at `deviceId` can be confirmed by it. */
   confirm?: { operationId: string; deviceId: string; confirmedAt: Date };
-  states?: readonly { write: DeviceStateWrite; event: DeviceEvent }[];
+  /**
+   * Without `event` the state is only stored: a view that changes too often to
+   * be worth a log row, such as an air conditioner's room temperature.
+   */
+  states?: readonly { write: DeviceStateWrite; event?: DeviceEvent }[];
 };
 
 export type DeviceEventRepository = {

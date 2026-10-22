@@ -46,7 +46,7 @@ jobs:
       - run: npm install --prefix "$RUNNER_TEMP/prism-browser" playwright@1.62.1
       - run: node "$RUNNER_TEMP/prism-browser/node_modules/playwright/cli.js" install --with-deps chromium --only-shell
       - run: node "$RUNNER_TEMP/prism-browser/node_modules/playwright/cli.js" install --with-deps webkit
-      - name: Check scan flows, shop data transfer, identities, billing previews and reports
+      - name: Check scan flows, device board, shop data transfer, identities, billing previews and reports
         env:
           PRISM_PLAYWRIGHT_MODULE: ${{ runner.temp }}/prism-browser/node_modules/playwright
           PRISM_SCAN_OUTPUT: .scan-check
@@ -57,6 +57,7 @@ jobs:
             sleep 1
           done
           node scripts/check-scan-browser.cjs
+          node scripts/check-device-board-browser.cjs
           node scripts/check-shop-data-browser.cjs
           node scripts/check-player-identities-browser.cjs
           node scripts/check-live-billing-browser.cjs

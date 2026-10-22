@@ -359,6 +359,15 @@ export const Api = {
       : `/api/v1/machines/session?ticket=${encodeURIComponent(ticketOrPublicId)}`;
     return api<{ machine: PublicMachine }>(url);
   },
+  /**
+   * The machine and, for a signed-in player, the page state in one request: what
+   * the page needs before it can show anything. `state` is the device page's
+   * state shape, which the page that reads it defines.
+   */
+  bootstrap: <S>(ticket: string) =>
+    api<{ machine: PublicMachine; state: S | null }>(
+      `/api/v1/devices/session/bootstrap?ticket=${encodeURIComponent(ticket)}`,
+    ),
   loginMachine: (
     inputOrPublicId:
       | {

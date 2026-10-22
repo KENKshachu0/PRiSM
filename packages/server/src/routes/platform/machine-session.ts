@@ -88,7 +88,7 @@ export async function resolveMachineSession(c: Context<AppBindings>, ticket: str
   return machine;
 }
 
-async function publicMachine(c: Context<AppBindings>, m: Machine) {
+export async function publicMachine(c: Context<AppBindings>, m: Machine) {
   const device = await loadDevice(c.env.DB, m.shop_id, m.id);
   const capabilities = device
     ? publicCapabilities(device)

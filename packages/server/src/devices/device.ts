@@ -132,6 +132,21 @@ export async function loadDevice(db: D1DatabaseLike, shopId: string, deviceId: s
 }
 
 /**
+ * Every device of a shop exactly as stored. Unlike `loadDevices` it never adopts
+ * registry entries or old bindings, so it only reads: for views that are opened
+ * often and must not write.
+ */
+export async function listDevices(db: D1DatabaseLike, shopId: string): Promise<Device[]> {
+  const rows = (
+    await db
+      .prepare(`SELECT ${deviceColumns} FROM machines WHERE shop_id = ? ORDER BY created_at, id`)
+      .bind(shopId)
+      .all<DeviceRow>()
+  ).results;
+  return assemble(db, shopId, rows);
+}
+
+/**
  * Every device of a shop. Registry entries left by older deployments are
  * adopted as devices first, so a listing is always complete.
  */
@@ -148,13 +163,7 @@ export async function loadDevices(
     // backup holds the shop read-only) is retried on the next listing.
     console.error("Home Assistant binding adoption failed", error);
   }
-  const rows = (
-    await db
-      .prepare(`SELECT ${deviceColumns} FROM machines WHERE shop_id = ? ORDER BY created_at, id`)
-      .bind(shopId)
-      .all<DeviceRow>()
-  ).results;
-  return assemble(db, shopId, rows);
+  return listDevices(db, shopId);
 }
 
 export function has(device: Device, capability: CapabilityId): boolean {

@@ -9,8 +9,10 @@
  *
  * State authority:
  * - owned     the platform is the source of truth; stored value is the fact
- * - external  the truth lives elsewhere (Home Assistant); read live every time,
- *             and storage only keeps the observation history
+ * - external  the truth lives elsewhere (Home Assistant). While a HINATA IO
+ *             watches it, every change arrives as an event and the stored value
+ *             is the fact; otherwise nothing is known and a reader asks Home
+ *             Assistant itself, without recording the answer (see `state-view.ts`)
  */
 import { z } from "zod";
 
@@ -41,8 +43,6 @@ export type ActionSpec = {
   confirmedBy?: string;
   /** Do not persist the action's result payload (e.g. a temporary door code). */
   sensitiveResult?: boolean;
-  /** Re-read this state after the action, instead of assuming the effect. */
-  observeAfter?: string;
 };
 
 export type SignalSpec = {
@@ -111,20 +111,20 @@ export const power: CapabilitySpec<HaEntityConfig> = {
   config: haEntityConfig,
   secrets: ["binding"],
   actions: {
-    "power.on": { countsAsPlay: true, requiresEntry: true, observeAfter: "power" },
-    "power.off": { countsAsPlay: true, requiresEntry: true, staffOnly: true, observeAfter: "power" },
+    "power.on": { countsAsPlay: true, requiresEntry: true },
+    "power.off": { countsAsPlay: true, requiresEntry: true, staffOnly: true },
     // "I am still here": an entered player keeps a running device from being
     // switched off as idle. It never switches anything on.
     "power.keep": { countsAsPlay: true, requiresEntry: true },
   },
   signals: {},
-  // Power can be switched outside the platform, so it is read from Home
-  // Assistant (or its watcher); `idle` is the platform's own verdict.
+  // Power can be switched outside the platform. A watcher's events keep it
+  // current; `idle` is the platform's own verdict.
   state: { power: { authority: "external" }, idle: { authority: "owned" } },
   available: (_action, config, secrets) => haBound(config, secrets),
 };
 
-const climateAction: ActionSpec = { countsAsPlay: false, requiresEntry: true, observeAfter: "climate" };
+const climateAction: ActionSpec = { countsAsPlay: false, requiresEntry: true };
 
 /**
  * A Home Assistant `climate.*` entity, such as an air conditioner. Kept apart

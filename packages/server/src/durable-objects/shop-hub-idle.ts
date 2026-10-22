@@ -13,7 +13,6 @@ import {
   type Reminder,
 } from "../devices/idle-power.js";
 import { createRuntimeBus } from "../devices/runtime.js";
-import type { WatchedState } from "./shop-hub.js";
 
 /** What the hub remembers between checks. */
 export type IdleMemory = {
@@ -53,9 +52,10 @@ export async function runIdleCheck(input: {
   shopId: string;
   now: number;
   memory: IdleMemory;
-  watched: Record<string, WatchedState>;
+  /** Home Assistant connections whose stored state is current; for the others a device's power is unknown. */
+  eventConnections: ReadonlySet<string>;
   reminderLeadMs: number | null;
-}): Promise<{ memory: IdleMemory; notices: IdleNotice[] }> {
+}): Promise<{ memory: IdleMemory; notices: IdleNotice[]; poweredOff: string[] }> {
   const { env, shopId, now } = input;
   const db = env.DB;
   const settings = parseIdleSettings(
@@ -66,7 +66,7 @@ export async function runIdleCheck(input: {
   );
   const anyRule = settings.shopEmpty.enabled || settings.device.defaultMinutes > 0
     || Object.values(settings.devices).some((device) => (device.minutes ?? 0) > 0);
-  if (!anyRule) return { memory: { ...emptyIdleMemory(), lastAutoOff: input.memory.lastAutoOff }, notices: [] };
+  if (!anyRule) return { memory: { ...emptyIdleMemory(), lastAutoOff: input.memory.lastAutoOff }, notices: [], poweredOff: [] };
 
   const [visits, capabilityRows, stateRows, activityRows] = await Promise.all([
     db.prepare(
@@ -104,33 +104,25 @@ export async function runIdleCheck(input: {
     }
     return entry;
   };
-  const watchedFor = (configJson: string) => {
-    const config = parse(configJson) as { connectionId?: string; entityId?: string } | null;
-    return config?.connectionId && config.entityId ? input.watched[`${config.connectionId}|${config.entityId}`] : undefined;
-  };
+  // Stored power and climate are facts only on a watched connection; elsewhere
+  // they are unknown, and the idle rules switch off without knowing.
+  const watchedCapabilities = new Set<string>();
   for (const row of capabilityRows.results) {
     const entry = device(row.id, row.name);
-    const watched = watchedFor(row.config_json);
-    if (row.capability === "power") {
-      entry.hasPower = true;
-      if (watched && (watched.state === "on" || watched.state === "off")) {
-        entry.power = watched.state;
-        if (watched.state === "on" && watched.lastChanged) entry.poweredOnAt = Date.parse(watched.lastChanged);
-      }
-    } else {
-      entry.hasClimate = true;
-      if (watched && watched.state !== "unavailable" && watched.state !== "unknown") entry.climate = watched.state;
-    }
+    const connection = (parse(row.config_json) as { connectionId?: unknown } | null)?.connectionId;
+    if (typeof connection === "string" && input.eventConnections.has(connection)) watchedCapabilities.add(`${row.id}:${row.capability}`);
+    if (row.capability === "power") entry.hasPower = true;
+    else entry.hasClimate = true;
   }
   for (const row of stateRows.results) {
     const entry = devices.get(row.device_id);
     if (!entry) continue;
     const value = parse(row.value_json);
     if (row.capability === "power" && row.key === "idle") entry.idle = value === true;
-    else if (row.capability === "power" && row.key === "power" && entry.power === null && (value === "on" || value === "off")) {
+    else if (row.capability === "power" && row.key === "power" && watchedCapabilities.has(`${row.device_id}:power`) && (value === "on" || value === "off")) {
       entry.power = value;
       if (value === "on") entry.poweredOnAt = Date.parse(row.changed_at);
-    } else if (row.capability === "climate" && entry.climate === null && value && typeof value.mode === "string") {
+    } else if (row.capability === "climate" && watchedCapabilities.has(`${row.device_id}:climate`) && value && typeof value.mode === "string") {
       entry.climate = value.mode;
     }
   }
@@ -152,7 +144,8 @@ export async function runIdleCheck(input: {
     reminded: input.memory.reminded,
   });
 
-  const bus = createRuntimeBus({ db, env, shopId });
+  // The hub is told about an IO this switches off itself, so it does not call back into its own object.
+  const bus = createRuntimeBus({ db, env, shopId, notifyHub: false });
   const memory: IdleMemory = {
     emptySince: plan.emptySince,
     emptyHandled: plan.emptyHandled,
@@ -162,16 +155,18 @@ export async function runIdleCheck(input: {
   };
   const act = async (id: string, action: "power.off" | "climate.off") => {
     const target = await loadDevice(db, shopId, id);
-    if (!target) return;
+    if (!target) return false;
     try {
-      await bus.perform({ device: target, action, actor: { type: "system" } });
+      return (await bus.perform({ device: target, action, actor: { type: "system" } })).operation.status === "succeeded";
     } catch (error) {
       console.error("Idle power-off failed", { shopId, id, action, error });
+      return false;
     }
   };
+  const poweredOff: string[] = [];
   for (const id of plan.powerOff) {
     memory.lastAutoOff[id] = now;
-    await act(id, "power.off");
+    if (await act(id, "power.off")) poweredOff.push(id);
   }
   for (const id of plan.climateOff) await act(id, "climate.off");
   for (const [ids, value] of [[plan.markIdle, true], [plan.clearIdle, false]] as const) {
@@ -193,5 +188,5 @@ export async function runIdleCheck(input: {
     const retry = now + 10 * 60_000;
     memory.wakeAt = memory.wakeAt === null ? retry : Math.min(memory.wakeAt, retry);
   }
-  return { memory, notices };
+  return { memory, notices, poweredOff };
 }

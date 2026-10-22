@@ -5,6 +5,7 @@ import { withOperationLease } from "@prism/application";
 import type { AppBindings, TenantShop } from "../../bindings.js";
 import { sha256 } from "../../crypto.js";
 import { jsonError } from "../../http.js";
+import { notifyUserPages } from "../../durable-objects/shop-hub-client.js";
 import { enforceRateLimits } from "../../middleware/rate-limit.js";
 import { getShopDeps } from "../../middleware/tenant.js";
 
@@ -139,5 +140,11 @@ export async function confirmPlatformBinding(
       ),
   );
 
+  // The player's open device page learns of it now instead of on its next poll.
+  try {
+    notifyUserPages(c.env, shop.id, code.user_id, { type: "refresh", reason: "binding" }, c.executionCtx);
+  } catch {
+    // Local server and tests: no execution context to keep the call alive.
+  }
   return c.json({ playerId: player.id, provider: body.provider, subject: body.subject });
 }

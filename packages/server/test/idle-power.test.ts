@@ -81,6 +81,32 @@ describe("idle power planning", () => {
     expect(plan.nextWake).toBe(NOW - MIN + RETRY_OFF_MS);
   });
 
+  it("switches a device off without knowing its state, as an unknown one may be on", () => {
+    const settings = { shopEmpty: { enabled: true, minutes: 15 } };
+    const devices = [
+      device({ power: null }),
+      device({ id: "ac", hasPower: false, hasClimate: true, power: null, climate: null }),
+      device({ id: "known-off", power: "off" }),
+    ];
+    const due = planIdle(inputs({ settings, devices, emptySince: NOW - 15 * MIN }));
+    expect(due.powerOff).toEqual(["m1"]);
+    expect(due.climateOff).toEqual(["ac"]);
+  });
+
+  it("judges a device of unknown state only by its own activity, and switches it off once per stretch of idleness", () => {
+    const settings = { device: { defaultMinutes: 30, whileOccupied: "off" } };
+    const blind = (over: Partial<IdleDevice>) => planIdle(inputs({ settings, activeEntries: 1, devices: [device({ power: null, poweredOnAt: null, ...over })] }));
+    // No activity at all: nothing to count from.
+    expect(blind({}).powerOff).toEqual([]);
+    expect(blind({ lastActivity: NOW - 20 * MIN })).toMatchObject({ powerOff: [], nextWake: NOW + 10 * MIN });
+    expect(blind({ lastActivity: NOW - 31 * MIN }).powerOff).toEqual(["m1"]);
+    // Already switched off since that activity: nothing shows whether it took, so it is left alone.
+    const handled = blind({ lastActivity: NOW - 31 * MIN, lastAutoOff: NOW - 11 * MIN });
+    expect(handled.powerOff).toEqual([]);
+    // Fresh activity after the last switch-off starts a new stretch.
+    expect(blind({ lastActivity: NOW - 31 * MIN, lastAutoOff: NOW - 40 * MIN }).powerOff).toEqual(["m1"]);
+  });
+
   it("reminds the bot once, its lead time before the power-off", () => {
     const settings = { shopEmpty: { enabled: true, minutes: 15 } };
     const before = planIdle(inputs({ settings, emptySince: NOW - 5 * MIN, reminderLeadMs: 5 * MIN }));

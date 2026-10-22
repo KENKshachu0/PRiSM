@@ -62,7 +62,7 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 | 路由 | 用途 |
 | --- | --- |
 | `GET /rpc/integration/sessions/active` | 列出在场所有活跃 session，含 `playerDisplayName`、`identities` (provider+subject)、`startedAt`、`label`、`elapsedMinutes`。机器人在 `/list`、`/窝里` 这类命令里用 `identities` 中的 `subject`（平台用户 ID）去调用聊天平台 API 拉昵称，而不是直接显示后台存的 `playerDisplayName`。 |
-| `GET /rpc/integration/device-states` | 列出每台已启用、绑定了电源的设备的电源状态，**每次请求实时读取 Home Assistant**（电源可能在平台外被改动）。`state` 为 `on`/`off`；读不到时 `status` 为 `offline`、`state` 为最后一次观测值或 `unknown`。`metadata.aliases` 为设备别名。bot 的 `/show` 直接消费。（插件原来的无人自动关机 `powerOffInterval` 已删除，改为后台的「闲置自动关机」。） |
+| `GET /rpc/integration/device-states` | 列出每台已启用、绑定了电源的设备的电源状态。设备所在的 HA 连接处于事件驱动时读存储的事实，**不去问 Home Assistant**；无状态时才现场读取 Home Assistant 且不记录（电源可能在平台外被改动，所以这时每次请求都会现查，会变慢）。`state` 为 `on`/`off`；读不到时 `status` 为 `offline`、`state` 为最后一次存储的值或 `unknown`。`metadata.aliases` 为设备别名。bot 的 `/show` 直接消费。（插件原来的无人自动关机 `powerOffInterval` 已删除，改为后台的「闲置自动关机」。） |
 
 平台昵称的取法因适配器而异：Koishi 走 `session.bot.getUser(qq)`，AstrBot 在 aiocqhttp 走 `bot.call_action("get_stranger_info", user_id=qq)`，telegram、微信、Aime 等按对应适配器提供的方法拉取；取不到则退化为后台存的玩家名。机器人不要把后台存的 displayName 直接写进消息，避免不同身份来源的玩家出现 `Player 123` 这种开发者命名。
 
@@ -158,8 +158,8 @@ await client.requestScanByIdentity(
 
 | 能力 | 配置（`config_json`） | 密钥（`secret_json`，每个值单独加密） | 动作 | 设备回报 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| `power` | `connectionId`、`entityId`（`switch.*`/`input_boolean.*`） | —（旧绑定：`binding`，见下文「店铺 Home Assistant 连接」） | `power.on`、`power.off` | — | `power`，外部权威，实时读取 |
-| `climate` | `connectionId`、`entityId`（`climate.*`） | —（同上） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威，实时读取 |
+| `power` | `connectionId`、`entityId`（`switch.*`/`input_boolean.*`） | —（旧绑定：`binding`，见下文「店铺 Home Assistant 连接」） | `power.on`、`power.off` | — | `power`，外部权威（事件驱动读存储，无状态现查） |
+| `climate` | `connectionId`、`entityId`（`climate.*`） | —（同上） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威（同上） |
 | `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`card.login`（由读卡器灯光推出）、`led.set`（不存） | `link`，平台权威 |
 | `door` | `lockId` | — | `door.open` | — | — |
 | `mahjong` | `capacity`、`pricingConfigIds` | — | —（上下桌走麻将流程） | — | — |
@@ -167,9 +167,9 @@ await client.requestScanByIdentity(
 **空调（`climate`）单列一个能力，不并入电源**：它的状态是模式和温度而不是开/关；用空调不算「玩过」机台（所有空调动作 `countsAsPlay: false`，不会取消入场的免费宽限）；空调关着也不应该挡住机台投币、刷卡（那只看 `power`）。一台设备可以同时带电源和空调（例如包间：灯电源 + 空调）。
 
 - 动作对应 Home Assistant 的 `climate/turn_on`、`turn_off`、`set_hvac_mode`（`mode`）、`set_temperature`（`temperature`）、`set_fan_mode`（`fanMode`）。可选的模式、风速、温度范围和步长不写死，每次从实体的 `hvac_modes`、`fan_modes`、`min_temp`、`max_temp`、`target_temp_step` 读取；实体不接受的值由 Home Assistant 拒绝，操作记为失败。
-- 状态读取：`GET /api/v1/merchant/machines/:id/state` 与玩家页 `GET /api/v1/devices/session/state` 都返回 `climate`（`{ mode, modes, temperature, currentTemperature, minTemperature, maxTemperature, temperatureStep, fanMode, fanModes }`，读不到为 `null`）。只把**设定**（模式、目标温度、风速）记为 `change` 事件；室温会自己漂移，记下来每次读取都会多一条。
+- 状态读取：`GET /api/v1/merchant/machines/:id/state`、玩家页首屏接口 `GET /api/v1/devices/session/bootstrap`（`state.device.climate`）和 `GET /api/v1/devices/session/device` 都返回 `climate`（`{ mode, modes, temperature, currentTemperature, minTemperature, maxTemperature, temperatureStep, fanMode, fanModes }`，未知为 `null`）。事件驱动时读存储，无状态时现读 HA（后台看板的两个接口都是这样，没有开关）。只把**设定**（模式、目标温度、风速）记为 `change` 事件；室温会自己漂移，完整视图另存为不记事件的 `climate/view`。
 - 玩家扫码后能做全部空调操作（含关空调）；计费店铺要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。开启位置校验后，每个空调动作都和机台操作一样要求在店内（`checkShopLocation(…, "machine")`），后台店员操作不校验。
-- 玩家页是独立的空调卡片（`PlayerClimate`）：关着时只有「开空调」；开着时中间是大号设定温度和 −/+，下面是带图标的模式分段和风速分段，卡片颜色随模式变化（制冷蓝、制热橙等）。选择立即显示，Home Assistant 回报后以实际状态为准，6 秒内未回报则回到实际状态；连续按 −/+ 会在停下 0.7 秒后合并成一次 `climate.set_temperature`，避免每一步都重新定位、都调用一次 Home Assistant。后台操作面板沿用同一套逻辑，样式更紧凑。
+- 玩家页是独立的空调卡片（`PlayerClimate`）：关着时只有「开空调」；开着时中间是大号设定温度和 −/+，下面是带图标的模式分段和风速分段，卡片颜色随模式变化（制冷蓝、制热橙等）。其它按钮实时发送；−/+ 在停下 1 秒后合并成一次 `climate.set_temperature`，连按会重新计时，避免每一步都重新定位、都调用一次 Home Assistant。选择立即显示：事件驱动时以推来的实际状态为准，6 秒内未回报则回到实际状态；无状态时 HA 回 200 就算完成，页面保留所选的值，不再核对。后台操作面板沿用同一套逻辑，样式更紧凑。
 - **「全部开/关机」（`target.ref: "all"` 的 `power.on/off`）同时开/关所有空调**，每台空调记一条 `climate.on/off` 操作，与电源操作共用一个父操作 ID。Bot 的 `off all` 与 Koishi 的无人自动关机都走这条路径，因此也会关空调。
 - 保存设备时 `climate` 与电源的 `homeAssistant` 形状相同（见下一节），实体必须是 `climate.*`。
 
@@ -188,7 +188,7 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 
 - 新建连接后，平台在后台（`waitUntil`）用连接的控制令牌执行：`auth/current_user` 确认是管理员 → `config/auth/create`（`group_ids: ["system-read-only"]`）建用户 → `config/auth_provider/homeassistant/create` 给它随机用户名和密码 → 走 HA 登录流程（`/auth/login_flow` + `/auth/token`，`client_id` 为平台地址）以该用户登录 → 以该用户身份 `auth/long_lived_access_token`（3650 天）→ `config/auth_provider/homeassistant/delete` 删掉它的密码，长期令牌成为这个账号唯一的入口。顺带读 `GET /api/config` 的 `internal_url` 存为 `internalUrl`，供店内机台优先使用。重做时先删除旧的只读用户。
 - 控制令牌不是管理员的，`readAccess` 为 `needs_admin`：设备编辑器提示贴一次管理员令牌，`POST /ha-connections/:id/read-access?shopId=`（`{ adminToken? }`）只在这一次请求里使用它，不保存。其它失败记为 `failed` 并带原因，可以重试。本地 Bun 服务端没有 `waitUntil`，只能用这个接口手动触发。
-- 依赖 Home Assistant 默认的用户名密码登录方式；店家关掉它时这一步失败，需要手动提供令牌。只读用户仍可调用少数不针对实体的服务（如发通知），但控制不了任何设备。以上只用模拟的 HA 响应测过，未接真实 Home Assistant 验证。
+- 依赖 Home Assistant 默认的用户名密码登录方式；店家关掉它时这一步失败，需要手动提供令牌。只读用户仍可调用少数不针对实体的服务（如发通知），但控制不了任何设备。整条流程已在真实 Home Assistant（官方 docker 镜像）上跑过：管理员令牌得到 `ready`，非管理员令牌得到 `needs_admin`，IO 固件用只读令牌订阅事件并收到完整快照；见 [开发环境](dev-environment.md#真实-home-assistant-与-hinata-io-的端到端测试)。
 
 能力目录写在 `packages/server/src/devices/capabilities.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
 
@@ -198,16 +198,18 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 - **副作用**是现实中发生的事（机器开了、卡进了游戏），平台不能直接观察。
 - **事件**是平台记录下来的事实（`device_events`，只增不改）：`request`/`result`（平台发起）、`signal`（设备回报，如 `card.consumed`）、`change`（状态变化，如电源从开到关、机台上线/掉线）。
 - 设备回报 `card.consumed` 时，会把对应的 `aime.scan` 操作标记为 `confirmed_at`（只认本设备的操作）。
-- 状态（`device_state`）只在值变化时写一条 `change` 事件。电源是**外部权威**：每次需要时实时读取 Home Assistant，存储只保留观测历史；直连链路 `link` 是**平台权威**，由中继在连接/断开时写入。
+- 状态（`device_state`）只在值变化时写一条 `change` 事件。电源和空调是**外部权威**：真相在 Home Assistant。一个连接被监听者订阅时（事件驱动），每个事件写入 `device_state`，存储的值就是事实，读者只读存储；没有人监听时（无状态）设备没有已知状态，读者现查 HA 且不记录，存储里残留的旧值被忽略（见「店铺 Hub」）。直连链路 `link` 是**平台权威**，由中继在连接/断开时写入。
 - 以后要做「空闲/忙碌」这类派生状态时，应当监听**事件**（包括设备回报和观测到的变化），而不是只看平台发出的动作。
 
-所有写入都经过 `packages/server/src/devices/bus.ts`：`perform`（动作）、`signal`（回报）、`setOwned`（平台权威状态）、`observe`（实时读外部状态）。其他代码不直接写设备表。卡号只作为临时参数交给执行器，从不落库；门锁临时密码只在本次响应返回。
+所有写入都经过 `packages/server/src/devices/bus.ts`：`perform`（动作）、`signal`（回报）、`setOwned`（平台权威状态）、`reportMany`（监听者上报的外部状态，一批写入，可只存储不记事件）。`observe`（现读后写入）仍在总线上但不再用于任何读取路径。动作不会在完成后读回外部状态。其他代码不直接写设备表。卡号只作为临时参数交给执行器，从不落库；门锁临时密码只在本次响应返回。
 
 ### 设备看板与编辑器（Web）
 
 商户后台的设备页按「设备是身份、能力是配置」组织，与服务端能力目录一一对应：
 
-- 设备卡片只陈述三件事：设备身份（名称、别名、启用状态）、已绑定的能力徽章、实时状态（电源、空调模式与温度、直连在线）。卡片底部是「操作」（主按钮）、「编辑」、「操作记录」和二维码入口；有可执行能力的设备才显示「操作」，只读账号不显示。
+- 设备卡片只陈述三件事：设备身份（名称、别名、启用状态）、已绑定的能力徽章、实时状态（电源、空调模式与温度、直连在线）。**每个带电源或空调的设备有一个「实时 / 非实时」标签**：「实时」表示它用到的 Home Assistant 连接有 HINATA IO 监听者订阅着并交付了完整状态，显示的值是推来的事实；「非实时」表示设备没有自己的状态，显示的是最近一次读到的值。**非实时设备不会是「未知」**：进入页面后看板对它读一次，之后即使这个值已经落后了十分钟也照样显示，只有从没读到过的字段才是空（读取期间显示「读取…」；读不到才是「未知」）。一台实时设备变成非实时（连接不再被监听）时保留它最后一次的值，只把标签换成「非实时」。是否实时由监听者对 HA 连接的订阅决定，不是看板自己的这条连接。门锁、麻将桌这类没有电源和空调的设备没有标签。
+- **实时设备的状态完全靠 Hub 推送，看板和面板都不去读它。** 进入设备页后连上店铺 Hub 的一条 WebSocket：连接建立时 Hub 发整店的当前状态（含每台设备实时与否），之后每台实时设备的变化（电源开关、空调设定和室温）推过来，页面直接更新；哪些设备是实时的发生变化时（有连接开始或停止被监听），Hub 重发整店。Hub 只给看板推实时设备的变化，一个连接的第一份快照也不是逐台推的变化，而是以整店状态的形式在宣布该连接实时之后发一次，所以客户端不做过滤，收到变化就更新它指的那台设备。对实时设备执行操作后**什么都不读**，操作的结果会作为事件自己推过来；只重载设备列表（名称、绑定等）。
+- **非实时设备靠主动读取，读的就是 Home Assistant。** 进入页面、看板拿到第一份状态后，对所有非实时设备读一次（`GET …/machines/states?shopId=`，没有任何开关：实时设备返回存储的事实，非实时设备没有存储的状态，所以去问它们的 Home Assistant，不记录）；页头有一个店铺级的「刷新设备状态」按钮再读一次，**只对非实时设备有作用**，实时设备原样不动（Hub 一直让它是当前的，读取带回的只是读取时数据库里的值，客户端不采用）；全部设备都是实时时按钮禁用。对一台非实时设备在「操作」面板里执行开关机或空调操作后，重读**这一台**一次（`GET …/machines/:id/state`），因为没有别的途径能说明操作的结果；读到的值写回看板，面板和卡片显示同一份。HTTP 读取只有这三种用途，外加 Hub 没给出状态时的兜底（连不上或连上后 3 秒内没有任何状态，按进入页面的方式读一次整店）。**实时设备没有任何读取，连接断开期间也没有**：连接断开后按 5、10、20、60 秒递增重连，Hub 在重连成功时重发整店状态，实时设备靠它补上断开期间错过的变化；断开期间看板显示的是断开前的值。「操作」面板的电源和空调直接取看板已有的状态，打开时不读；麻将座位不是 Home Assistant 状态，没有推送，面板用 `GET …/machines/:id/mahjong` 单独读。卡片底部是「操作」（主按钮）、「编辑」、「操作记录」和二维码入口；有可执行能力的设备才显示「操作」，只读账号不显示。
 - **下发操作与历史记录是两个入口**：`操作` 打开只含开机/关机/投币/开门密码的确认面板，`操作记录` 打开只读的事件时间线。两者混在一个弹窗里会让有后果的按钮看起来像记录的一部分。
 - 编辑器分两段：**设备身份**（名称、别名、启用）和**设备能力**。每项能力是一张带开关的卡片——电源、空调、刷卡（外部中继或直连）、开门密码、麻将桌；关闭的能力不渲染其表单，避免四种凭据同时铺开。提交按钮吸底，长表单无需滚到末尾才能保存。
 - 直连模式（`transport: "embedded"`）的令牌是**显式签发的**：面板里只有「签发设备令牌 / 轮换设备令牌」按钮，普通保存不会顺手创建凭据；未签发就保存会被拒绝并提示先签发或改用外部中继。签发成功后弹窗切换为一次性交付步骤，显示令牌、可复制的两行 INI 片段（`serverUrl=` / `deviceToken=`），在点击「我已写入机台」之前关闭按钮禁用。轮换前明确提示机台现有令牌会立即失效。
@@ -224,7 +226,7 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 - 麻将上桌的候选人来自 `staff/live-players`（已入场在店玩家），已入座的人不重复出现；上桌要求该玩家有进行中的入场，所以全量玩家列表里大多数人本来就会失败。
 - 刷卡由店员直接输入 **20 位卡号**（`cardNumber`）发送；也兼容传 `playerId`，平台读取该玩家绑定的卡号（优先 `aime` provider）。卡号只作为临时参数交给执行器，不落库；卡号格式不合法返回 400，玩家没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
 - `mahjong.seat` / `mahjong.unseat` 接受 `playerId`，让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
-- `GET /api/v1/merchant/machines/:id/state` 返回 `{ power, mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。
+- `GET /api/v1/merchant/machines/:id/mahjong` 返回 `{ mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。电源和空调的状态是另一个接口 `…/:id/state`，见「读取的接口」。
 
 - 投币可以在操作面板现场指定要按的键（`key`）：字母、数字、空格、Enter、常用未加 Shift 的符号都支持；不传则使用设备配置的 `coinKey`。服务端把字符映射成 Windows Virtual-Key 码，协议本身只传数字键码，带 Shift 的符号（如 `!`）无法表示。只有店员可以指定按键，玩家端仍使用设备配置。
 
@@ -266,18 +268,44 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 
 响应新增 `card` 字段：`ok`、`failed`、`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 和 `failed` 不投币，`coin` 返回 `skipped`，`reason` 分别为 `CARD_NOT_READ`、`LOGIN_FAILED`。扫码页在卡片行的说明文字里显示「登录成功」「登录失败」（`failed` 和 `not_read` 都显示这个）「已刷卡」，投币结果接在后面（如「登录成功 · 投币失败」）；结果停留几秒，期间其它卡片和投币按钮照常可用。`card.consumed` 只说明游戏从读卡接口拿到了卡号，灯光颜色才反映游戏服务器的结论。
 
-### 店铺 Hub：谁替店里盯着 Home Assistant
+### 店铺 Hub：谁替店里盯着 Home Assistant，以及设备状态的两种模式
 
-平台不再每次都去问 Home Assistant。每家店有一个 `ShopHub` Durable Object（binding `SHOP_HUB`，迁移 tag `shop-hub-v1`，名字是店铺 ID），它从店里**在线的直连 HINATA IO 中挑一台**，让它在局域网里用只读令牌订阅 Home Assistant（`subscribe_entities`），把状态变化经已有的设备连接报回来。HA 不必暴露到公网，平台这边也没有长连接：机台连进来的 WebSocket 照常可以休眠。
+每家店有一个 `ShopHub` Durable Object（binding `SHOP_HUB`，迁移 tag `shop-hub-v1`，名字是店铺 ID），它从店里**在线的直连 HINATA IO 中挑最多两台**，让它们在局域网里用只读令牌订阅 Home Assistant（`subscribe_entities`），把状态变化经已有的设备连接报回来。HA 不必暴露到公网，机台连进来的 WebSocket 照常可以休眠。
+
+#### 两种模式（按 Home Assistant 连接）
+
+- **事件驱动**：一个 HA 连接被至少一台存活的监听者订阅着、并且那台已经交付了完整状态时，`ha_event_connections` 里有它的一行。此时 `device_state` 就是**事实**：玩家页的首屏接口、后台设备看板、Bot 的 `device-states`、投币前的电源检查都直接读 D1，**不再去问 Home Assistant**，也就不需要信任或过期的判断。
+- **无状态**：其余情况下设备没有已知状态。需要状态的读者自己现查 Home Assistant，**不写入任何状态或事件**；只有平台自己发起的动作（开关机、空调）会写 `request`/`result` 事件。闲置自动关机不依赖设备的实际状态，所以不受影响（见下）。后台设备看板给这样的设备打「非实时」标签，它的值靠看板主动向 HA 读（进页面、刷新按钮、操作后），见下。
+
+连接进入事件驱动要同时满足：监听者的租约有效（90 秒内有上报）、它对这个连接最近一次 `ha.status` 是已连接、当前这一任期已交付该连接的全量状态。**先把状态写进 D1，再把连接宣布为事件驱动**；任何一条不满足就回到无状态。只有 ShopHub 判定模式，`ha_event_connections` 只在切换时写。模式变化会通过 WebSocket 推给相关的设备页（`watching` 帧）。读者拿到的 `watching` 是设备用到的所有连接都处于事件驱动；值为 `null` 表示 HA 报告不可用（`unavailable`/`unknown`），不当作开也不当作关。
+
+#### 监听者
 
 - **谁能被选**：`CLIENT_HELLO` 的 `body.features` 含 `ha.watch` 的机台。`MachineRelay` 收到这样的 hello 就告诉 Hub 自己上线（`relayOnline`），最后一个这样的连接断开时告诉 Hub 下线（`relayOffline`）。网关把通道名放在 `x-prism-relay-channel` 头里交给 `MachineRelay`，Hub 用它回头找到这台机台。
-- **选谁**：在线最久的那台；刚失败过的（连不上 HA、没能下发、租约过期）5 分钟内排在后面。同一时间只有一台在订阅，令牌只在它的内存里。
-- **下发**：`{"action":"HA_WATCH","body":{"term":3,"connections":[{"id":"ha_…","urls":["http://ha.local:8123","https://ha.example"],"token":"<只读令牌>","entities":["switch.a","climate.b"]}]}}`。`urls` 按顺序尝试，店内地址（HA 的 `internal_url`）在前。换人时给原来那台发 `{"action":"HA_UNWATCH","body":{}}`。只有已经签好只读账号、且有设备用到的连接会下发；一条都没有就不选人。
-- **上报**（JSON-RPC 通知，无 `id`）：`ha.status {term, connection, connected, error?}`，订阅建立或断开时、以及每 30 秒一次作为心跳；`ha.states {term, connection, full, states:[{entity_id, state, last_changed, attributes}]}`，第一次是全量，之后只报变化；`last_changed` 是 HA 压缩状态里的 Unix 秒（也接受 ISO 文本），`attributes` 只带平台用到的空调属性。任何上报都给租约续期 90 秒；`term` 不是当前任期、或不是当前那台发的，一律丢弃，所以交接时两台短暂同时上报也无害。`connected: false` 且店里还有别的候选时立即换人。
-- **换人**：那台下线时立即改派；90 秒没有任何上报，Hub 的 alarm 把它排到后面并改派。新那台订阅后先报全量，期间漏掉的变化自动补齐。设备、连接或只读账号变化后，后台接口让 Hub 重新下发（`refresh`）。
-- **记录**：上报的状态存在 Hub 里；有设备用到的实体，电源的开关变化、空调的设定变化（模式、目标温度、风速）通过设备总线的 `report` 写入 `device_state` 并记 `change` 事件，**时间用 HA 的 `last_changed`**，所以在米家或物理按钮开机，也能知道真正的开机时间。
-- **扫码页实时推送**：`GET /api/v1/devices/session/ws?ticket=`（玩家登录态 + 设备二维码会话，WebSocket 升级）连到店铺 Hub。连上先收到 `{"type":"hello","watching":true|false,"power"?,"climate"?}`；之后这台设备的电源变化推 `{"type":"state","power":"on"|"off"}`，空调变化（含室温）推 `{"type":"state","climate":{…同 /session/state 的 climate}}`；有没有机台在盯 HA 变化时推 `{"type":"watching","watching":…}`。网页在有人盯着且已收到电源状态时停掉电源轮询，否则照旧轮询；`/session/state` 和 `/session/power` 两个轮询接口保留，旧版 App Clip 继续使用。
-- **读取**：电源读取先问 Hub。有人在盯、缓存是「开」就直接用；缓存是「关」或没人在盯，照旧现场问 HA——把玩家挡在一台其实开着的机器外面代价更大。空调状态有缓存就直接用。平台刚发出开关机或空调命令后的那一次读取（`observeAfter` 和操作响应）一律现场读，因为 Hub 可能还没收到变化。
+- **选谁**：在线最久的两台（`WATCHERS = 2`）；刚失败过的（连不上 HA、没能下发、租约过期）5 分钟内排在后面。第二台的作用是**不让状态断流**：一台掉线时另一台仍在报，模式不会闪回无状态，空出来的位置由下一台在线的机台补上。令牌只在监听者的内存里。
+- **下发**：`{"action":"HA_WATCH","body":{"term":3,"connections":[{"id":"ha_…","urls":["http://ha.local:8123","https://ha.example"],"token":"<只读令牌>","entities":["switch.a","climate.b"]}]}}`。`urls` 按顺序尝试，店内地址（HA 的 `internal_url`）在前；每次下发用新的任期号。换人时给原来那台发 `{"action":"HA_UNWATCH","body":{}}`。只有已经签好只读账号、且有设备用到的连接会下发；一条都没有就不选人。
+- **上报**（JSON-RPC 通知，无 `id`）：`ha.status {term, connection, connected, error?}`，订阅建立或断开时、以及每 30 秒一次作为心跳；`ha.states {term, connection, full, states:[{entity_id, state, last_changed, last_updated, attributes}]}`，第一次是全量，之后只报变化；时间是 HA 压缩状态里的 Unix 秒（也接受 ISO 文本），`attributes` 只带平台用到的空调属性。任何上报都给租约续期 90 秒；`term` 不是该监听者当前的任期，一律丢弃，所以交接时新旧两个任期短暂同时上报也无害。
+- **去重与乱序**：两台监听者看到同一个事件，只记一次。Hub 按每个实体最近一次已应用的 `last_updated`（旧固件没有这个字段时退回 `last_changed`）判断：不比已应用的新就丢弃，所以一台晚到的旧事件不会把状态改回去。`last_updated` 要单独带，因为空调的温度、风速变化不会动 `last_changed`。设备事件的去重另有 SQL 保证：状态值没变就既不写事件也不写状态。两份报告同一时刻到达时 Hub 一份一份处理（`haReport` 排队），第二份要等第一份存完才判断，否则两份都会认为事件是新的、各推送一次。
+- **换人**：监听者下线时立即补位；90 秒没有任何上报，Hub 的 alarm 把它排到后面并补位。**平台自己把监听者所在的机台关机**（玩家、店员、闲置自动关机的 `power.off` 成功后），Hub 立刻认定它下线（`markDown`），不等租约，且在它再次 hello 之前不再选它。`ha.status` 报告连不上 HA 而店里还有没在盯的候选，立即换人；没有候选就保留，该连接回到无状态直到它重新订阅并交付全量。部署会让所有连接断开且没有关闭回调，也靠租约兜底。
+- **记录**：上报的状态一批写入 D1（`bus.reportMany`，一次往返）。电源写 `power/power`（`on`/`off`/`null`）；空调写两个键：`climate/climate` 只含设定（模式、目标温度、风速），变化时记 `change` 事件，`climate/view` 是完整视图（含室温、可选模式、范围），只存储不记事件，因为室温会自己漂移。**时间用 HA 的 `last_changed`**，所以在米家或物理按钮开机，也能知道真正的开机时间。写入失败时不宣布该连接，并让监听者用新任期重新订阅（30 秒内最多一次），换回一份全量状态重写。
+- **成本**：每次心跳只写一行存储（租约），且不重设 alarm，只在租约可能到期时才醒来；设备状态本身只在变化时写 D1。
+
+#### 读取的接口
+
+- `GET /api/v1/devices/session/bootstrap?ticket=`：扫码首屏一次请求拿到机台和（已登录时）页面状态；页面状态里的 `device: { watching, power, climate }` 是**已知的事实**，不问 HA。`/session/state` 同样带 `device`；它的 `includePower` / `includeClimate` 默认仍现读 HA，给没升级的旧客户端用，新客户端传 `=0`。
+- `GET /api/v1/devices/session/device?ticket=`：无状态时页面自己取一次状态；事件驱动时直接返回事实。无状态时电源和空调并发去问 HA，且不记录。`/session/power` 语义相同，只返回电源。
+- `GET /api/v1/merchant/machines/states?shopId=`：看板的整店读取，用于**进入页面时对非实时设备读一次、刷新按钮、Hub 没给出状态时的兜底**，不是实时设备取状态的路径。返回 `{ states: { [deviceId]: { watching, power, climate } } }`，只含带电源或空调的设备，用两条 D1 查询读出存储的事实。`watching` 为真的设备返回存储的事实；`watching` 为假的设备没有存储的状态，所以去问它们的 Home Assistant（并发上限 4，不记录），问不到的是 `null`，客户端对它保留已有的值；`watching` 为真的设备客户端不采用读取的值。没有任何开关参数。店铺成员可读，非成员 403，缺 `shopId` 为 400。
+- `GET /api/v1/merchant/machines/:id/state`：单台设备的电源和空调，**只用于对一台非实时设备执行开关机或空调操作后重读这一台**。返回 `{ watching, power, climate }`：实时设备返回存储的事实，非实时设备去问 HA。实时设备不用它。
+- `GET /api/v1/merchant/machines/:id/mahjong`：返回 `{ mahjong }`（`{ capacity, seats: [{ playerId, name, playing }] }`，没有麻将能力为 `null`），给操作面板显示座位并选择下桌对象。座位不是 Home Assistant 状态，读它不会去问 HA。
+- `GET /api/v1/merchant/machines/ws?shopId=`（WebSocket 升级）：看板的实时通道，连到该店的 Hub。只给店铺成员（非成员 403，缺 `shopId` 400，没有 `Upgrade` 头 426）；浏览器带了 `Origin` 就必须是平台自己的来源（`APP_ORIGIN` / `EXTRA_ALLOWED_ORIGINS`），否则 403，因为会话是 Cookie。路由把店铺 ID 和 `x-prism-hub-board` 交给 Hub 并去掉 `Authorization`，Hub 以 `board` 标签接受连接。帧：`{"type":"states","states":{<deviceId>:{watching,power,climate}}}`（连接建立时、以及哪些设备是实时的发生变化时重发整店，包括有连接开始或停止被监听）；`{"type":"state","deviceId":…,"power"?:"on"|"off"|null,"climate"?:{…}|null}`（某台实时设备的变化，空调含室温，没说的键不是这次变化的内容）。Hub 只给看板推实时设备的变化：每台设备推 `state` 帧要求它用到的所有 HA 连接都已宣布为实时，所以一个连接的第一份快照不会逐台推，只在宣布之后以 `states` 整店帧发一次。客户端收到 `state` 帧就更新它指的那台设备，不再自己判断是否实时。客户端每 30 秒发一次 `ping`，Hub 的自动应答 `pong` 不会唤醒对象。
+- 动作的响应**不再读回状态**：HA 返回 200 就是动作完成；事件驱动时新状态随后作为事件到来，无状态时没有状态可报。
+
+#### 扫码页
+
+- **无状态**：首屏接口不含设备状态。页面在拿到首屏后（不必等入场）立即取一次 `/session/device`，不阻塞选卡，设备名后面显示「正在获取电源状态」；取到关机就直接切到电源页。按下开机，HA 回 200 就放行进入下一页。空调的其它按钮实时发送，调温按钮在停下 1 秒后才发出一次请求（连按会重新计时），HA 回 200 就算完成，页面显示所选的值。除了 Bot 绑定（仍轮询）以外不轮询设备，也不保证页面实时。
+- **事件驱动**：首屏接口直接带电源和空调。页面连上 `GET /api/v1/devices/session/ws?ticket=`（玩家登录态 + 设备二维码会话，WebSocket 升级）。帧：`{"type":"hello","watching":true|false,"power"?,"climate"?}`；`{"type":"watching","watching":…,"power"?,"climate"?}`（模式变化，变成事件驱动时附带当前状态）；`{"type":"state","power":"on"|"off"|null}` 或 `{"type":"state","climate":{…}|null}`（这台设备的变化，空调含室温）；`{"type":"refresh","reason":"binding"}`（页面显示的东西在别处变了，例如 Bot 刚确认了绑定，页面重新读一次状态）。按下开机后等这台设备的电源变成开再放行（15 秒没等到，按钮回来并提示；连接断开或设备不再被监听则直接放行）。机器被后台关掉时，玩家页同步切到开机页。空调同理：选择先显示，以推来的实际状态为准。Bot 绑定也走推送，不再轮询。
+- 页面连接断开后不再相信它说过的，重新取一次状态；重连后以 `hello` 为准。旧版 App Clip 继续使用 `/session/state` 与 `/session/power`，两者保持可用。
+- 麻将座位不是 Home Assistant 状态，仍按原来的方式轮询。
 
 ### 闲置自动关机
 
@@ -286,9 +314,11 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 - **店里没人**：没有任何进行中的场次满 N 分钟（默认 15），关掉所有开着的电源和所有在运行的空调。一段「没人」只执行一次；没人的起点取 Hub 记下的时间，没有就取最后一次结账时间。
 - **单台设备闲置**：设备开着、超过闲置时长没有活动。默认时长为 0（不启用）；每台设备可以单独设置时长，或设为「从不自动关机」（`PUT /idle-power/devices/:deviceId?shopId=`，`{ minutes: number|null, exclude }`，`null` 用店铺默认，`0` 不参与）。店里没人且「店里没人」规则关着时直接关机；店里有人时按店长的选择：只标记为闲置、通过 Bot 提醒、或直接关机——平台不知道谁在玩哪台，游客模式、实体投币都没有任何回报。
 
-**活动**指能说明有人在用这台设备的事：机台的 `card.state`、`card.consumed`、`card.login` 信号，以及玩家或店员发起的、算作「玩过」的动作（`power.on`、`coin`、`aime.scan`、`power.keep`；关机不算）。设备开机的时刻也算一次，所以在 HA 外面手动开机也有完整的闲置时长（有 Hub 盯着时用 HA 的 `last_changed`）。
+**活动**指能说明有人在用这台设备的事：机台的 `card.state`、`card.consumed`、`card.login` 信号，以及玩家或店员发起的、算作「玩过」的动作（`power.on`、`coin`、`aime.scan`、`power.keep`；关机不算）。设备开机的时刻也算一次，所以在 HA 外面手动开机也有完整的闲置时长（事件驱动时用 HA 的 `last_changed`）。
 
-**执行**由店铺 Hub 负责：只记最后活动时间，不逐秒倒数；alarm 设在最早的截止时间。刷卡信号、扫码操作、刷卡登录、店铺接口的任何写操作（入场、结账等）和设置保存都会「碰一下」Hub，2 秒内的多次合并成一次检查。检查时从 D1 读设置、进行中的场次、电源与空调状态（优先用 Hub 盯到的状态）和最近 24 小时的活动，交给 `planIdle` 决定，然后以**系统身份**（`{type:"system"}`）执行 `power.off` / `climate.off`——不算任何人的活动，也不刷新自己的倒计时。自动关机失败的设备 10 分钟内不再重试。闲置标记是电源能力的平台状态 `idle`（`true`/`false`），变化记 `change` 事件，设备日志显示「已闲置 / 恢复使用」。
+**设备状态未知时规则照样执行**（连接是无状态模式，或 HA 报告不可用）：自动关机不依赖设备的实际状态。「店里没人」规则对每台没有明确关着的设备都下发关机，空调同理，往已经关着的设备再发一次关机没有害处。「单台设备闲置」规则没有开机时刻，只能以设备自己的最近活动为时钟：没有任何活动就没有起点，不处理；超时后关一次，之后只要它在上次关机之后没有新的活动就不再重复，因为没有状态能证明那次关机生效了。已知状态只来自事件驱动的连接，无状态连接上存着的旧值不会被采信。
+
+**执行**由店铺 Hub 负责：只记最后活动时间，不逐秒倒数；alarm 设在最早的截止时间。刷卡信号、扫码操作、刷卡登录、店铺接口的任何写操作（入场、结账等）和设置保存都会「碰一下」Hub，2 秒内的多次合并成一次检查。检查时从 D1 读设置、进行中的场次、事件驱动连接上设备的电源与空调状态和最近 24 小时的活动，交给 `planIdle` 决定，然后以**系统身份**（`{type:"system"}`）执行 `power.off` / `climate.off`——不算任何人的活动，也不刷新自己的倒计时。自动关机失败的设备 10 分钟内不再重试。关掉的若是正在监听 Home Assistant 的那台机台，Hub 同时把它标为下线并补位。闲置标记是电源能力的平台状态 `idle`（`true`/`false`），变化记 `change` 事件，设备日志显示「已闲置 / 恢复使用」。
 
 **延迟关机**：`power.keep`（电源能力的动作，要求已入场、算作「玩过」）。它不调用 HA，设备开着才成功，关着返回「设备已关机」，所以延迟永远不会把设备开起来。玩家在扫码页点「开机」效果相同。
 

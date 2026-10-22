@@ -12,7 +12,9 @@ const migrations = resolve(import.meta.dir, "../../../migrations");
 const KEY = "idle-test-key";
 const MIN = 60_000;
 
-async function fixture(settings: unknown) {
+/** `watched`: the hub has announced the machine's Home Assistant connection, so its stored power is a fact. */
+async function fixture(settings: unknown, options: { watched?: boolean } = {}) {
+  const { watched = true } = options;
   const sqlite = new Database(":memory:");
   sqlite.run("PRAGMA foreign_keys=OFF");
   for (const name of readdirSync(migrations).filter((s) => s.endsWith(".sql")).sort())
@@ -37,6 +39,13 @@ async function fixture(settings: unknown) {
   );
   sqlite.run("INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES ('shop',?,?,?)", [IDLE_SETTINGS_KEY, JSON.stringify(settings), onSince]);
   const state = new Map<string, unknown>();
+  if (watched) {
+    // A live watcher that has delivered the connection's full state, as the hub itself would leave it.
+    state.set("eventConnections", [connection.id]);
+    state.set("watchers", {
+      a: { machineId: "a", channel: "chan-a", term: 1, leaseUntil: Date.now() + 10 * MIN, links: { [connection.id]: { connected: true, snapshot: true } } },
+    });
+  }
   let alarm: number | null = null;
   const ctx = {
     storage: {
@@ -116,6 +125,56 @@ describe("idle check in the shop hub", () => {
       await run();
       const events = sqlite.query("SELECT kind, name FROM device_events WHERE device_id='m1' AND kind='request'").all();
       expect(events).toEqual([{ kind: "request", name: "power.off" }]);
+    } finally { spy.mockRestore(); sqlite.close(); }
+  });
+
+  it("does not switch off a machine the stored state says is already off", async () => {
+    const { run, offs, sqlite } = await fixture({ shopEmpty: { enabled: true, minutes: 15 } });
+    sqlite.run("UPDATE device_state SET value_json='\"off\"' WHERE key='power'");
+    sqlite.run(
+      "INSERT INTO sessions(shop_id,id,player_id,started_at,ended_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z',?,'closed')",
+      [new Date(Date.now() - 20 * MIN).toISOString()],
+    );
+    const spy = haCalls();
+    try {
+      await run();
+      expect(offs()).toEqual([]);
+    } finally { spy.mockRestore(); sqlite.close(); }
+  });
+
+  it("switches an empty shop's machines off even when nothing watches them", async () => {
+    const { run, offs, sqlite } = await fixture({ shopEmpty: { enabled: true, minutes: 15 } }, { watched: false });
+    sqlite.run("UPDATE device_state SET value_json='\"off\"' WHERE key='power'");
+    sqlite.run(
+      "INSERT INTO sessions(shop_id,id,player_id,started_at,ended_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z',?,'closed')",
+      [new Date(Date.now() - 20 * MIN).toISOString()],
+    );
+    const spy = haCalls();
+    try {
+      // The stored "off" is stale without a watcher and is not believed.
+      await run();
+      expect(offs()).toHaveLength(1);
+    } finally { spy.mockRestore(); sqlite.close(); }
+  });
+
+  it("switches a machine of unknown state off once, from its own last activity", async () => {
+    const { run, offs, sqlite } = await fixture({ device: { defaultMinutes: 30, whileOccupied: "off" } }, { watched: false });
+    sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z','active')");
+    const spy = haCalls();
+    try {
+      // Nothing is known about it and nobody has touched it: there is no clock to judge by.
+      await run();
+      expect(offs()).toEqual([]);
+      sqlite.run(
+        `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,origin,payload_json,occurred_at)
+         VALUES ('shop','e1','m1','hinata_io','signal','card.consumed','device','{}',?)`,
+        [new Date(Date.now() - 40 * MIN).toISOString()],
+      );
+      await run();
+      expect(offs()).toHaveLength(1);
+      // Nothing shows whether it took, so the same idleness does not switch it off again.
+      await run();
+      expect(offs()).toHaveLength(1);
     } finally { spy.mockRestore(); sqlite.close(); }
   });
 });

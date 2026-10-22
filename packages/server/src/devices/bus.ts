@@ -48,9 +48,8 @@ export type RunOutcome =
 
 /**
  * Reads an external state. Returns null when the source cannot be reached.
- * `live` skips any watched copy, for the read right after the platform acted.
  */
-export type StateReader = (device: Device, options?: { live?: boolean }) => Promise<unknown | null>;
+export type StateReader = (device: Device) => Promise<unknown | null>;
 
 export type DeviceBusDependencies = {
   events: DeviceEventRepository;
@@ -97,11 +96,10 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
     device: Device,
     capability: CapabilityId,
     key: string,
-    options?: { live?: boolean },
   ): Promise<unknown | null> {
     const reader = deps.readers[`${capability}.${key}`];
     if (!reader) return null;
-    const value = await reader(device, options);
+    const value = await reader(device);
     if (value === null || value === undefined) return null;
     await deps.events.record({
       events: [],
@@ -226,15 +224,6 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
         ...(status === "pending" ? {} : { settle: { operationId, status, failure, settledAt } }),
       });
 
-      if (action.observeAfter && outcome.outcome === "ok") {
-        try {
-          // The watcher may not have reported the change yet; ask the source.
-          await observe(input.device, spec.id, action.observeAfter, { live: true });
-        } catch {
-          // A failed follow-up read must not turn a successful action into an error.
-        }
-      }
-
       return {
         operation: { ...operation, status, failure, settledAt: status === "pending" ? null : settledAt },
         result: outcome.outcome === "ok" ? (outcome.result ?? {}) : {},
@@ -319,36 +308,51 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
     observe,
 
     /**
-     * Record an external state a watcher reported instead of one read now.
-     * `at` is when it changed at the source (Home Assistant's `last_changed`),
-     * so a switch turned on outside the platform keeps its real time.
+     * Record external states a watcher reported instead of ones read now, in one
+     * batch. `at` is when each changed at the source (Home Assistant's
+     * `last_changed`), so a switch turned on outside the platform keeps its real
+     * time. A value of `null` means the source cannot say (`unavailable`). With
+     * `quiet` the state is stored without a change event.
      */
-    async report(input: {
-      device: Pick<Device, "id">;
-      capability: CapabilityId;
-      key: string;
-      value: unknown;
-      at?: Date;
-    }): Promise<void> {
+    async reportMany(
+      items: ReadonlyArray<{
+        device: Pick<Device, "id">;
+        capability: CapabilityId;
+        key: string;
+        value: unknown;
+        at?: Date;
+        quiet?: boolean;
+      }>,
+    ): Promise<void> {
+      if (!items.length) return;
       await deps.events.record({
         events: [],
-        states: [
-          {
-            write: { deviceId: input.device.id, capability: input.capability, key: input.key, value: input.value, authority: "observed" },
+        states: items.map((item) => {
+          const write = {
+            deviceId: item.device.id,
+            capability: item.capability,
+            key: item.key,
+            value: item.value,
+            authority: "observed" as const,
+            ...(item.at ? { at: item.at } : {}),
+          };
+          if (item.quiet) return { write };
+          return {
+            write,
             event: {
               ...event({
-                deviceId: input.device.id,
-                capability: input.capability,
+                deviceId: item.device.id,
+                capability: item.capability,
                 kind: "change",
-                name: input.key,
+                name: item.key,
                 operationId: null,
                 origin: "observer",
-                payload: { to: input.value },
+                payload: { to: item.value },
               }),
-              ...(input.at ? { occurredAt: input.at } : {}),
+              ...(item.at ? { occurredAt: item.at } : {}),
             },
-          },
-        ],
+          };
+        }),
       });
     },
   };

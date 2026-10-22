@@ -61,9 +61,9 @@ export type IdleDevice = {
   name: string;
   hasPower: boolean;
   hasClimate: boolean;
-  /** Current power, from the watcher or the last observation. */
+  /** Current power; null when nothing watches the device, or its source reports it unavailable. */
   power: "on" | "off" | null;
-  /** Climate mode; anything other than "off" is running. */
+  /** Climate mode; anything other than "off" is running. Null when unknown. */
   climate: string | null;
   /** Latest activity, in ms. */
   lastActivity: number | null;
@@ -137,8 +137,10 @@ export function planIdle(input: IdleInputs): IdlePlan {
     plan.emptySince = since;
     plan.emptyHandled = input.emptyHandled;
     const deadline = since + settings.shopEmpty.minutes * 60_000;
-    const powered = input.devices.filter((d) => d.hasPower && d.power === "on" && !excluded(d));
-    const cooling = input.devices.filter((d) => d.hasClimate && d.climate !== null && d.climate !== "off" && !excluded(d));
+    // An unknown state (nothing watches the device) is treated as possibly on:
+    // switching off a device that is already off does no harm.
+    const powered = input.devices.filter((d) => d.hasPower && d.power !== "off" && !excluded(d));
+    const cooling = input.devices.filter((d) => d.hasClimate && d.climate !== "off" && !excluded(d));
     if (input.emptyHandled !== since) {
       if (now >= deadline) {
         plan.powerOff.push(...powered.filter(canRetry).map((d) => d.id));
@@ -155,7 +157,11 @@ export function planIdle(input: IdleInputs): IdlePlan {
 
   for (const device of input.devices) {
     const minutes = idleMinutes(settings, device.id);
-    if (!device.hasPower || device.power !== "on" || minutes <= 0 || excluded(device)) {
+    // Without a known state the device's own activity is the only clock, and it
+    // is switched off once per stretch of idleness: nothing shows whether it took.
+    const blind = device.power === null;
+    const handled = blind && device.lastAutoOff !== null && device.lastAutoOff >= (device.lastActivity ?? 0);
+    if (!device.hasPower || device.power === "off" || minutes <= 0 || excluded(device) || (blind && (device.lastActivity === null || handled))) {
       if (device.idle) plan.clearIdle.push(device.id);
       continue;
     }

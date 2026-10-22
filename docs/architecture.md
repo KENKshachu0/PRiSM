@@ -135,7 +135,7 @@ APNs 实时活动推送由 `@prism/server` 的 `durable-objects` 模块协调。
 - 优先级计费引擎：支持星期、指定日期、绝对日期范围、跨天区间（按开始日匹配）、时间舍入单位、宽限期、方案内封顶、跨场次历史计费封顶，以及用于叠加抵扣 session 的负数单价规则。支持设备操作与首次宽限联动（操作设备即产生费用）：若玩家在计费场次时间窗内有未失败、且能力目录标记为「算作玩过」的设备操作（`device_operations.counts_as_play`，如 `coin` 投币、`aime.scan` 刷卡、`power.on`/`power.off`；门禁 `door.open` 不算），即视为已操作设备（结算时把它写成 `metadata.deviceOperated: true`，历史场次已有的该标记继续有效），并立即使首次进店免单宽限失效，收取至少 1 个计费单位基础费用（即使即时登出或游玩不足 1 分钟；后续尾数取整宽限保留不受影响）；未操作任何设备的玩家在宽限期内离场依然享受免费离场。每个 session 保留原始正负计费贡献，只在玩家级统一结账完成全部 session 汇总后将最终应付金额限制为不低于 `0`。每次统一结账会写入一条 `player_checkouts`，并以 `settlements.checkout_id` 关联其中全部 session；营业报表直接汇总这个持久化批次，不再用相同时间戳猜测哪些 session 属于同一单。全局封顶时间轴使用同一套时间匹配规则，但不产生费用项；它在资产和手动改单等后置优惠之前，对选中的按时计费方案合计做二次封顶，并把历史写入 `pricing_cap_history_entries`。员工展示按该规则锚定的封顶窗口聚合历史和本次参与金额；达到上限时显示封顶后的最终金额，而不是本次封顶调整的差额。
 - `0013_player_checkouts.sql` 是报表读模型的必需迁移：它为历史 settlements 建立统一 checkout 并补齐 `checkout_id`，因此运行时报表不保留旧的按玩家和相同结算时间猜测批次的分支。
 - 礼物兑换校验及资产堆叠/延期/替换授予逻辑。兑换码过期或礼物过期会拒绝兑换；兑换码和礼物都有效时，礼物中未生效或已过期的内容会被跳过，不会到账。
-- 设备动作授权、投币冷却、执行与审计。设备能做什么由绑定的能力决定（`device_capabilities`），每次动作是一条 `device_operations`，请求、结果、设备回报和状态变化都是 `device_events`，当前状态在 `device_state`；电源每次实时读取 Home Assistant。TTLock 账号在 `app_settings.devices.ttlock_connection`，access token 过期时自动刷新并持久化。玩家触发 `coin`、`aime.scan`、`power.on` 或 `power.off` 必须处于活跃计费 session；网页刷卡卡号来自账号的 `cards`，Bot 刷卡来自玩家绑定身份，卡号都不落库。失败原因写入结果事件；TTLock 临时密码仅通过本次成功响应返回。详见 [集成与设备](integrations-and-machines.md)。
+- 设备动作授权、投币冷却、执行与审计。设备能做什么由绑定的能力决定（`device_capabilities`），每次动作是一条 `device_operations`，请求、结果、设备回报和状态变化都是 `device_events`，当前状态在 `device_state`；电源和空调的状态分两种模式：有 HINATA IO 监听该 Home Assistant 连接时（事件驱动，`ha_event_connections`）每个 HA 事件写一次 `device_state`，读者只读这份事实，不再问 HA；没有人监听时设备无已知状态，读者现查 HA 且不记录。TTLock 账号在 `app_settings.devices.ttlock_connection`，access token 过期时自动刷新并持久化。玩家触发 `coin`、`aime.scan`、`power.on` 或 `power.off` 必须处于活跃计费 session；网页刷卡卡号来自账号的 `cards`，Bot 刷卡来自玩家绑定身份，卡号都不落库。失败原因写入结果事件；TTLock 临时密码仅通过本次成功响应返回。详见 [集成与设备](integrations-and-machines.md)。
 - 统一的持久化仓储接口及其 SQLite 与 D1 双适配器实现。
 - 可热启用的计费配置仓储（支持后台启用/禁用/归档/还原），在结账时动态解析。
 - 运行时插件系统：支持注册业务线特定的计费规则与资产效果。插件计费逻辑在结算时叠加生效。
@@ -175,7 +175,7 @@ iOS/App Clip 的 OAuth 回调使用 `hinata-prism-auth://callback?code=...&setup
 
 ![电源设备通电后显示无可操作项提示](images/device-no-actions-mobile.png)
 
-扫码入口、客户端刷新预算、HA 观察缓存、APNs 重试与临时状态清理的现行约定见 [扫码性能与请求预算](scan-performance.md)。
+扫码入口、客户端刷新预算、设备状态的读取方式、APNs 重试与临时状态清理的现行约定见 [扫码性能与请求预算](scan-performance.md)。
 
 营业报表归档采用独立的 `checkout_report_states` 表，按完整 checkout 归档并从报表营业额排除；不改金融结算、余额、玩家历史或收费/封顶历史。员工账单详情复用玩家历史 receipt 查询及 Web 时间轴组件。迁移、权限和备份兼容见 [营业记录归档](./merchant-report-archive.md)。
 

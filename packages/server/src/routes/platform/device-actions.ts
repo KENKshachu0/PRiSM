@@ -12,7 +12,7 @@ import type { Machine as MachineRow } from "./machine-session.js";
 import type { AppBindings } from "../../bindings.js";
 import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
 import { vkFromKeyText } from "../../devices/key-text.js";
-import { createRuntimeBus, observeClimate, readPower, type ClimateState } from "../../devices/runtime.js";
+import { createRuntimeBus, readClimate, readPower, type ClimateState } from "../../devices/runtime.js";
 import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { notice, requestLocale } from "../../notices.js";
 import type { ActionName } from "../../devices/capabilities.js";
@@ -42,27 +42,25 @@ export const actionSchema=z.object({
 });
 
 /**
- * Power state for a device page: "unmanaged" when it has no power binding.
- * `live` skips the watched copy, for the answer to an action just taken.
+ * Power state for a device page: "unmanaged" when it has no power binding. A
+ * watched connection answers from the stored fact; otherwise Home Assistant is
+ * asked now. Neither writes anything.
  */
 export async function devicePowerState(
   c: C,
   machine: MachineRow,
-  options: { live?: boolean } = {},
 ): Promise<"on" | "off" | "unknown" | "unmanaged"> {
   const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
   if (!device?.capabilities.has("power")) return "unmanaged";
-  const bus = createRuntimeBus({ db: c.env.DB, env: c.env, shopId: machine.shop_id });
-  // Reading through the bus also records a change when power moved outside the platform.
-  const live = await bus.observe(device, "power", "power", options).catch(() => null);
-  return live === "on" || live === "off" ? live : "unknown";
+  const power = await readPower({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device).catch(() => null);
+  return power ?? "unknown";
 }
 
-/** Climate state for a device page; null when it has no climate binding or HA cannot be read. */
-export async function deviceClimateState(c: C, machine: MachineRow, options: { live?: boolean } = {}): Promise<ClimateState | null> {
+/** Climate state for a device page; null when it has no climate binding or the state is unknown. */
+export async function deviceClimateState(c: C, machine: MachineRow): Promise<ClimateState | null> {
   const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
   if (!device?.capabilities.has("climate")) return null;
-  return observeClimate({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device, options);
+  return readClimate({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device).catch(() => null);
 }
 
 /** The setting a climate action changes, checked before anything is recorded. */
@@ -216,17 +214,14 @@ export async function executeDeviceAction(
         const sync = refreshActivityBill(c.env, shop.id, player.id, false, true).catch(error => console.error("Device live bill sync failed", error));
         try { c.executionCtx.waitUntil(sync); } catch { void sync; }
       }
-      const result =
-        action === "power.on" || action === "power.off"
-          ? { power: await devicePowerState(c, machine, { live: true }) }
-          : isClimate
-            ? { climate: await deviceClimateState(c, machine, { live: true }) }
-            : done.result;
+      // Home Assistant answering 200 is the whole outcome: a watched connection
+      // reports the new state as an event, and an unwatched one has no state to
+      // report, so nothing is read back here.
       // A player or staff action may start or end an idle countdown.
       touchShopHubAfter(c, shop.id);
       // A coin leaves no state to show, so the player is told it went in.
       const notices = action === "coin" ? [notice("COIN_SENT", requestLocale(c.req.header("accept-language")))] : undefined;
-      return c.json({ operationId: body.operationId, ...result, ...(notices ? { notices } : {}) });
+      return c.json({ operationId: body.operationId, ...done.result, ...(notices ? { notices } : {}) });
     },
   );
 }

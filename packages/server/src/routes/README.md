@@ -103,7 +103,7 @@ routes/
 - `POST /players/by-identity/assets`: 查询指定外部身份玩家的资产明细。
 - `POST /players/by-identity/redeem`: 机器人代为核销兑换码。
 - `POST /players/by-identity/history`: 查询历史消费会话记录。
-- `GET /device-states`（别名 `/devices/states`）: 实时读取店内绑定电源的设备的电源状态。
+- `GET /device-states`（别名 `/devices/states`）: 店内绑定电源的设备的电源状态。设备所在 Home Assistant 连接有 IO 监听时读存储的事实，否则现场读取 Home Assistant（不记录）。
 
 #### 1.5 设备
 店铺级没有单独的设备路由。设备的增删改与日志在 `platform/merchant-machines.ts`（`/api/v1/merchant/machines`），员工与 Bot 的设备动作分别是 `/staff/device-actions` 与 `/integration/players/by-identity/device-actions`，玩家通过设备二维码页操作。设备模型见 `packages/server/src/devices` 与 `docs/integrations-and-machines.md`。

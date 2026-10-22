@@ -62,6 +62,25 @@ test("binding completion stops repeated reads while foreground can still refresh
   } finally { polling.stop(); }
 });
 
+test("a page that already has its first read waits an interval before reading, and only if polling is still wanted", async () => {
+  let reads = 0, wanted = true;
+  const polling = new PagePolling(async () => { reads++; }, 20, () => wanted);
+  try {
+    polling.deferFirst();
+    polling.refresh();
+    // Foreground events in the meantime do not bring the first read forward.
+    polling.refresh(); polling.setVisible(false); polling.setVisible(true);
+    await wait(5); expect(reads).toBe(0);
+    await wait(30); expect(reads).toBeGreaterThanOrEqual(1);
+  } finally { polling.stop(); }
+  let skipped = 0;
+  const idle = new PagePolling(async () => { skipped++; }, 10, () => false);
+  try {
+    idle.deferFirst(); idle.refresh();
+    await wait(40); expect(skipped).toBe(0);
+  } finally { idle.stop(); }
+});
+
 test("failure delays grow to one minute, jitter stays bounded and Retry-After is a floor", () => {
   expect([1,2,3,4,5,6].map(n => pollingDelay(n, 3000, 0, 0.5))).toEqual([5000,10000,20000,30000,60000,60000]);
   expect(pollingDelay(1, 3000, 0, 0)).toBe(4250);

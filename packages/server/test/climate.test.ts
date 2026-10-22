@@ -7,7 +7,8 @@ import type { Env } from "../src/bindings.js";
 import { encryptSecret } from "../src/crypto.js";
 import { createDeviceActionService } from "../src/devices/actions.js";
 import { loadDevice } from "../src/devices/device.js";
-import { observeClimate, readClimate } from "../src/devices/runtime.js";
+import { readClimate } from "../src/devices/runtime.js";
+import { readDeviceFacts } from "../src/devices/state-view.js";
 import { createD1DatabaseFromSqlite, platformSchema } from "../src/local-server.js";
 
 const KEY = "unit-test-encryption-key";
@@ -132,8 +133,8 @@ describe("climate capability", () => {
     ]);
   });
 
-  it("reads what the entity offers and records only setting changes", async () => {
-    const { db, env, machine, ac, sqlite, fetcher } = await fixture();
+  it("asks Home Assistant when nothing watches the device, and records nothing", async () => {
+    const { db, env, machine, sqlite, fetcher } = await fixture();
     await machine("ac", "空调", { climate: "climate.room" });
     const device = (await loadDevice(db, SHOP, "ac"))!;
     const runtime = { db, env, shopId: SHOP, fetcher, now: () => NOW };
@@ -142,14 +143,43 @@ describe("climate capability", () => {
       temperature: 26, currentTemperature: 28.5, minTemperature: 16, maxTemperature: 30, temperatureStep: 1,
       fanMode: "auto", fanModes: ["auto", "low", "medium", "high"],
     });
-    const changes = () => (sqlite.query("SELECT COUNT(*) AS n FROM device_events WHERE kind='change' AND capability='climate'").get() as { n: number }).n;
-    await observeClimate(runtime, device);
-    expect(changes()).toBe(1);
-    ac.current = 27;
-    await observeClimate(runtime, device);
-    expect(changes()).toBe(1);
-    ac.state = "cool";
-    await observeClimate(runtime, device);
-    expect(changes()).toBe(2);
+    const count = (table: string) => (sqlite.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    expect(count("device_events")).toBe(0);
+    expect(count("device_state")).toBe(0);
+  });
+
+  it("reads the stored view without asking Home Assistant while its connection is watched", async () => {
+    const { db, env, sqlite, fetcher } = await fixture();
+    sqlite.run("INSERT INTO machines(id, public_id, shop_id, name, aliases_json) VALUES ('ac','pub-ac',?,'空调','[]')", [SHOP]);
+    sqlite.run(
+      `INSERT INTO device_capabilities(shop_id, device_id, capability, config_json, secret_json, created_at, updated_at)
+       VALUES (?,'ac','climate',?,'{}',?,?)`,
+      [SHOP, JSON.stringify({ connectionId: "ha_1", entityId: "climate.room" }), NOW.toISOString(), NOW.toISOString()],
+    );
+    const view = {
+      mode: "cool", modes: ["off", "cool"], temperature: 24, currentTemperature: 27, minTemperature: 16,
+      maxTemperature: 30, temperatureStep: 1, fanMode: "low", fanModes: ["auto", "low"],
+    };
+    sqlite.run(
+      `INSERT INTO device_state(shop_id, device_id, capability, key, value_json, authority, event_id, changed_at)
+       VALUES (?,'ac','climate','view',?,'observed',NULL,?)`,
+      [SHOP, JSON.stringify(view), NOW.toISOString()],
+    );
+    let asked = 0;
+    const counting = ((...args: Parameters<typeof fetch>) => { asked += 1; return fetcher(...args); }) as typeof fetch;
+    const runtime = { db, env, shopId: SHOP, fetcher: counting, now: () => NOW };
+    const device = (await loadDevice(db, SHOP, "ac"))!;
+
+    // The stored view is not trusted until the shop hub says the connection is watched.
+    expect(await readDeviceFacts(db, SHOP, device)).toEqual({ watching: false, power: null, climate: null });
+
+    sqlite.run("INSERT INTO ha_event_connections(shop_id, connection_id, since) VALUES (?,?,?)", [SHOP, "ha_1", NOW.toISOString()]);
+    expect(await readDeviceFacts(db, SHOP, device)).toEqual({ watching: true, power: null, climate: view });
+    expect(await readClimate(runtime, device)).toEqual(view);
+    expect(asked).toBe(0);
+
+    // When the connection stops being watched the stored view is ignored again.
+    sqlite.run("DELETE FROM ha_event_connections");
+    expect(await readDeviceFacts(db, SHOP, device)).toEqual({ watching: false, power: null, climate: null });
   });
 });
