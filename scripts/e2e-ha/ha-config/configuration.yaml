@@ -1,0 +1,20 @@
+# Home Assistant for the end-to-end run against the platform and the real IO client.
+#
+# The demo integration provides real entities whose state changes produce real events:
+# switch.decorative_lights and switch.ac (power) and climate.hvac, climate.heatpump (air conditioners).
+# input_boolean.lounge_power is a power switch only the lounge uses, so a request for it can only
+# have come from reading that one device.
+default_config:
+demo:
+
+input_boolean:
+  lounge_power:
+    name: Lounge power
+    initial: false
+
+# Every request Home Assistant serves is logged, so the run can count exactly which entities the
+# platform read over REST (a device on a watched connection must cause none).
+logger:
+  default: warning
+  logs:
+    aiohttp.access: info

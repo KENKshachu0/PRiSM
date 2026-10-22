@@ -23,3 +23,6 @@ coverage/
 
 # Browser check screenshots written by scripts/check-*-browser.cjs
 .scan-check/
+
+# End-to-end run data (Home Assistant config, local D1, logs)
+.e2e/
