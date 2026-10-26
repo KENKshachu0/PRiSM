@@ -37,7 +37,16 @@ async function fixture() {
     return { status: response.status, body: (await response.json() as any)?.data };
   };
   const machines = () => (sqlite.query("SELECT id FROM machines WHERE shop_id='shop'").all() as { id: string }[]);
-  return { sqlite, call, machines };
+  /**
+   * What a bot reads over its connection. The connection is the entry point:
+   * the credential alone names the shop, and the hub then runs the read through
+   * the shop's own routes with that credential (here against the same app).
+   */
+  const readBot = async (token: string) => {
+    const bot = await call("GET", "/api/v1/shops/shop-code/integration/bot", undefined, token);
+    return { status: bot.status, body: bot.body };
+  };
+  return { sqlite, call, machines, readBot };
 }
 
 describe("a bot credential names its shop", () => {
@@ -45,18 +54,17 @@ describe("a bot credential names its shop", () => {
   afterEach(() => clearShopDependenciesCache());
 
   it("reads the shop and the bot's settings by credential alone", async () => {
-    const { call } = await fixture();
+    const { call, readBot } = await fixture();
     const created = await call("POST", "/api/v1/merchant/machines", { shopId: "shop", name: "店铺 Bot", bot: {} });
-    const boot = await call("GET", "/api/v1/integration/bot", undefined, created.body.botToken);
+    const boot = await readBot(created.body.botToken);
     expect(boot.status).toBe(200);
     expect(boot.body.shop).toEqual({ code: "shop-code", name: "Arcade" });
     expect(boot.body.bot.id).toBe(created.body.machine.id);
-    // A credential from another shop's URL is still only this shop's.
-    expect((await call("GET", "/api/v1/integration/bot", undefined, "not-a-token")).status).toBe(403);
+    expect((await readBot("not-a-token")).status).toBe(403);
   });
 
   it("keeps one resource when its credential is rotated, and retires the old one", async () => {
-    const { call, machines } = await fixture();
+    const { call, machines, readBot } = await fixture();
     const created = await call("POST", "/api/v1/merchant/machines", { shopId: "shop", name: "店铺 Bot", bot: {} });
     const id = created.body.machine.id;
     expect(machines()).toHaveLength(1);
@@ -66,15 +74,15 @@ describe("a bot credential names its shop", () => {
     expect(rotated.body.machine.id).toBe(id);
     expect(rotated.body.botToken).toMatch(/^prism_integration_/);
     expect(machines()).toHaveLength(1);
-    expect((await call("GET", "/api/v1/integration/bot", undefined, rotated.body.botToken)).body.bot.id).toBe(id);
-    expect((await call("GET", "/api/v1/integration/bot", undefined, created.body.botToken)).status).toBe(403);
+    expect((await readBot(rotated.body.botToken)).body.bot.id).toBe(id);
+    expect((await readBot(created.body.botToken)).status).toBe(403);
   });
 
   it("gives a credential from before bots were resources its own, in the default group", async () => {
-    const { sqlite, call } = await fixture();
+    const { sqlite, call, readBot } = await fixture();
     sqlite.run("INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES ('shop','old','旧 Bot','integration','prism_integration',?, 'active',?)",
       [await sha256Hex("legacy-token"), NOW]);
-    const boot = await call("GET", "/api/v1/integration/bot", undefined, "legacy-token");
+    const boot = await readBot("legacy-token");
     expect(boot.status).toBe(200);
     expect(boot.body.bot.name).toBe("旧 Bot");
     const row = sqlite.query("SELECT resource_group_id AS grp FROM machines WHERE id=?").get(boot.body.bot.id) as { grp: string | null };
@@ -82,7 +90,7 @@ describe("a bot credential names its shop", () => {
   });
 
   it("carries every live integration credential into a bot resource when the migration runs", async () => {
-    const { sqlite, call, machines } = await fixture();
+    const { sqlite, call, machines, readBot } = await fixture();
     sqlite.run("INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES ('shop','live','店铺 Bot','integration','prism_integration',?,'active',?)", [await sha256Hex("live-token"), NOW]);
     sqlite.run("INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES ('shop','gone','旧凭据','integration','prism_integration',?,'revoked',?)", [await sha256Hex("gone-token"), NOW]);
     const migration = resolve(import.meta.dir, "../../../migrations/0043_legacy_bot_resources.sql");
@@ -90,7 +98,7 @@ describe("a bot credential names its shop", () => {
     expect(machines()).toHaveLength(1);
     const bot = sqlite.query("SELECT m.id, m.name FROM machines m").get() as { id: string; name: string };
     expect(bot.name).toBe("店铺 Bot");
-    const boot = await call("GET", "/api/v1/integration/bot", undefined, "live-token");
+    const boot = await readBot("live-token");
     expect(boot.body.bot.id).toBe(bot.id);
     // Running it again adds nothing.
     for (const sql of splitD1MigrationStatements(readFileSync(migration, "utf8"))) sqlite.run(sql);

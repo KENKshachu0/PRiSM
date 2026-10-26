@@ -341,7 +341,6 @@ Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后�
 
 | 请求方法 | 路由路径 | 接口用途 |
 | --- | --- | --- |
-| `GET` | `/api/v1/integration/bot` | 只凭接入凭据读取 Bot 自己的设置和店铺：地址里没有店铺编号（新增，供插件启动时定位店铺）。响应与 `rpc/integration/bot` 相同，另加 `shop: { code, name }`。凭据无效或停用返回 `403`。 |
 | `POST` | `/rpc/integration/players/by-identity/resolve` | 按外部身份查找已绑定玩家。 |
 | `POST` | `/rpc/integration/players/by-identity/register` | 按外部身份查找或注册玩家，并自动绑定该身份。 |
 | `POST` | `/rpc/integration/players/by-identity/session/start` | 按外部身份为玩家开始发请求的 Bot 资源的方案：Bot 的专属方案，否则它所属资源组的方案（默认资源组即店铺默认方案）。请求带 `pricingConfigIds` 时开始其中第一个方案（`label` 作为场次显示名），这是给麻将还没交给平台的旧版 Bot 的兼容路径：旧版 Bot 上桌时按桌的方案开始计费、下桌时停止返回的那个场次，所以只结束麻将方案、不影响玩家的其他计费；`entry` 被忽略；Bot 资源停用时返回 `403 BOT_DISABLED`。该方案已在计费时返回原 session（`created: false`）；方案依赖的其他方案会自动开始，互斥的方案会结束。响应 `{session, created, planName, billing}`，`billing` 同扫码确认。 |
@@ -354,7 +353,7 @@ Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后�
 | `POST` | `/rpc/integration/players/by-identity/history` | 按外部身份读取玩家计时记录。 |
 | `POST` | `/rpc/integration/players/by-identity/redeem` | 按外部身份为玩家兑换礼物码。 |
 | `POST` | `/rpc/integration/players/by-identity/device-actions` | 按外部身份申请设备动作，例如启机、投币或 Aime 扫卡；后端会先解析玩家并检查 active session、投币冷却等规则。 |
-| `GET` | `/rpc/integration/bot` | Bot 自己的设置和店铺知识（店员、货币名称、门锁、麻将桌），只经连接可达。其中的 `settings` 是 Bot 资源上的店家设置。 |
+| `GET` | `/rpc/integration/bot` | Bot 自己的设置、店铺编号和店铺知识（店员、货币名称、门锁、麻将桌），只经连接可达。`shop: { code, name }` 让插件不必自己配置店铺编号。`settings` 是 Bot 资源上的店家设置。 |
 | `GET` | `/rpc/integration/roster` | 同 `staff/roster`；Bot 的 `list` 使用它。 |
 | `GET` | `/rpc/integration/sessions/active` | 机器人列出在场所有活跃 session，含玩家对外身份（聊天平台等）以便从聊天平台拉取昵称。每条 session 带 `pricingConfigId` 与 `planName`。 |
 | `GET` | `/rpc/integration/device-states` | 机器人列出当前所有设备上报的电源/状态，供 `/show` 一类查询。`deviceStates[].state` 是普通字符串（如 `on`、`off`），不得再包装为 JSON 字符串。 |

@@ -31,7 +31,7 @@ import { versionRouter } from "./routes/system/version.js";
 
 // Multi-tenant shop router
 import { shopRouter } from "./routes/shops/index.js";
-import { integrationBootstrapRouter } from "./routes/shops/integration.js";
+import { integrationSocketRouter } from "./routes/shops/integration.js";
 import { shopDataAdminRouter } from "./routes/shops/data/index.js";
 
 // Legacy fallback router
@@ -116,8 +116,8 @@ export function createApp(): Hono<AppBindings> {
   app.route("/api/v1/merchant", merchantResourceActionRouter);
   app.route("/t", resourceQrRouter);
 
-  // A bot's credential names its shop: its first read carries no shop code.
-  app.route("/api/v1/integration", integrationBootstrapRouter);
+  // A bot's connection names its shop in its credential, as a device's does.
+  app.route("/integration", integrationSocketRouter);
 
   // Multi-tenant shop routes (/api/v1/shops/:shopCode)
   app.route("/api/v1/shops/:shopCode", shopRouter);

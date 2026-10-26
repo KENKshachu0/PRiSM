@@ -9,6 +9,8 @@ export function isAssetEligiblePath(path: string): boolean {
     // The relay upgrade is a GET, so without this it is served as a static asset
     // and the WebSocket handshake never happens.
     !path.startsWith(machineRelayPath) &&
+    // A bot's connection upgrade is a GET too, at one fixed path.
+    !path.startsWith("/integration/") &&
     !path.startsWith("/.well-known/") &&
     !path.startsWith("/callback") &&
     !path.startsWith("/__prism_deploy") &&

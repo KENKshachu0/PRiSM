@@ -4,7 +4,7 @@ import type { AppBindings, TenantShop } from "../../bindings.js";
 import { sha256Hex } from "../../crypto.js";
 import { jsonError } from "../../http.js";
 import { confirmPlatformBinding } from "./binding.js";
-import { getShop, getShopDeps, loadTenantShop, setTenantFromShop } from "../../middleware/tenant.js";
+import { getShop, getShopDeps } from "../../middleware/tenant.js";
 import { botConfigView, ensureBotResource } from "../../resources/bot.js";
 import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 import { loadResources, matchesRef } from "../../resources/resource.js";
@@ -57,43 +57,20 @@ export async function requireIntegrationAuth(
   await integrationToken(c, shop);
 }
 
-/**
- * The shop a bot credential belongs to, without a shop code in the address:
- * the credential names one shop, and only that shop's integration routes.
- */
+/** The shop an integration credential belongs to, by the credential alone. */
 export async function shopOfIntegrationToken(c: Context<AppBindings>) {
   const auth = c.req.header("authorization");
   const token = auth?.match(/^Bearer (.+)$/i)?.[1];
   if (!token) jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
   const row = await c.env.DB.prepare(
-    `SELECT s.public_id FROM api_tokens t JOIN shops s ON s.id = t.shop_id
+    `SELECT s.public_id AS code, s.id FROM api_tokens t JOIN shops s ON s.id = t.shop_id
      WHERE t.token_hash = ? AND t.role = 'integration' AND t.status = 'active'`,
-  ).bind(await sha256Hex(token)).first<{ public_id: string }>();
+  ).bind(await sha256Hex(token)).first<{ code: string; id: string }>();
   if (!row) jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
-  return row.public_id;
+  return row;
 }
 
 export const integrationRouter = new Hono<AppBindings>();
-
-/**
- * What a bot needs before it knows the shop: read by credential alone, so the
- * plugin is configured with an address and a token, not a shop code.
- */
-export const integrationBootstrapRouter = new Hono<AppBindings>();
-
-integrationBootstrapRouter.get("/bot", async (c) => {
-  const publicId = await shopOfIntegrationToken(c);
-  const shopRow = await loadTenantShop(c, publicId);
-  if (!shopRow) jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
-  await setTenantFromShop(c, shopRow);
-  const shop = getShop(c);
-  const bot = await ensureBotResource(c.env.DB, shop.id, await integrationToken(c, shop));
-  if (!bot.enabled) jsonError(403, "这个 Bot 已停用", "BOT_DISABLED");
-  return c.json({
-    ...(await botConfigView(c.env.DB, shop.id, bot)),
-    shop: { code: shop.public_id, name: shop.name },
-  });
-});
 
 /**
  * Every Bot route passes here. Binding a platform identity does not need
@@ -117,10 +94,32 @@ integrationRouter.use("*", async (c, next) => {
 });
 
 /**
- * The bot's single connection: requests go over it instead of HTTP, and the
- * shop hub pushes reminders down it. The hub runs each request through this
- * same router with the bot's token, so every route keeps its own checks.
+ * The bot's connection, at one fixed path: like a HINATA IO's `/io/ws`, the
+ * credential names the shop, so neither the shop nor a bot appears in the URL.
+ * The hub runs each request over it through the shop router with the bot's
+ * token, so every route keeps its own checks.
  */
+export const integrationSocketRouter = new Hono<AppBindings>();
+
+integrationSocketRouter.get("/ws", async (c) => {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") jsonError(426, "需要 WebSocket 连接", "UPGRADE_REQUIRED");
+  const hub = (c.env.SHOP_HUB as unknown as { getByName(name: string): Promise<{ fetch(request: Request): Promise<Response> }> } | undefined);
+  if (!hub) jsonError(503, "店铺连接服务尚未配置", "SHOP_HUB_UNAVAILABLE");
+  const { code, id } = await shopOfIntegrationToken(c);
+  // A credential from before bots were resources gets one when it connects.
+  const token = c.req.header("authorization")!.match(/^Bearer (.+)$/i)![1];
+  const tokenRow = await c.env.DB.prepare("SELECT id, label FROM api_tokens WHERE shop_id = ? AND token_hash = ? AND role = 'integration' AND status = 'active'")
+    .bind(id, await sha256Hex(token)).first<{ id: string; label: string }>();
+  if (!tokenRow) jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
+  const bot = await ensureBotResource(c.env.DB, id, tokenRow);
+  if (!bot.enabled) jsonError(403, "这个 Bot 已停用", "BOT_DISABLED");
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("x-prism-hub-shop", id);
+  headers.set("x-prism-hub-shop-code", code);
+  return (await hub.getByName(id)).fetch(new Request(c.req.raw, { headers }));
+});
+
+/** The older address, `/api/v1/shops/:shopCode/integration/ws`, still connects. */
 integrationRouter.get("/ws", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") jsonError(426, "需要 WebSocket 连接", "UPGRADE_REQUIRED");
   const hub = (c.env.SHOP_HUB as unknown as { getByName(name: string): { fetch(request: Request): Promise<Response> } } | undefined);
@@ -335,7 +334,11 @@ integrationRouter.get("/bot", async (c) => {
   const shop = getShop(c);
   const bot = await ensureBotResource(c.env.DB, shop.id, await integrationToken(c, shop));
   if (!bot.enabled) jsonError(403, "这个 Bot 已停用", "BOT_DISABLED");
-  return c.json(await botConfigView(c.env.DB, shop.id, bot));
+  // The shop is told here so a bot joined by credential alone learns it once.
+  return c.json({
+    ...(await botConfigView(c.env.DB, shop.id, bot)),
+    shop: { code: shop.public_id, name: shop.name },
+  });
 });
 
 /** The shop's mahjong table named by id, name or alias. */

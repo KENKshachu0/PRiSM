@@ -47,7 +47,7 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 
 Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTTP 请求；HTTP 接口原样保留给旧插件和其它集成。
 
-- 连接：`GET /api/v1/shops/:shop/integration/ws`，`Authorization: Bearer <Bot 凭据>`，WebSocket 升级。凭据在握手前校验，不对返回 403；不要求店铺启用计费（每个请求仍按自己的路由校验）。连接交给店铺 Hub（`ShopHub`），连进来的 WebSocket 可以休眠。
+- 连接：`GET /integration/ws`，一个固定路径，和机台的 `/io/ws` 一样：`Authorization: Bearer <Bot 凭据>`，凭据在握手前解析出店铺，地址里不出现店铺编号或 Bot 标识。凭据不对返回 403，请求不会到店铺的 Hub；不要求店铺启用计费（每个请求仍按自己的路由校验）。旧地址 `/api/v1/shops/:shop/integration/ws` 仍可连接。连接交给店铺 Hub（`ShopHub`），连进来的 WebSocket 可以休眠。
 - 请求：`{"type":"request","id":"<唯一 ID>","method":"GET|POST|PUT","path":"integration/players/by-identity/wallet","query":{},"body":{}}`；回复 `{"type":"response","id":…,"status":200,"body":{"data":…}}`，`body` 与 HTTP 响应完全相同（含 `{error:{code,message}}`）。Hub 带着 Bot 凭据在进程内调用同一套路由，所以鉴权、校验、灵动岛推送（`waitUntil`）都和 HTTP 一样；吊销凭据后下一个请求就会 403，Hub 随即以 4003 关闭连接。只能访问本店的 `integration/…` 和 `version`，其它路径（包括 `..`）返回 404。
 - 去重：写请求（POST/PUT）的回复按 `id` 保存 10 分钟；同一 `id` 再发一次直接返回保存的回复，不会重复执行；还在执行中的同一 `id` 不再执行。断线后插件不重发、不排队，命令直接失败（「暂时连不上服务器」），避免结账、加钱被重复执行或延后执行。
 - 心跳：发送文本 `ping`，回复 `pong`（Workers 上由运行时自动回复，不唤醒 Hub）。
@@ -57,7 +57,7 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 
 每个机器人对应一个带 `bot` 能力的资源，在商户工作台「资源」页添加和编辑（见[资源与资源组](resources.md)）。添加时签发它的接入凭据（只显示一次），删除资源、关闭 Bot 能力或「重新签发」都会吊销旧凭据，旧连接随之断开。凭据与 Bot 资源一一对应：新建店铺时勾选「创建 Bot 接入凭据」会同时建好它的 Bot 资源（默认资源组）；迁移会把旧版遗留的接入凭据一并迁成 Bot 资源（`0043_legacy_bot_resources.sql`），正在运行的 Bot 不会因此断线。Bot 资源不能被玩家扫码。
 
-插件本地只需要 API 地址和接入凭据：凭据自己指明店铺，插件启动时先读 `GET /api/v1/integration/bot`（地址里没有店铺编号）拿到店铺编号，再连该店的 WebSocket。旧配置里的店铺编号仍被接受，但不再需要。其余都由 `GET integration/bot` 下发：
+插件本地只需要 API 地址和接入凭据：凭据自己指明店铺，插件直接连 `/integration/ws`，连上后从 `integration/bot` 读到店铺编号，用于构造网页链接。旧配置里的店铺编号仍被接受，但不再需要。其余都由 `GET integration/bot` 下发：
 
 | 字段 | 来源 |
 | --- | --- |
