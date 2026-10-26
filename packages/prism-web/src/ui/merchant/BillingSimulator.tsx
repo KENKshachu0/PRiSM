@@ -82,6 +82,8 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
 
   return (
     <section className="grid gap-4 rounded-xl border border-ink/15 bg-panel p-4 sm:p-6" aria-label={t("计费模拟器")}>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
+      <div className="grid gap-4">
       <div className="grid gap-1">
         <h3 className="text-lg font-semibold">{t("计费模拟器")}</h3>
         <p className="text-sm text-ink/60">
@@ -98,7 +100,7 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
         {sessions.map((session, index) => (
           <fieldset key={session.id} className="grid gap-3 rounded-xl border border-ink/10 p-4">
             <legend className="px-1 text-sm font-semibold">Session {index + 1}</legend>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field label="开启时间">
                 <input className={input} type="datetime-local" step="60" required
                   value={session.startedAt}
@@ -109,13 +111,15 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
                   value={session.endedAt}
                   onChange={event => changeSessions(sessions.map(row => row.id === session.id ? { ...row, endedAt: event.target.value } : row))} />
               </Field>
-              <Field label="计费方案">
-                <select className={input} required value={session.pricingConfigId}
-                  onChange={event => changeSessions(sessions.map(row => row.id === session.id ? { ...row, pricingConfigId: event.target.value } : row))}>
-                  <option value="">{t("选择方案")}</option>
-                  {plans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
-                </select>
-              </Field>
+              <div className="sm:col-span-2">
+                <Field label="计费方案">
+                  <select className={input} required value={session.pricingConfigId}
+                    onChange={event => changeSessions(sessions.map(row => row.id === session.id ? { ...row, pricingConfigId: event.target.value } : row))}>
+                    <option value="">{t("选择方案")}</option>
+                    {plans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+                  </select>
+                </Field>
+              </div>
             </div>
             {sessions.length > 1 && <button type="button" className={button + " justify-self-end"}
               onClick={() => changeSessions(sessions.filter(row => row.id !== session.id))}>
@@ -135,7 +139,14 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
         {!plans.length && <p role="alert" className="text-sm text-coral">{t("请先启用至少一个计费方案。")}</p>}
         {error && <p role="alert" className="text-sm text-coral">{error}</p>}
       </form>
-      {result && <div className="grid gap-4 border-t border-ink/10 pt-5" aria-live="polite">
+      </div>
+      <div className="grid min-w-0 gap-4 lg:sticky lg:top-0" aria-live="polite">
+      {!result && (
+        <p className="rounded-xl border border-dashed border-ink/20 px-4 py-10 text-center text-sm text-ink/50">
+          {t("填写左侧的 Session，生成模拟账单。")}
+        </p>
+      )}
+      {result && <div className="grid gap-4">
         <h4 className="font-semibold">{t("模拟账单时间轴")}</h4>
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div><dt className="text-ink/60">{t("入场时间")}</dt><dd>{displayDateTime(result.admissionAt, zone)}</dd></div>
@@ -144,6 +155,8 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
         <BillTotal preview={{ settlementPreview: { total: result.total }, timeline: result.timeline, chargeItems: [], adjustments: [] }} />
         <BillTimeline preview={{ settlementPreview: { total: result.total }, timeline: result.timeline, chargeItems: [], adjustments: [] }} timeZone={zone} />
       </div>}
+      </div>
+      </div>
     </section>
   );
 }

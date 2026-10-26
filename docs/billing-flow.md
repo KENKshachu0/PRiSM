@@ -144,7 +144,7 @@ Swift 移植以与 TypeScript 逐字段一致为验收标准。改动计费引�
 
 ## 店长计费模拟器
 
-模拟器用与结账相同的封顶结算：跨方案封顶按发布里所有按时计费方案生效，不读存储里那个已不再使用的方案列表。改封顶算法时，`packages/application/test/billing-simulator.test.ts` 与结算用例要一起通过。
+模拟器和结账走同一个入口 `settleSessionsWithCaps`（`packages/application/src/session-billing.ts`）：各 Session 先按自己的方案报价，再把所有跨方案封顶一起结算。这是唯一一处「报价 + 封顶」的实现，模拟器不再自己拼一套，改封顶算法时两边一定同步。模拟器页面和商户工作台其他页一样左右分栏：左边填 Session，右边用账单组件显示结果。
 
 ## 店长计费模拟器详情
 
