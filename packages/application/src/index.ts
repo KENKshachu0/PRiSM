@@ -33,4 +33,5 @@ export * from "./versioned-pricing";
 export * from "./cap-progress";
 export * from "./live-billing-snapshot";
 
+export * from "./session-billing";
 export * from "./billing-simulator";

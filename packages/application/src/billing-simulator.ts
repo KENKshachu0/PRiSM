@@ -1,21 +1,17 @@
 import {
   createPricingProviderFromConfig,
-  settleTimeCaps,
   isApiInstant,
-  maxCents,
   previewSessionSettlement,
   PrismDomainError,
-  sumCents,
   yuanOf,
-  ZERO_CENTS,
   type BillTimeline,
   type ChargeItem,
   type PricingConfig,
-  type SettlementAdjustment,
   type Session,
-  type TimeCapPricingWindow,
 } from "@prism/core";
 import { buildBillTimeline } from "./bill-timeline";
+import { capProviderConfig, capTimePlanIds } from "./versioned-pricing";
+import { settleSessionsWithCaps } from "./session-billing";
 
 export type BillingSimulationSession = {
   startedAt: string;
@@ -104,22 +100,18 @@ export async function simulateBilling(input: {
     });
   }
 
-  const charges = timelineSessions.flatMap(session => session.chargeItems.map(item =>
-    item.sessionId ? item : { ...item, sessionId: session.sessionId },
-  ));
-  const { windows: capWindows, adjustments: capAdjustments } = settleTimeCaps({
-    configs: enabled.flatMap(config => config.kind === "time.cap" ? [{
-      ...config.provider,
-      name: config.name,
-      pricingConfigId: config.id,
-      timeZone: config.provider.timeZone ?? input.timeZone ?? "UTC",
-    }] : []),
-    chargeItems: charges,
-    paidHistory: {},
+  // The same settlement checkout uses: a cap counts every time plan, not the
+  // list it stores (which is empty), and the total is capped quote minus held-back.
+  const timeZone = input.timeZone ?? "UTC";
+  const timePlanIds = capTimePlanIds(enabled);
+  const settled = settleSessionsWithCaps({
+    sessions: timelineSessions,
+    caps: enabled.flatMap(config => config.kind === "time.cap"
+      ? [capProviderConfig(config, config.provider.timeZone ?? timeZone, timePlanIds)]
+      : []),
   });
-
-  const subtotal = sumCents(charges.map(item => item.amount));
-  const total = maxCents(ZERO_CENTS, sumCents([subtotal, ...capAdjustments.map(item => item.amount)]));
+  const { chargeItems: charges, windows: capWindows, adjustments: capAdjustments, subtotal } = settled;
+  const total = settled.total;
   return {
     admissionAt: admission.toISOString(),
     departureAt: departure.toISOString(),

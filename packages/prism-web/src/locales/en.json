@@ -1194,7 +1194,6 @@
   "请填写时段名称": "Enter a period name",
   "封顶金额需要大于 0": "The cap must be greater than 0",
   "每隔分钟数需要大于 0": "The interval must be greater than 0 minutes",
-  "收费金额不能为负数": "The price cannot be negative",
   "基本信息": "Basics",
   "启用规则": "Rule enabled",
   "收费": "Charge",
@@ -1811,5 +1810,7 @@
   "签发 Bot 凭据": "Issue a bot credential",
   "轮换 Bot 凭据": "Rotate the bot credential",
   "接入凭据": "Credential",
-  "封顶规则的每个时段只需要封顶金额，不能带单价。": "A cap rule's periods need only a cap amount, never a unit price."
+  "封顶规则的每个时段只需要封顶金额，不能带单价。": "A cap rule's periods need only a cap amount, never a unit price.",
+  "负数表示在该时段减免（例如活动价）。": "A negative amount discounts that period (an event price, say).",
+  "填写左侧的 Session，生成模拟账单。": "Fill in the sessions on the left to generate a simulated bill."
 }

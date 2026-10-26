@@ -1,4 +1,5 @@
 import { buildBillTimeline } from "./bill-timeline";
+import { settleSessionsWithCaps } from "./session-billing";
 import type {
   BillTimeline,
   CheckoutCommit,
@@ -584,24 +585,19 @@ async function calculateUnifiedCheckoutDetails(
       })
     : [];
   const globalCapHistoryKeys = globalCapConfigs.flatMap((config) =>
-    collectTimeCapPricingHistoryLookupKeys({
-      config,
-      chargeItems: chargeItemsForGlobalCaps,
-    }),
-  );
+    collectTimeCapPricingHistoryLookupKeys({ config, chargeItems: chargeItemsForGlobalCaps }));
   const globalCapPaidHistory = dependencies.pricingCapHistory
     ? await dependencies.pricingCapHistory.sumByPlayerAndKeys(playerId, globalCapHistoryKeys)
     : {};
-  // Every cap across plans limits the same charges together, so a charge is held back once.
-  const capSettlement = settleTimeCaps({
-    configs: globalCapConfigs,
-    chargeItems: chargeItemsForGlobalCaps,
+  // Every cap across plans limits the same charges together: one settlement, the
+  // same one the simulator uses.
+  const capSettlement = settleSessionsWithCaps({
+    sessions: sessionResults.map((result) => ({ sessionId: result.session.id, chargeItems: result.chargeItems })),
+    caps: globalCapConfigs,
     paidHistory: globalCapPaidHistory,
   });
   globalCapWindows.push(...capSettlement.windows);
-  // Period caps count what was actually charged: each charge's history records that, not its quote.
-  const chargedByItem = new Map<string, Cents>();
-  for (const unit of capSettlement.units) chargedByItem.set(unit.item.id, addCents(chargedByItem.get(unit.item.id) ?? ZERO_CENTS, unit.charged));
+  const chargedByItem = capSettlement.chargedByItem;
   for (const adjustment of capSettlement.adjustments) {
     globalCapAdjustments.push(adjustment);
     unifiedAdjustments.push(adjustment);

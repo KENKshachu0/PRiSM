@@ -34,7 +34,8 @@ const cap = (value: number): PricingConfig => ({
   provider: {
     id: "cap",
     timeZone: "UTC",
-    includedPricingConfigIds: ["a", "b"],
+    // As stored today: a cap holds every time plan and names none.
+    includedPricingConfigIds: [],
     rules: [{ id: "all", label: "全天", priority: 1, timeRange: { start: "00:00", end: "00:00" }, priceCap: value }],
   },
 });
@@ -68,6 +69,14 @@ describe("read-only overlapping Session billing simulation", () => {
     expect(result.timeline.totals.reduce((sum, row) => sum + row.amount, 0)).toBeCloseTo(25, 2);
     // The cap filling is an event of its own; the charge stops there.
     expect(result.timeline.events.flatMap(event => event.entries).some(entry => entry.kind === "full" && entry.trackId == null)).toBe(true);
+  });
+
+  test("a cap stored without a plan list still caps every time plan, as settlement does", async () => {
+    // One plan, one cap: 5 hours at 10 is 50, capped at 20.
+    const single = [{ startedAt: "2026-10-09T00:00:00Z", endedAt: "2026-10-09T05:00:00Z", pricingConfigId: "a" }];
+    const result = await simulateBilling({ sessions: single, pricingConfigs: [plan("a", 10), cap(20)] });
+    expect(result.subtotal).toBe(50);
+    expect(result.total).toBe(20);
   });
 
   test("charges each session independently, including fixed plans", async () => {
