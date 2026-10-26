@@ -32,6 +32,8 @@ export function replaceBusinessStatements(
     "player_sessions",
     "live_activity_tokens",
     "mahjong_seats",
+    "player_cards",
+    "resource_occupancies",
     "device_events",
     "device_operations",
     "device_state",
@@ -55,6 +57,7 @@ export function replaceBusinessStatements(
     );
     remove("device_capabilities");
     remove("machines");
+    remove("resource_groups");
     remove("api_tokens");
     remove("admin_sessions");
     // Retain the current administrator and all existing target owners.

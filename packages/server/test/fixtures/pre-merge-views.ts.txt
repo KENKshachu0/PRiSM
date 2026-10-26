@@ -1,6 +1,6 @@
 // Original pre-consolidation server-hono view conversions at 7fd7e7c.
 // Intentional immutable audit fixture: do not edit to make contract checks pass.
-import { buildBillTimeline } from "@prism/application";
+import { previewBillTimeline } from "@prism/application";
 import type {
   ChargeItem,
   DeviceCommand,
@@ -285,7 +285,7 @@ export function toPlayerCheckoutPreviewView(
   result: PreviewPlayerCheckoutResult,
 ): Record<string, unknown> {
   return {
-    timeline: buildBillTimeline({ at: result.settlementPreview.previewedAt, sessions: result.sessionPreviews, adjustments: result.adjustments, globalCapWindows: result.globalCapWindows }),
+    timeline: previewBillTimeline(result),
     settlementPreview: {
       ...result.settlementPreview,
       subtotal: yuanOf(result.settlementPreview.subtotal),
@@ -320,7 +320,8 @@ export function toPlayerCheckoutResultView(
 ): Record<string, unknown> {
   const detailsBySessionId = new Map(result.sessionDetails.map((detail) => [detail.sessionId, detail]));
   return {
-    timeline: buildBillTimeline({ at: result.playerSettlement.settledAt, sessions: result.sessionDetails.map(detail => ({ ...detail, endedAt: detail.endedAt ?? result.playerSettlement.settledAt, chargeItems: result.settlements.find(record => record.settlement.sessionId === detail.sessionId)?.chargeItems ?? [] })), adjustments: result.adjustments, globalCapWindows: result.globalCapWindows }),
+    // The timeline persisted with the checkout, which the receipt reads back later.
+    timeline: result.timeline,
     playerSettlement: {
       ...result.playerSettlement,
       subtotal: yuanOf(result.playerSettlement.subtotal),
@@ -565,6 +566,9 @@ export function toPricingConfigManagementView(
     enabled: config.enabled,
     status: config.status ?? "active",
     provider,
+    ...(config.kind === "time.priority"
+      ? { relations: config.relations ?? { requires: [], conflicts: [] } }
+      : {}),
     createdAt: config.createdAt.toISOString(),
     updatedAt: config.updatedAt.toISOString(),
   };

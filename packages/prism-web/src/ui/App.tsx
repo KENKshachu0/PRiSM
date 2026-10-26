@@ -25,7 +25,7 @@ const AdminPage = lazy(() =>
 const CardsPage = lazy(() =>
   import("./CardsPage").then((module) => ({ default: module.CardsPage })),
 );
-import { MachineLoginPage } from "./MachineLoginPage";
+import { ResourcePage } from "./ResourcePage";
 const MerchantPage = lazy(() =>
   import("./MerchantPage").then((module) => ({ default: module.MerchantPage })),
 );
@@ -147,9 +147,9 @@ function Shell() {
             />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/m" element={<MachineLoginPage />} />
-            <Route path="/m/expired" element={<MachineLoginPage />} />
-            <Route path="/m/:ticket" element={<MachineLoginPage />} />
+            <Route path="/m" element={<ResourcePage />} />
+            <Route path="/m/expired" element={<ResourcePage />} />
+            <Route path="/m/:ticket" element={<ResourcePage />} />
           </Routes>
         </Suspense>
         </PageErrorBoundary>

@@ -140,6 +140,8 @@ export type StaffActiveSessionListItem = {
   endedAt?: Date | null;
   elapsedMinutes: number;
   label?: string | null;
+  /** The plan the session bills; null for the unpriced placeholder session. */
+  pricingConfigId?: string | null;
   status?: "active" | "closed";
   identities?: Array<{
     provider: string;

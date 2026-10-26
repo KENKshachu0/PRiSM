@@ -8,7 +8,7 @@ import type {
   RedeemRecord,
 } from "@prism/core";
 import { diffAssetHoldings, PrismDomainError, isActiveInWindow, redeemGift } from "@prism/core";
-import { withOperationLease } from "./operation-lock";
+import { PLAYER_BILLING_LOCK_SCOPE, withOperationLease } from "./operation-lock";
 import { assetKey, toAvailableAssetView, type AvailableAssetReader, type AvailableAssetView } from "./available-assets";
 
 export type RedeemServiceDependencies = {
@@ -47,7 +47,7 @@ export function createRedeemService(dependencies: RedeemServiceDependencies): Re
       // Serialize each redeem code globally before acquiring a per-player lock:
       // the global maxUseCount must never race across different players.
       return withOperationLease({ repository: dependencies.operationLocks, scope: "redeem.code", resourceId: input.code, id: dependencies.id, now: dependencies.now }, () =>
-      withOperationLease({ repository: dependencies.operationLocks, scope: "player.assets", resourceId: input.playerId, id: dependencies.id, now: dependencies.now }, async () => {
+      withOperationLease({ repository: dependencies.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: input.playerId, id: dependencies.id, now: dependencies.now }, async () => {
       const code = await dependencies.redeems.findRedeemCodeByCode(input.code);
       if (!code) {
         throw new PrismDomainError("Redeem code not found.", "REDEEM_CODE_NOT_FOUND");

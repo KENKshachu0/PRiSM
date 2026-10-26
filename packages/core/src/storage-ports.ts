@@ -172,12 +172,28 @@ export type PlayerSessionRepository = {
   revoke(sessionId: string, revokedAt: Date): Promise<void>;
 };
 
+/**
+ * One lifecycle transition: the sessions it closes and opens, written in a
+ * single batch so neither half of a plan switch is committed alone. Sessions
+ * closed and opened at the same instant are the record of a switch.
+ */
+export type SessionTransitionWrite = {
+  close: readonly Session[];
+  create: readonly Session[];
+};
+
 export type SessionRepository = {
   findActiveByPlayerId(playerId: string): Promise<Session[]>;
   findById(sessionId: string): Promise<Session | null>;
   findUnpaidClosedByPlayerId(playerId: string): Promise<Session[]>;
   save(session: Session): Promise<void>;
   saveMany?(sessions: readonly Session[]): Promise<void>;
+  /**
+   * Closes and creates sessions atomically. A close only applies to a session
+   * that is still active, and the unique active-plan index refuses a second
+   * session for one plan, so a transition planned from stale state fails whole.
+   */
+  applyTransition?(input: SessionTransitionWrite): Promise<void>;
 };
 
 export type OperationLockRepository = {

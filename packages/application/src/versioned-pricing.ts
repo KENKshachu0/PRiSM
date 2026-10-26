@@ -21,20 +21,7 @@ export function createVersionedPricingResolvers(input: {
 > {
   const fallbackPricingProviders = input.fallbackPricingProviders ?? [];
   const pluginPricingProviders = input.pluginPricingProviders ?? [];
-  const versioned = (config: PricingConfig): PricingConfig => {
-    if (config.kind === "time.priority" && config.provider.historyProviderId) {
-      return {
-        ...config,
-        provider: { ...config.provider, id: config.provider.historyProviderId },
-      };
-    }
-    // Version 1 keeps the pre-migration history key so an upgrade cannot reset caps.
-    if (!config.versionId || config.version === 1) return config;
-    return {
-      ...config,
-      provider: { ...config.provider, id: config.versionId },
-    } as PricingConfig;
-  };
+  const versioned = historyVersionedConfig;
   return {
     async pricingProviderResolver(context) {
       const pinned = await input.sessionPricing(context.session);
@@ -83,25 +70,48 @@ export function createVersionedPricingResolvers(input: {
         const pinned = await input.sessionPricing(session);
         for (const config of pinned.configs) {
           if (config.kind !== "time.cap") continue;
-          result.push({
-            ...config.provider,
-            name: config.name,
-            // A publication pins both the cap and its included plan versions.
-            pricingConfigId:
-              config.version === 1
-                ? config.id
-                : (config.versionId ?? config.id),
-            includedPricingConfigIds: config.provider.includedPricingConfigIds,
-            timeZone:
-              config.provider.timeZone ??
-              pinned.timeZone ??
-              context.timeZone ??
-              storeTimeZone,
-          });
+          result.push(capProviderConfig(config, pinned.timeZone ?? context.timeZone ?? storeTimeZone, capTimePlanIds(pinned.configs)));
         }
       }
       return result;
     },
+  };
+}
+
+/** A plan as its spending history is keyed: the provider ID of the version that recorded it. */
+export function historyVersionedConfig(config: PricingConfig): PricingConfig {
+  if (config.kind === "time.priority" && config.provider.historyProviderId) {
+    return {
+      ...config,
+      provider: { ...config.provider, id: config.provider.historyProviderId },
+    };
+  }
+  // Version 1 keeps the pre-migration history key so an upgrade cannot reset caps.
+  if (!config.versionId || config.version === 1) return config;
+  return {
+    ...config,
+    provider: { ...config.provider, id: config.versionId },
+  } as PricingConfig;
+}
+
+/** The time plans a cap across plans holds: every one of the release it is in. */
+export function capTimePlanIds(configs: readonly PricingConfig[]): string[] {
+  return configs.filter((config) => config.kind === "time.priority").map((config) => config.id);
+}
+
+/** A cross-plan cap as settlement applies it, over every time plan of its release. */
+export function capProviderConfig(
+  config: Extract<PricingConfig, { kind: "time.cap" }>,
+  timeZone: string,
+  timePlanIds: readonly string[],
+): import("@prism/core").TimeCapPricingProviderConfig {
+  return {
+    ...config.provider,
+    name: config.name,
+    // A publication pins both the cap and its included plan versions.
+    pricingConfigId: config.version === 1 ? config.id : (config.versionId ?? config.id),
+    includedPricingConfigIds: [...timePlanIds],
+    timeZone: config.provider.timeZone ?? timeZone,
   };
 }
 

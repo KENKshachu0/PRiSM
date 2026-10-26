@@ -60,11 +60,12 @@ const profile = { id: 'p', displayName: '测试玩家', status: 'active', kind: 
     assert.deepEqual(collection.sessionIds, ['visit']);
     await page.goto(origin + '/merchant/demo/pricing');
     await page.getByRole('button', { name: '编辑', exact: true }).click();
-    const ring = page.getByRole('region', { name: '24 小时计费预览' });
+    const ring = page.getByRole('region', { name: '当日预览' });
     await ring.locator('input[type="date"]').fill('2026-10-02');
     await ring.getByText('03:00–10:00', { exact: true }).waitFor();
-    assert.ok(await ring.getByText('00:00–03:00', { exact: true }).isVisible());
-    assert.ok(await ring.getByText('10:00–24:00', { exact: true }).isVisible());
+    // A period running through midnight is one row, as the day strip draws it in two pieces.
+    assert.ok(await ring.getByText('10:00–03:00', { exact: true }).isVisible());
+    assert.equal(await ring.getByText('00:00–03:00', { exact: true }).count(), 0);
     // The player account bill uses the device zone; the same instant is 22:08 in New York.
     await page.getByRole('button', { name: '关闭', exact: true }).click();
     await page.locator('.player-account-menu summary').click();

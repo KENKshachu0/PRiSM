@@ -12,11 +12,16 @@ export const extraSchema = [
   `CREATE TABLE IF NOT EXISTS shop_billing_settings (
  shop_id TEXT NOT NULL,billing_enabled INTEGER NOT NULL CHECK(billing_enabled IN (0,1)),auto_register INTEGER NOT NULL CHECK(auto_register IN (0,1)),checkin_geo INTEGER NOT NULL CHECK(checkin_geo IN (0,1)),checkout_geo INTEGER NOT NULL CHECK(checkout_geo IN (0,1)),
  machine_geo INTEGER NOT NULL CHECK(machine_geo IN (0,1)),entry_pricing_ids_json TEXT NOT NULL,bot_contact TEXT NOT NULL,identity_binding_required INTEGER NOT NULL CHECK(identity_binding_required IN (0,1)),PRIMARY KEY(shop_id))`,
+  `CREATE TABLE IF NOT EXISTS resource_groups (
+ shop_id TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+ default_pricing_config_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(shop_id,id))`,
   `CREATE TABLE IF NOT EXISTS machines (
  shop_id TEXT NOT NULL,id TEXT NOT NULL,public_id TEXT NOT NULL,name TEXT NOT NULL,
  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
  kind TEXT NOT NULL CHECK(kind IN ('machine','door')),
- aliases_json TEXT NOT NULL,PRIMARY KEY(shop_id,id),UNIQUE(shop_id,public_id))`,
+ aliases_json TEXT NOT NULL,resource_group_id TEXT,pricing_config_override_id TEXT,
+ capacity INTEGER,occupancy_minutes INTEGER,
+ PRIMARY KEY(shop_id,id),UNIQUE(shop_id,public_id))`,
   `CREATE TABLE IF NOT EXISTS mahjong_seats (
  shop_id TEXT NOT NULL,player_id TEXT NOT NULL,machine_id TEXT NOT NULL,session_id TEXT NOT NULL,
  entry_session_id TEXT,joined_at TEXT NOT NULL,PRIMARY KEY(shop_id,player_id),UNIQUE(shop_id,session_id),
@@ -30,6 +35,15 @@ export const extraSchema = [
  PRIMARY KEY(shop_id,source_user_id),UNIQUE(shop_id,player_id),UNIQUE(shop_id,staff_id),
  FOREIGN KEY(shop_id,player_id) REFERENCES players(shop_id,id),
  FOREIGN KEY(shop_id,staff_id) REFERENCES staff_users(shop_id,id))`,
+] as const;
+
+/** v3 files predate resource groups: a machine row had no billing binding. */
+const v3MachineSchema = [
+  `CREATE TABLE IF NOT EXISTS machines (
+ shop_id TEXT NOT NULL,id TEXT NOT NULL,public_id TEXT NOT NULL,name TEXT NOT NULL,
+ enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('machine','door')),
+ aliases_json TEXT NOT NULL,PRIMARY KEY(shop_id,id),UNIQUE(shop_id,public_id))`,
 ] as const;
 
 /**
@@ -88,11 +102,37 @@ const v2DeviceSchema = [
   )`,
 ] as const;
 
+const v3ConfigurationTables = [
+  ...configurationTables,
+  "app_settings",
+  "shop_billing_settings",
+  "api_tokens",
+  "machines",
+  "device_capabilities",
+] as const;
+const v3BusinessTables = [
+  "staff_users",
+  ...businessTables,
+  "app_settings",
+  "shop_billing_settings",
+  "api_tokens",
+  "machines",
+  "device_capabilities",
+  "mahjong_seats",
+  "device_operations",
+  "device_events",
+  "device_state",
+  "account_links",
+  "checkout_report_states",
+] as const;
+// v4 adds resource groups; machines name the group they bill from, how many
+// people they hold and how long someone counts as on them.
 export const fullConfigurationTables = [
   ...configurationTables,
   "app_settings",
   "shop_billing_settings",
   "api_tokens",
+  "resource_groups",
   "machines",
   "device_capabilities",
 ] as const;
@@ -102,6 +142,7 @@ export const fullBusinessTables = [
   "app_settings",
   "shop_billing_settings",
   "api_tokens",
+  "resource_groups",
   "machines",
   "device_capabilities",
   "mahjong_seats",
@@ -127,8 +168,11 @@ const v2BusinessTables = [
   "checkout_report_states",
 ] as const;
 export type FullTable = (typeof fullBusinessTables)[number] | (typeof v2BusinessTables)[number];
-export const v3TablesFor = (scope: "business" | "configuration"): readonly FullTable[] =>
+/** The tables the current format (v4) carries; export writes exactly these. */
+export const currentTablesFor = (scope: "business" | "configuration"): readonly FullTable[] =>
   scope === "business" ? fullBusinessTables : fullConfigurationTables;
+const v3TablesFor = (scope: "business" | "configuration"): readonly FullTable[] =>
+  scope === "business" ? v3BusinessTables : v3ConfigurationTables;
 type TableSchema = (typeof tableSchemas)[(typeof businessTables)[number]];
 
 function inferSchema(sql: string): TableSchema {
@@ -176,8 +220,13 @@ function buildSchemas(tables: readonly FullTable[], ddl: readonly string[]) {
   return result;
 }
 
-/** The current (v3) table shapes. */
+/** The current (v4) table shapes. */
 export const schemas = buildSchemas(fullBusinessTables, [...sqliteSchema, ...extraSchema]);
+// A machine may only name a group the backup also carries.
+schemas.machines = {
+  ...schemas.machines,
+  foreignKeys: [...schemas.machines.foreignKeys, { table: "resource_groups", columns: ["resource_group_id"], referenced: ["id"] }],
+};
 // Device storage has no foreign keys in the shared schema (it is also used
 // without `machines`); a backup must still not carry capabilities or state for
 // a device it does not contain.
@@ -186,15 +235,17 @@ for (const table of ["device_capabilities", "device_state"] as const)
     ...schemas[table],
     foreignKeys: [...schemas[table].foreignKeys, { table: "machines", columns: ["device_id"], referenced: ["id"] }],
   };
+const v3Schemas = buildSchemas(v3BusinessTables, [...v3MachineSchema, ...sqliteSchema, ...extraSchema]);
+for (const table of ["device_capabilities", "device_state"] as const) v3Schemas[table] = schemas[table];
 const v2Schemas = buildSchemas(v2BusinessTables, [...v2DeviceSchema, ...sqliteSchema, ...extraSchema]);
 
-export function schemasFor(version: 1 | 2 | 3): Record<FullTable, TableSchema> {
-  return version === 3 ? schemas : v2Schemas;
+export function schemasFor(version: 1 | 2 | 3 | 4): Record<FullTable, TableSchema> {
+  return version === 4 ? schemas : version === 3 ? v3Schemas : v2Schemas;
 }
 export const fullHeaderSchema = backupSchema
   .omit({ tables: true, version: true })
   .extend({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     shopProfile: z
       .object({
         name: z.string().min(1).max(80),
@@ -217,9 +268,11 @@ export function fullTables(header: FullHeader): readonly FullTable[] {
       : configurationTables
     : header.version === 2
       ? header.scope === "business" ? v2BusinessTables : v2ConfigurationTables
-      : v3TablesFor(header.scope);
+      : header.version === 3
+        ? v3TablesFor(header.scope)
+        : currentTablesFor(header.scope);
 }
-export function validateRows(table: FullTable, rows: DataRow[], version: 1 | 2 | 3 = 3): string[] {
+export function validateRows(table: FullTable, rows: DataRow[], version: 1 | 2 | 3 | 4 = 4): string[] {
   const errors: string[] = [],
     schema = schemasFor(version)[table];
   const columns = schema.columns

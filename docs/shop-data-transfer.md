@@ -39,7 +39,7 @@ v2／v3 恢复来源店铺的资料及设置，保留目标店铺的编号、所
 ```json
 {
   "format": "prism-shop-data",
-  "version": 3,
+  "version": 4,
   "scope": "business",
   "exportedAt": "2026-10-06T00:00:00.000Z",
   "source": {
@@ -61,7 +61,7 @@ v2／v3 恢复来源店铺的资料及设置，保留目标店铺的编号、所
 
 上述是结构示意，不能直接导入。每行省略 `shop_id`，其余字段是数据库原始列和值；`device_capabilities.secret_json` 中的密钥以明文导出。
 
-当前导出 **v3**：设备身份在 `machines`，能力在 `device_capabilities`，历史在 `device_operations`、`device_events`、`device_state`（迁移 0037 引入）。导入仍接受 v1 与 v2 文件。v2 文件的 `machines` 带连接列（`hinata_url`、`hinata_password`、`ha_binding_json`、`ttlock_lock_id`、`coin_key`、`coin_after_swipe`、`mahjong_config_json`），并带 `device_commands`、`device_states`、`machine_connections` 三张表；导入时按迁移 0037 的同一规则转换：连接列变成能力，命令变成操作及其请求／结果事件（未完成的保持未完成，计费结果不变），电源状态变成观测值，`machine_connections` 丢弃。`account_links` 表包含账号关联资料。导入归属当前经鉴权的目标店铺，不接受文件指定任意店铺、表或列。
+当前导出 **v4**：设备身份在 `machines`（含所属资源组 `resource_group_id`、专属计费方案 `pricing_config_override_id`、容量 `capacity` 与占用时长 `occupancy_minutes`；早先的 v4 文件没有后两列时取默认值 0 与 15；麻将能力配置里还带人数 `capacity` 的旧文件，导入时把它搬到麻将桌的容量上），资源组在 `resource_groups`，能力在 `device_capabilities`，历史在 `device_operations`、`device_events`、`device_state`。设备引用了文件中不存在的资源组时导入检查拒绝。导入仍接受 v1–v3 文件；v3 文件没有资源组，其中的设备都属于默认资源组，见[资源与资源组](resources.md)。v2 文件的 `machines` 带连接列（`hinata_url`、`hinata_password`、`ha_binding_json`、`ttlock_lock_id`、`coin_key`、`coin_after_swipe`、`mahjong_config_json`），并带 `device_commands`、`device_states`、`machine_connections` 三张表；导入时按迁移 0037 的同一规则转换：连接列变成能力，命令变成操作及其请求／结果事件（未完成的保持未完成，计费结果不变），电源状态变成观测值，`machine_connections` 丢弃。`account_links` 表包含账号关联资料。玩家在店铺的卡片（`player_cards`，用平台密钥加密）和占用记录不导出，`aime` 类型的旧卡片身份也不再导出；恢复后玩家再次刷卡时卡片重新绑定，见 [卡片、占用与查人](occupancy.md)。导入归属当前经鉴权的目标店铺，不接受文件指定任意店铺、表或列。
 
 事件时间、UTC 规则、JSON 时间轴和金额保持存储原值。货币使用整数分；数量和百分比保持原值。历史计费版本与发布时区不再次转换。下载附件及分页中的 `payload_json`／`headerJson` 不进行展示时区转换。
 

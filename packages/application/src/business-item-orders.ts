@@ -9,7 +9,7 @@ import type {
   SessionRepository,
 } from "@prism/core";
 import { deductCurrency, diffAssetHoldings, isPositiveCents, PrismDomainError } from "@prism/core";
-import { withOperationLease } from "./operation-lock";
+import { PLAYER_BILLING_LOCK_SCOPE, withOperationLease } from "./operation-lock";
 import type { AvailableAssetReader } from "./available-assets";
 
 export type PurchaseBusinessItemInput = {
@@ -47,7 +47,7 @@ export function createBusinessItemOrderService(
 ): BusinessItemOrderService {
   return {
     async purchaseBusinessItem(input) {
-      return withOperationLease({ repository: dependencies.operationLocks, scope: "player.assets", resourceId: input.playerId, id: dependencies.id, now: dependencies.now }, async () => {
+      return withOperationLease({ repository: dependencies.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: input.playerId, id: dependencies.id, now: dependencies.now }, async () => {
       const now = dependencies.now();
       const [item, activeSessions, assetHoldings] = await Promise.all([
         findActiveBusinessItem(dependencies.businessItems, input.businessItemId, now),

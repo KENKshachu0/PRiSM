@@ -3,22 +3,16 @@ import { ShopDataTransfer } from "./ShopDataTransfer";
 import { IdentityConverter } from "./IdentityConverter";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Store, Receipt, Users, MapPin, Plug, ShieldCheck, Database } from "lucide-react";
+import { Store, Receipt, Users, MapPin, ShieldCheck, Database } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { BillingSettings, shopApi, type Settings as ShopSettings } from "../BillingPages";
 import { BindingPrompt } from "../SessionContent";
 import { api } from "../../api";
 import {
   ActionForm,
-  CopyValue,
   Field,
-  Modal,
   State,
-  Table,
-  button,
   primary,
-  cell,
-  date,
   input,
   segment,
   useMerchant,
@@ -59,13 +53,6 @@ type Settings = {
     aliases: string[];
   }[];
 };
-type Token = {
-  id: string;
-  label: string;
-  role: string;
-  status: string;
-  lastUsedAt?: string | null;
-};
 const groups = [
   {
     id: "general",
@@ -76,13 +63,13 @@ const groups = [
   {
     id: "billing",
     label: "营业与计费",
-    description: "入场计费、前台收银与收费规则。",
+    description: "入场计费与前台收银。",
     icon: Receipt,
   },
   {
     id: "players",
     label: "玩家与身份",
-    description: "玩家进店前如何确认身份、新玩家礼物与平台标识转换。",
+    description: "玩家进店前如何确认身份、绑定提示、新玩家礼物与平台标识转换。",
     icon: Users,
   },
   {
@@ -90,12 +77,6 @@ const groups = [
     label: "位置与设备",
     description: "到店位置校验、投币冷却、闲置自动关机与门锁连接。",
     icon: MapPin,
-  },
-  {
-    id: "integrations",
-    label: "Bot 与接入",
-    description: "让 QQ 等平台的店铺 Bot 代表玩家绑定身份、查询余额和操作设备。",
-    icon: Plug,
   },
   {
     id: "data",
@@ -210,6 +191,7 @@ export function SettingsPage({
           />
           <div hidden={group.id !== "players"}>
             <div className="grid gap-5">
+              <BindingPromptSettings shopCode={shopCode} />
               {!settings.data ? (
                 <State error={settings.error} />
               ) : (
@@ -325,12 +307,6 @@ export function SettingsPage({
               )}
             </div>
           </div>
-          <div hidden={group.id !== "integrations"}>
-            <div className="grid gap-5">
-              <BotSettings shopCode={shopCode} />
-              <Tokens shopCode={shopCode} />
-            </div>
-          </div>
           <div hidden={group.id !== "data"}><ShopDataTransfer key={shopCode} /></div>
           <div hidden={group.id !== "members"}>{members}</div>
         </div>
@@ -338,7 +314,8 @@ export function SettingsPage({
     </div>
   );
 }
-function BotSettings({ shopCode }: { shopCode: string }) {
+/** What a player who must bind an identity is told to send, and where. */
+function BindingPromptSettings({ shopCode }: { shopCode: string }) {
   const { t } = useI18n();
   const [settings, setSettings] = useState<ShopSettings | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -378,21 +355,10 @@ function BotSettings({ shopCode }: { shopCode: string }) {
   }
   return (
     <form onSubmit={save} className="grid gap-5 rounded-xl border border-ink/10 bg-panel p-5">
-      <div className="grid gap-2">
-        <h3 className="font-semibold">{t("为什么要绑定 Bot 身份")}</h3>
-        <p className="text-sm leading-relaxed text-ink/60">
-          {t("玩家把网页上的绑定码发给店铺 Bot 后，店家就能知道这位玩家在该平台的身份（例如 QQ 号），每位玩家都有迹可循。在 Koishi 里把绑定命令限制在店铺群内，就只有入群的玩家能完成绑定、进店游玩。")}
-        </p>
-      </div>
-      <div className="grid gap-2 rounded-lg bg-ink/[0.03] p-3 text-sm">
-        <strong>{t("Bot 能做什么")}</strong>
-        <p className="leading-relaxed text-ink/60">
-          {t("在 Koishi 的 PRiSM 插件配置里设置。「玩家可用的命令」选「只读」后，玩家在 Bot 里只能绑定身份、查余额和账单、查人和兑换；入场、结账、上下桌和设备操作要在网页或 App Clip 里完成。管理员（插件配置的 staffUserIds）不受限制，仍可加减余额、替玩家入场和结账。")}
-        </p>
-      </div>
+      <h4 className="font-semibold">{t("绑定提示")}</h4>
       <div className="grid gap-3 lg:grid-cols-2">
         <label className="grid content-start gap-2 text-sm font-medium">
-          {t("绑定提示")}
+          {t("提示内容")}
           <textarea
             className={`${input} min-h-32 font-mono`}
             value={prompt}
@@ -418,113 +384,6 @@ function BotSettings({ shopCode }: { shopCode: string }) {
         {saved && <span role="status" className="text-sm text-mint">{t("已保存")}</span>}
       </div>
     </form>
-  );
-}
-
-function Tokens({ shopCode }: { shopCode: string }) {
-  const { t } = useI18n();
-  const request = useStaffApi();
-  const tokens = useResource<{ apiTokens: Token[] }>("api-tokens");
-  const [create, setCreate] = useState(false);
-  const [secret, setSecret] = useState("");
-  const [revoke, setRevoke] = useState<Token | null>(null);
-  return (
-    <section className="grid gap-4 rounded-xl border border-ink/10 bg-panel p-5">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-semibold">{t("Bot 接入凭据")}</h3>
-        <button type="button" className={button} onClick={() => setCreate(true)}>
-          {t("创建凭据")}
-        </button>
-      </div>
-      <div className="grid gap-3 rounded-lg border border-ink/10 bg-surface p-4">
-        <p className="text-xs leading-relaxed text-ink/60">
-          {t("在 Bot 的 PRiSM 插件（Koishi）里填入接入凭据、店铺编号和 API 地址。")}
-        </p>
-        <CopyValue label="店铺编号" value={shopCode} />
-        <CopyValue label="API 地址" value={window.location.origin} />
-      </div>
-      {secret && (
-        <div role="status" className="grid gap-3 rounded border border-mint/40 bg-mint/5 p-4">
-          <p className="text-sm">{t("请保存凭据，关闭后不再显示。")}</p>
-          <CopyValue label="接入凭据" value={secret} />
-          <button type="button" className={`${button} justify-self-start`} onClick={() => setSecret("")}>
-            {t("已保存，关闭")}
-          </button>
-        </div>
-      )}
-      {!tokens.data ? (
-        <State error={tokens.error} />
-      ) : !tokens.data.apiTokens.length ? (
-        <p className="rounded-lg border border-dashed border-ink/20 px-4 py-6 text-center text-sm text-ink/60">
-          {t("还没有凭据")}
-        </p>
-      ) : (
-        <Table headers={["名称", "状态", "最近连接", "操作"]}>
-          {tokens.data.apiTokens.map((token) => (
-            <tr key={token.id}>
-              <td className={cell}>
-                {token.label}
-                {token.role !== "integration" && (
-                  <span className="ml-2 text-xs text-ink/50">{t("旧版机台凭据")}</span>
-                )}
-              </td>
-              <td className={cell}>
-                {t(token.status === "active" ? "有效" : "已撤销")}
-              </td>
-              <td className={cell}>
-                {token.lastUsedAt ? date(token.lastUsedAt) : t("从未连接")}
-              </td>
-              <td className={cell}>
-                {token.status === "active" && (
-                  <button type="button" className={button} onClick={() => setRevoke(token)}>
-                    {t("撤销")}
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </Table>
-      )}
-      {create && (
-        <Modal title="创建凭据" close={() => setCreate(false)}>
-          <ActionForm
-            done={() => {
-              setCreate(false);
-              tokens.reload();
-            }}
-            submit={async (f) => {
-              const result = await request<{
-                apiToken: Token & { token: string };
-              }>("api-tokens", "POST", {
-                label: f.get("name"),
-                role: "integration",
-              });
-              setSecret(result.apiToken.token);
-            }}
-          >
-            <Field label="名称">
-              <input className={input} name="name" defaultValue="Bot" required />
-            </Field>
-          </ActionForm>
-        </Modal>
-      )}
-      {revoke && (
-        <Modal title="撤销凭据" close={() => setRevoke(null)}>
-          <ActionForm
-            label="确认撤销"
-            done={() => {
-              setRevoke(null);
-              tokens.reload();
-            }}
-            submit={() =>
-              request(`api-tokens/${segment(revoke.id)}/revoke`, "POST", {})
-            }
-          >
-            <p>{revoke.label}</p>
-          </ActionForm>
-        </Modal>
-      )}
-    </section>
   );
 }
 

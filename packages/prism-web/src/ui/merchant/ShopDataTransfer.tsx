@@ -56,8 +56,8 @@ const labels: Record<string, string> = {
   app_settings: "店铺设置",
   shop_billing_settings: "计费设置",
   api_tokens: "接入凭据",
-  machines: "设备",
-  device_capabilities: "设备能力与连接",
+  machines: "资源",
+  device_capabilities: "硬件能力与连接",
   mahjong_seats: "麻将座位",
   device_operations: "设备操作记录",
   device_events: "设备事件",
@@ -412,7 +412,7 @@ export function ShopDataTransfer() {
             <p>
               {t("玩家")}: {exported.counts.players ?? 0} · {t("前台玩家")}:{" "}
               {exported.counts.cashier_profiles ?? 0} · {t("结账记录")}:{" "}
-              {exported.counts.player_checkouts ?? 0} · {t("设备")}:{" "}
+              {exported.counts.player_checkouts ?? 0} · {t("资源")}:{" "}
               {exported.counts.machines ?? 0}
             </p>
             {JSON.parse(exported.headerJson).scope === "business" &&
@@ -522,7 +522,7 @@ export function ShopDataTransfer() {
       )}
       {success && (
         <p role="status" className="text-sm text-mint">
-          {t("导入完成，请核对玩家、余额、账单及设备设置后再营业。")}
+          {t("导入完成，请核对玩家、余额、账单及资源设置后再营业。")}
         </p>
       )}
       {confirm && pending && (() => {

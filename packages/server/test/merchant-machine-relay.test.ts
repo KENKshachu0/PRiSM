@@ -5,7 +5,7 @@ import type { D1BoundStatementLike, D1DatabaseLike, SqlValue } from "@prism/adap
 import type { AppBindings, Env } from "../src/bindings.js";
 import { deviceEventSchema } from "@prism/storage-sql";
 import { sha256Hex } from "../src/crypto.js";
-import { merchantMachineRouter } from "../src/routes/platform/merchant-machines.js";
+import { merchantResourceRouter } from "../src/routes/platform/merchant-resources.js";
 
 class SqliteD1 implements D1DatabaseLike {
   constructor(private readonly sqlite: Database) {}
@@ -51,7 +51,7 @@ function fixture(options: { relay?: "online" | "offline" | "e2ee" | "throwing" }
       coin_after_swipe INTEGER NOT NULL DEFAULT 0, mahjong_config_json TEXT,
       aliases_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(shop_id, id)
+      resource_group_id TEXT,pricing_config_override_id TEXT,capacity INTEGER NOT NULL DEFAULT 0,occupancy_minutes INTEGER NOT NULL DEFAULT 15,PRIMARY KEY(shop_id, id)
     );
     CREATE TABLE shop_members(shop_id TEXT, user_id TEXT, role TEXT);
     CREATE TABLE shop_staff_accounts(shop_id TEXT, staff_id TEXT, user_id TEXT);
@@ -95,7 +95,7 @@ function fixture(options: { relay?: "online" | "offline" | "e2ee" | "throwing" }
     c.set("user", { id: "admin-1", role: "owner", username: "admin", displayName: "Admin", bannedAt: null } as any);
     await next();
   });
-  app.route("/api/v1/merchant", merchantMachineRouter);
+  app.route("/api/v1/merchant", merchantResourceRouter);
   return { app, env, sqlite };
 }
 

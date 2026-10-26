@@ -63,8 +63,11 @@ describe("read-only overlapping Session billing simulation", () => {
     const result = await simulateBilling({ sessions, pricingConfigs: [plan("a", 10), plan("b", 20), cap(25)] });
     expect(result.subtotal).toBe(30);
     expect(result.total).toBe(25);
-    expect(result.timeline.totals.some(row => row.amount === -5)).toBe(true);
-    expect(result.timeline.events.flatMap(event => event.entries).some(entry => entry.kind === "adjustment" && entry.amount === -5)).toBe(true);
+    // The cap is a ceiling, not a discount line: the plans under it simply add up to the capped total.
+    expect(result.timeline.totals.every(row => row.amount > 0)).toBe(true);
+    expect(result.timeline.totals.reduce((sum, row) => sum + row.amount, 0)).toBeCloseTo(25, 2);
+    // The cap filling is an event of its own; the charge stops there.
+    expect(result.timeline.events.flatMap(event => event.entries).some(entry => entry.kind === "full" && entry.trackId == null)).toBe(true);
   });
 
   test("charges each session independently, including fixed plans", async () => {

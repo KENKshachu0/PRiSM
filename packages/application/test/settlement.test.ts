@@ -17,7 +17,7 @@ import {
   centsOf,
   yuanOf,
 } from "@prism/core";
-import { createTimePricingProvider } from "@prism/core";
+import { createPriorityTimePricingProvider, createTimePricingProvider } from "@prism/core";
 import { createAssetDefinitionEffectProvider, createAvailableAssetReader, createSettlementService } from "../src/index";
 
 class MemorySessionRepository implements SessionRepository {
@@ -669,6 +669,8 @@ describe("createSettlementService", () => {
     expect(settlements.checkouts[0]!.timeline?.tracks).toHaveLength(3);
     expect(settlements.checkouts[0]!.timeline?.events.flatMap(event => event.entries).some(entry => entry.kind === "current")).toBe(false);
     expect(settlements.checkouts[0]!.timeline?.totals.reduce((total, item) => total + item.amount, 0)).toBe(105);
+    // The checkout answers with the very timeline it persisted, which receipts read back.
+    expect(result.timeline).toBe(settlements.checkouts[0]!.timeline!);
     expect(assets.assetTransactions).toEqual([
       {
         id: "asset-tx:session.settlement:session-mahjong",
@@ -1303,8 +1305,9 @@ describe("createSettlementService", () => {
       expect.objectContaining({ paidBefore: moneyFixture(50), currentAmount: moneyFixture(40), priceCap: moneyFixture(79), amountApplied: moneyFixture(29) }),
     ]);
     expect(result.globalCapWindows[0].contributions).toEqual([
-      { sessionId: "session-a", pricingConfigId: "pricing-base", amount: moneyFixture(7.25) },
-      { sessionId: "session-z", pricingConfigId: "pricing-base", amount: moneyFixture(21.75) },
+      // session-z began first and takes what is left of the cap; the later session-a is held back.
+      { sessionId: "session-a", pricingConfigId: "pricing-base", amount: moneyFixture(0) },
+      { sessionId: "session-z", pricingConfigId: "pricing-base", amount: moneyFixture(29) },
     ]);
     expect(result.globalCapWindows[0].contributions.reduce((sum, item) => sum + item.amount, 0))
       .toBe(result.globalCapWindows[0].amountApplied);
@@ -1718,4 +1721,32 @@ describe("createSettlementService", () => {
     expect(sessions.saved[0]?.status).toBe("active");
   });
 
+
+  it("records what a capped period actually charged, so the next bill's period cap counts the same", async () => {
+    const sessions = new MemorySessionRepository([
+      { id: "visit", playerId: "player-1", startedAt: new Date("2026-06-07T14:20:00.000Z"), status: "active", paymentStatus: "unpaid" },
+    ]);
+    const history: Array<{ ruleId: string; amount: number }> = [];
+    const service = createSettlementService({
+      sessions,
+      assets: new MemoryAssetRepository([{ id: "wallet", assetType: "currency", assetCode: "paid", quantity: centsOf(200) }]),
+      settlements: new MemorySettlementRepository(),
+      pricingProviders: [createPriorityTimePricingProvider({
+        id: "base", pricingConfigId: "base", timeZone: "UTC",
+        rules: [{ id: "all", label: "全天", priority: 0, timeRange: { start: "00:00", end: "00:00" }, pricing: { unitMinutes: 60, unitPrice: 12, roundGraceMinutes: 5, priceCap: 60 } }],
+      })],
+      pricingHistory: { sumByPlayerAndKeys: async () => ({}), appendEntries: async (entries: readonly any[]) => { history.push(...entries); } } as any,
+      globalCapResolver: async () => [{ id: "afternoon", includedPricingConfigIds: ["base"], timeZone: "UTC",
+        rules: [{ id: "w", label: "下午", priority: 0, timeRange: { start: "14:00", end: "18:00" }, priceCap: 20 }] }],
+      assetEffectProviders: [],
+      now: () => new Date("2026-06-07T17:50:00.000Z"),
+    } as any);
+
+    const result = await service.checkout({ playerId: "player-1" });
+    // Four units, 48 on list prices, all inside the 20 cap across plans.
+    expect(yuanOf(result.playerSettlement.total)).toBe(20);
+    // The period cap's history counts the 20 charged, not the 48 quoted.
+    expect(history.map((entry) => [entry.ruleId, yuanOf(entry.amount as any)])).toEqual([["all", 20]]);
+  });
 });
+

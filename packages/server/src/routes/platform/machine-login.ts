@@ -2,21 +2,23 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { createD1Repositories } from "@prism/adapter-d1";
 import { withOperationLease } from "@prism/application";
+import type { Session } from "@prism/core";
 import type { AppBindings, TenantShop } from "../../bindings.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
 import type { CardLoginResult } from "../../durable-objects/machine-relay.js";
 import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { notice, requestLocale } from "../../notices.js";
-import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
-import { createRuntimeBus, readPower } from "../../devices/runtime.js";
+import { can, hinataConfigOf, loadResource } from "../../resources/resource.js";
+import { createRuntimeBus, readPower } from "../../resources/capabilities/runtime.js";
+import { createCardStore } from "../../resources/cards.js";
 import { clientIp, jsonError, nowIso } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { checkShopLocation } from "../../middleware/geo.js";
 import { enforceRateLimits, loginRateLimitRules } from "../../middleware/rate-limit.js";
-import { getOrCreateShopDependencies, isEntry } from "../../middleware/tenant.js";
+import { getOrCreateShopDependencies } from "../../middleware/tenant.js";
 import { reconnectImportedAccount } from "../shops/data/shop-data-accounts.js";
 import { findLegacyShopByCode } from "../../legacy/tenant-resolver.js";
-import { resolveMachineSession } from "./machine-session.js";
+import { resolveResourceTicket } from "./resource-ticket.js";
 
 export const machineLoginRouter = new Hono<AppBindings>();
 type C = Context<AppBindings, any, any>;
@@ -93,12 +95,17 @@ export async function requireShopPlayer(c:C,shop:TenantShop,deviceOnly=false):Pr
   return player;
 }
 
-export async function requireActiveEntry(c:C,shop:TenantShop):Promise<string> {
+/**
+ * The player, once the scanned resource's plan is running for them. Using any
+ * resource of a billing shop needs that, hardware or not; the page asks the
+ * player to confirm first.
+ */
+export async function requireResourcePlan(c:C,shop:TenantShop,resourceId:string):Promise<{playerId:string;session:Session}> {
   const player=await requireShopPlayer(c,shop);
-  const repo=createD1Repositories({db:c.env.DB,shopId:shop.id,id:()=>crypto.randomUUID(),now:()=>new Date()});
-  const sessions=await repo.sessions.findActiveByPlayerId(player.id);
-  if(!sessions.some(session=>isEntry(session,shop)))jsonError(403,"请先确认入场","CHECKIN_REQUIRED");
-  return player.id;
+  const deps=getOrCreateShopDependencies(c.env.DB,shop,c.env.URL_ENCRYPTION_KEY,c.env);
+  const session=await deps.resourceBilling.activeSession({resourceId,playerId:player.id});
+  if(!session)jsonError(403,"请先确认开始计费","CHECKIN_REQUIRED");
+  return {playerId:player.id,session};
 }
 
 async function recordLoginEvent(c:C,event:{
@@ -137,11 +144,11 @@ export async function claimCoin(c:C,shopId:string,machineId:string,id:string) {
 async function handleLogin(c:C,routePublicId?:string) {
   const user=requireUser(c);
   const body=machineLoginSchema.parse(await c.req.json());
-  const machine=await resolveMachineSession(c,body.ticket,routePublicId);
+  const machine=await resolveResourceTicket(c,body.ticket,routePublicId);
   const ip=clientIp(c.req.raw);
   const card=await c.env.DB.prepare(
-    "SELECT id,access_code FROM cards WHERE id=? AND user_id=? AND disabled_at IS NULL",
-  ).bind(body.cardId,user.id).first<{id:string;access_code:string}>();
+    "SELECT id,access_code,card_type FROM cards WHERE id=? AND user_id=? AND disabled_at IS NULL",
+  ).bind(body.cardId,user.id).first<{id:string;access_code:string;card_type:string}>();
   if(!card)jsonError(404,"卡片不可用或已失效","CARD_NOT_FOUND");
 
   await assertNotBanned(c,[["user",user.id],["ip",ip],["card",card.id],["machine",machine.id]]);
@@ -152,9 +159,9 @@ async function handleLogin(c:C,routePublicId?:string) {
 
   const shop=await getShopForMachine(c,machine.shop_public_id);
   checkShopLocation(shop,"machine",body);
-  const playerId=shop.billing_enabled?await requireActiveEntry(c,shop):null;
-  const device=await loadDevice(c.env.DB,shop.id,machine.id);
-  if(!device||!can(device,"aime.scan"))jsonError(409,"设备不支持此操作","DEVICE_ACTION_UNSUPPORTED");
+  const playerId=shop.billing_enabled?(await requireResourcePlan(c,shop,machine.id)).playerId:null;
+  const device=await loadResource(c.env.DB,shop.id,machine.id);
+  if(!device||!can(device,"aime.scan"))jsonError(409,"这里不支持此操作","DEVICE_ACTION_UNSUPPORTED");
   // A door on the same device means the shop gates entry even without billing.
   if(!shop.billing_enabled&&device.capabilities.has("door"))await requireShopPlayer(c,shop,true);
   const runtime={db:c.env.DB,env:c.env,shopId:shop.id};
@@ -167,13 +174,25 @@ async function handleLogin(c:C,routePublicId?:string) {
   ).bind(shop.id,user.id,operationId,now,machine.id).run();
   const bus=createRuntimeBus(runtime);
   const actor=playerId?{type:"player" as const,playerId}:{type:"staff" as const,staffId:`user:${user.id}`};
+  // Swiping a card through a shop's page binds it to the player there, so the
+  // shop's readers know whose card it is. A shop without billing knows the
+  // player only once they have one here.
+  const cardPlayerId=playerId??(await c.env.DB.prepare(
+    "SELECT player_id FROM shop_player_accounts WHERE shop_id=? AND user_id=?",
+  ).bind(shop.id,user.id).first<{player_id:string}>())?.player_id??null;
   // The card number reaches the machine only; the log keeps the card id. A
   // direct-connect machine also reports whether the game took the card and how
   // its reader answered; through a relay all we learn is that it was sent.
   const scan=await bus.perform({
     device,action:"aime.scan",actor,operationId,
     payload:{cardId:card.id},transient:{accessCode:card.access_code,awaitLogin:true},
+    ...(!playerId&&cardPlayerId?{forPlayerId:cardPlayerId}:{}),
   });
+  if(scan.operation.status==="succeeded"&&cardPlayerId&&c.env.URL_ENCRYPTION_KEY) {
+    await createCardStore(c.env.DB,shop.id,c.env.URL_ENCRYPTION_KEY)
+      .bind({playerId:cardPlayerId,card:{type:card.card_type,accessCode:card.access_code},source:"scan"})
+      .catch(error=>console.error("Card binding failed",error));
+  }
   const sent=scan.operation.status==="succeeded";
   const status=sent?"completed":scan.operation.status==="pending"?"unknown":"failed";
   const login=scan.result.login;

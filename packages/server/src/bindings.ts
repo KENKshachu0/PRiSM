@@ -24,6 +24,7 @@ import type {
   PlayerAuthService,
   StaffReportService,
   SettlePlayerCheckoutResult,
+  PricingSessionOrchestrator,
 } from "@prism/application";
 import type { LiveBillingSnapshot } from "@prism/core";
 import type { SqlRepositories } from "@prism/storage-sql";
@@ -72,6 +73,14 @@ export type PrismAppDependencies = {
   playerQueries: PlayerQueries;
   staffQueries: StaffQueries;
   playerCommands: PlayerCommandService;
+  /** The only way sessions start and stop; see docs/pricing-sessions.md. */
+  pricingSessions: PricingSessionOrchestrator;
+  /** Which plan a scanned resource bills, and starting it; see docs/resources.md. */
+  resourceBilling: import("./resources/activation.js").ResourceBilling;
+  /** Who occupies which resource; see docs/occupancy.md. */
+  occupancy: import("./resources/occupancy/service.js").OccupancyService;
+  /** Who is in the shop and where; see docs/occupancy.md. */
+  roster: import("./resources/roster.js").RosterService;
   playerCheckoutCommands: SettlementService;
   playerRedeemCommands: RedeemService;
   integrationCommands: IntegrationService;

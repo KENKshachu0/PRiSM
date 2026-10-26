@@ -122,7 +122,9 @@ const settingsSchema = z.object({
   checkinGeo: z.boolean().optional(),
   checkoutGeo: z.boolean().optional(),
   machineGeo: z.boolean().optional(),
-  entryPricingIds: z.array(z.string().min(1)).max(30),
+  // The shop's default plan: what the default resource group bills and what
+  // front-desk and bot admissions start. One plan, as every session bills one.
+  entryPricingIds: z.array(z.string().min(1)).max(1, "默认计费方案只能选择一个"),
   botContact: bindingPromptSchema,
 });
 
@@ -263,16 +265,8 @@ shopRouter.get("/", async (c) => {
     ids = [];
   }
 
-  const configs = pricing.results
-    .map(toPricingConfig)
-    .filter(
-      (row) =>
-        row.kind !== "time.cap" ||
-        ("includedPricingConfigIds" in row.provider &&
-          row.provider.includedPricingConfigIds.some((id: string) =>
-            ids.includes(id),
-          )),
-    );
+  // A cap across plans holds every time plan, so every cap applies to the entry plans.
+  const configs = pricing.results.map(toPricingConfig);
 
   // Main's browser billing previews consume raw UTC pricing rules directly.
   if (c.req.query("pricing") === "raw") return c.json({
@@ -492,8 +486,8 @@ shopRouter.put("/settings", async (c) => {
           !configuration.balanceAssetsReady
             ? "请先配置有效的余额资产"
             : !body.entryPricingIds.length
-            ? "请选择至少一个入场计费规则"
-            : "选中的入场规则已停用、归档或不可用于入场，请重新选择",
+            ? "请先在「资源组与计费」中设置默认计费方案"
+            : "默认计费方案已停用或归档，请在「资源组与计费」中重新选择",
           "BILLING_CONFIGURATION_REQUIRED",
           configuration,
         );

@@ -6,7 +6,7 @@
 
 ## 首屏关键路径
 
-生产 live phase 静态 HTML/JS/CSS 由 Assets 优先处理，动态 route 与部署控制入口继续进入 Worker。Worker 的静态回退也先于 D1 maintenance 查询；maintenance/verify phase 保持所有资源 503，API 与 DO 在所有阶段保留维护 fence。`MachineLoginPage` 进入首包。机台 API 返回后即可显示 ShopHero/机台名，账户区等待 `/me` 后再显示登录或设备操作，不会把用户误显示为已退出。
+生产 live phase 静态 HTML/JS/CSS 由 Assets 优先处理，动态 route 与部署控制入口继续进入 Worker。Worker 的静态回退也先于 D1 maintenance 查询；maintenance/verify phase 保持所有资源 503，API 与 DO 在所有阶段保留维护 fence。`ResourcePage`（玩家扫码页）进入首包。机台 API 返回后即可显示 ShopHero/机台名，账户区等待 `/me` 后再显示登录或设备操作，不会把用户误显示为已退出。
 
 设备状态分两种模式（见[集成与设备](integrations-and-machines.md)的「店铺 Hub」）。Web 的首次读取是 `/devices/session/bootstrap`：一次请求同时拿到机台和（已登录时）绑定/入场/麻将等必要状态，原来的 `/machines/session` 加 `/devices/session/state` 两次串行请求合并为一次；较旧的地址形式没有 `v1.` 票据时仍走旧的两个接口。
 

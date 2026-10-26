@@ -6,7 +6,7 @@ import { splitD1MigrationStatements } from "@prism/storage-sql";
 import { createApp } from "../src/app.js";
 import { createD1DatabaseFromSqlite } from "../src/local-server.js";
 import { sha256 } from "../src/crypto.js";
-import { mintMachineTicket } from "../src/routes/platform/machine-session.js";
+import { mintResourceTicket } from "../src/routes/platform/resource-ticket.js";
 import type { Env } from "../src/bindings.js";
 
 const migrations = resolve(import.meta.dir, "../../../migrations");
@@ -39,7 +39,7 @@ async function fixture() {
     [JSON.stringify({ baseUrl: "https://ttlock.test", clientId: "c", clientSecret: "s", accessToken: "a", refreshToken: "r" }), now],
   );
   const env = { DB: createD1DatabaseFromSqlite(sqlite), SESSION_SECRET: "session-test-secret" } as unknown as Env;
-  const { ticket } = await mintMachineTicket(env.SESSION_SECRET, "shop-code", "front");
+  const { ticket } = await mintResourceTicket(env.SESSION_SECRET, "shop-code", "front");
   const enter = (body: Record<string, unknown>) =>
     createApp().fetch(new Request("https://prism.test/api/v1/shops/shop-code/player/session/start", {
       method: "POST",

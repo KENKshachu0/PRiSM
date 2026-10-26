@@ -171,7 +171,7 @@ const backup = {
     assert.equal(await dialog.getByRole('button', { name: '确认导入', exact: true }).isEnabled(), false);
     await dialog.getByRole('checkbox').check();
     await dialog.getByRole('button', { name: '确认导入', exact: true }).click();
-    await page.getByText('导入完成，请核对玩家、余额、账单及设备设置后再营业。', { exact: true }).waitFor();
+    await page.getByText('导入完成，请核对玩家、余额、账单及资源设置后再营业。', { exact: true }).waitFor();
     await page.getByRole('combobox', { name: '切换店铺', exact: true }).getByRole('option', { name: '来源店铺', exact: true }).waitFor({ state: 'attached' });
     assert.equal(applies.length, 2);
     assert.deepEqual(applies[0], applies[1]);

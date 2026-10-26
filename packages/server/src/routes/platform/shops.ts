@@ -488,6 +488,7 @@ shopsRouter.delete("/:id", async (c) => {
       "DELETE FROM machine_tickets WHERE machine_id IN (SELECT id FROM machines WHERE shop_id=?)",
     ).bind(shopId),
     c.env.DB.prepare("DELETE FROM machines WHERE shop_id = ?").bind(shopId),
+    c.env.DB.prepare("DELETE FROM resource_groups WHERE shop_id = ?").bind(shopId),
     c.env.DB.prepare("DELETE FROM shop_members WHERE shop_id = ?").bind(shopId),
     c.env.DB.prepare("DELETE FROM app_settings WHERE shop_id = ?").bind(shopId),
     c.env.DB.prepare("DELETE FROM api_tokens WHERE shop_id = ?").bind(shopId),

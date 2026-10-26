@@ -348,7 +348,7 @@ describe("createStaffPricingService", () => {
     });
   });
 
-  it("creates global time cap configs with selected included pricing configs", async () => {
+  it("creates global time cap configs over every time plan, naming none", async () => {
     const pricingConfigs = new MemoryPricingConfigRepository();
     pricingConfigs.saved = [
       {
@@ -408,7 +408,8 @@ describe("createStaffPricingService", () => {
       kind: "time.cap",
       provider: {
         id: "cap.global",
-        includedPricingConfigIds: ["pricing-base"],
+        // A cap across plans holds every time plan: a list sent in is dropped.
+        includedPricingConfigIds: [],
         rules: [
           {
             id: "day",
@@ -671,12 +672,10 @@ describe("createStaffPricingService", () => {
         },
       }),
     ).resolves.toMatchObject({
+      // The rule's day runs on UTC, so in Tokyo its window resets at 09:00.
       segments: [
-        {
-          ruleId: "fallback",
-          startLabel: "00:00",
-          endLabel: "24:00",
-        },
+        { ruleId: "fallback", startLabel: "00:00", endLabel: "09:00" },
+        { ruleId: "fallback", startLabel: "09:00", endLabel: "24:00" },
       ],
     });
   });
@@ -807,5 +806,69 @@ describe("createStaffPricingService", () => {
       updatedAt: new Date("2026-06-07T12:00:00.000Z"),
     });
     await expect(pricingConfigs.listEnabled()).resolves.toEqual([]);
+  });
+});
+
+describe("pricing relations on save", () => {
+  const provider = (id: string) => ({
+    id: `time.${id}`,
+    rules: [{
+      id: "all-day",
+      label: "All day",
+      priority: 0,
+      timeRange: { start: "00:00", end: "00:00" },
+      pricing: { unitMinutes: 60, unitPrice: 2, roundGraceMinutes: 0, priceCap: 100 },
+    }],
+  });
+
+  function service() {
+    const pricingConfigs = new MemoryPricingConfigRepository();
+    let n = 0;
+    const commands = createStaffPricingService({
+      pricingConfigs,
+      id: () => `plan-${++n}`,
+      now: () => new Date("2026-10-24T00:00:00.000Z"),
+    });
+    const create = (relations?: { requires: string[]; conflicts: string[] }) =>
+      commands.createPricingConfig({ kind: "time.priority", name: "plan", enabled: true, provider: provider("p"), ...(relations ? { relations } : {}) });
+    return { commands, create };
+  }
+
+  it("stores a plan's relations and keeps them when an edit leaves them out", async () => {
+    const { commands, create } = service();
+    const base = await create();
+    const eight = await create({ requires: [base.id], conflicts: [] });
+    expect(eight).toMatchObject({ relations: { requires: [base.id], conflicts: [] } });
+
+    const renamed = await commands.updatePricingConfig({ pricingConfigId: eight.id, name: "八口机", enabled: true, provider: provider("p") });
+    expect(renamed).toMatchObject({ name: "八口机", relations: { requires: [base.id], conflicts: [] } });
+  });
+
+  it("refuses relations that could never be satisfied", async () => {
+    const { commands, create } = service();
+    const a = await create();
+    const b = await create({ requires: [a.id], conflicts: [] });
+
+    await expect(create({ requires: ["missing"], conflicts: [] })).rejects.toMatchObject({ code: "PRICING_RELATION_UNKNOWN_TARGET" });
+    await expect(
+      commands.updatePricingConfig({ pricingConfigId: a.id, name: "a", enabled: true, provider: provider("p"), relations: { requires: [b.id], conflicts: [] } }),
+    ).rejects.toMatchObject({ code: "PRICING_RELATION_CYCLE" });
+    await expect(create({ requires: [b.id], conflicts: [a.id] })).rejects.toMatchObject({ code: "PRICING_RELATION_CONTRADICTION" });
+    await expect(
+      commands.createPricingConfig({
+        kind: "charge.fixed", name: "ticket", enabled: true,
+        provider: { id: "ticket", label: "Ticket", amount: 5 },
+        relations: { requires: [a.id], conflicts: [] },
+      }),
+    ).rejects.toMatchObject({ code: "PRICING_RELATION_UNSUPPORTED_KIND" });
+  });
+
+  it("refuses archiving a plan another plan requires, until that plan lets go", async () => {
+    const { commands, create } = service();
+    const base = await create();
+    const eight = await create({ requires: [base.id], conflicts: [] });
+    await expect(commands.archivePricingConfig({ pricingConfigId: base.id })).rejects.toMatchObject({ code: "PRICING_CONFIG_IN_USE" });
+    await commands.archivePricingConfig({ pricingConfigId: eight.id });
+    await expect(commands.archivePricingConfig({ pricingConfigId: base.id })).resolves.toMatchObject({ status: "archived" });
   });
 });

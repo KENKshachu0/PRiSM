@@ -98,7 +98,7 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
       format:string;version:number;scope:string;tables:{players:Array<{id:string}>};
     };
     expect(backup.format).toBe("prism-shop-data");
-    expect(backup.version).toBe(3);
+    expect(backup.version).toBe(4);
     expect(backup.scope).toBe("business");
     expect(backup.tables.players.some(player=>player.id==="player-v2")).toBe(true);
 
@@ -135,7 +135,7 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
       tables:Record<string,Array<Record<string,string|number|null>>>;
       [key:string]:unknown;
     };
-    expect(backup.version).toBe(3);
+    expect(backup.version).toBe(4);
     const {tables,...header}=backup;
     const post=async(url:string,payload:unknown)=>{
       return app.fetch(new Request(url,{
@@ -219,7 +219,7 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
       tables:Record<string,Array<Record<string,string|number|null>>>;
       [key:string]:unknown;
     };
-    expect(backup.version).toBe(3);
+    expect(backup.version).toBe(4);
     expect(backup.scope).toBe("configuration");
     const {tables,...header}=backup;
     const created=await call(`${dest}/imports`,header);
@@ -417,13 +417,52 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
     sqlite.close();
   });
 
+  it("carries resource groups and each resource's billing binding",async()=>{
+    const {sqlite,env,app,headers}=await transferFixture();
+    const now=new Date().toISOString();
+    sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('source','rest','休息区',1,NULL,?,?)",[now,now]);
+    sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted,resource_group_id) VALUES ('rest-door','rest-door-pub','source','休息区入口','','rest')");
+    const exported=await app.fetch(new Request("https://prism.test/api/v1/shops/source/data/export?scope=business",{headers}),env);
+    const backup=await exported.json() as {tables:Tables;[key:string]:unknown};
+    expect(backup.tables.resource_groups).toEqual([expect.objectContaining({id:"rest",name:"休息区"})]);
+    await restore(app,env,headers,"destination",backup);
+    expect(sqlite.query("SELECT name FROM resource_groups WHERE shop_id='destination'").all()).toEqual([{name:"休息区"}]);
+    expect(sqlite.query("SELECT resource_group_id AS g FROM machines WHERE shop_id='destination' AND name='休息区入口'").get()).toEqual({g:"rest"});
+    sqlite.close();
+  });
+
+  it("refuses a file whose resource names a group it does not carry",async()=>{
+    const {sqlite,env,app,headers}=await transferFixture();
+    sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted,resource_group_id) VALUES ('orphan','orphan-pub','source','Orphan','','missing')");
+    const exported=await app.fetch(new Request("https://prism.test/api/v1/shops/source/data/export?scope=business",{headers}),env);
+    const backup=await exported.json() as {tables:Tables;[key:string]:unknown};
+    await expect(restore(app,env,headers,"destination",backup)).rejects.toThrow("resource_groups");
+    sqlite.close();
+  });
+
+  it("still restores a v3 file, which predates resource groups",async()=>{
+    const {sqlite,env,app,headers}=await transferFixture();
+    sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted) VALUES ('m3','m3-pub','source','Cabinet','')");
+    const exported=await app.fetch(new Request("https://prism.test/api/v1/shops/source/data/export?scope=business",{headers}),env);
+    const current=await exported.json() as {tables:Tables;[key:string]:unknown};
+    const {resource_groups:_g,...tables}=current.tables;
+    const v3={...current,version:3,tables:{
+      ...tables,
+      machines:tables.machines!.map(({resource_group_id:_r,pricing_config_override_id:_o,capacity:_c,occupancy_minutes:_m,...row})=>row),
+    }};
+    await restore(app,env,headers,"destination",v3);
+    expect(sqlite.query("SELECT resource_group_id AS g, capacity, occupancy_minutes AS minutes FROM machines WHERE shop_id='destination' AND name='Cabinet'").get())
+      .toEqual({g:null,capacity:0,minutes:15});
+    sqlite.close();
+  });
+
   it("converts a v2 file's machine columns and command history into the device model",async()=>{
     const {sqlite,env,app,headers}=await transferFixture();
     const now=new Date().toISOString();
     sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES ('source','p1','P','active',?)",[now]);
     const exported=await app.fetch(new Request("https://prism.test/api/v1/shops/source/data/export?scope=business",{headers}),env);
     const current=await exported.json() as {tables:Tables;[key:string]:unknown};
-    const {device_capabilities:_c,device_operations:_o,device_events:_e,device_state:_s,...tables}=current.tables;
+    const {device_capabilities:_c,device_operations:_o,device_events:_e,device_state:_s,resource_groups:_g,...tables}=current.tables;
     const v2={
       ...current,
       version:2,

@@ -1,6 +1,6 @@
-import type { Machine } from "../../api";
+import type { Resource } from "../../api";
 import type { Settings } from "../BillingPages";
-import { deviceCapabilities, isUnconfigured } from "./device-capabilities";
+import { resourceCapabilities, isUnconfigured } from "./resource-capabilities";
 
 /** How a player proves who they are before entering or using a guarded device. */
 export type IdentityPolicy = "web" | "bot" | "existing";
@@ -33,7 +33,7 @@ export const operatingMode = (
 
 export type SetupSignals = {
   settings: Settings;
-  machines: Machine[];
+  machines: Resource[];
   tokens: { role: string; status: string; lastUsedAt?: string | null }[];
   ttLock: {
     clientId?: string;
@@ -101,7 +101,7 @@ export function setupStatus(signals: SetupSignals): SetupStatus {
   const { settings, machines } = signals;
   const mode = operatingMode(settings);
   const billing = mode !== "devices";
-  const caps = machines.map(deviceCapabilities);
+  const caps = machines.map(resourceCapabilities);
   const unconfigured = machines.filter(isUnconfigured).length;
   const doorDevices = caps.filter((c) => c.door).length;
   const activeBots = signals.tokens.filter(

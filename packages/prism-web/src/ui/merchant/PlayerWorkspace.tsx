@@ -1,8 +1,8 @@
 import { browserCheckoutPreview } from "../../browser-billing";
 import { shopApi } from "../BillingPages";
-import { BillTimeline, BillTotal } from "../BillTimeline";
+import { BillLegend, BillTimeline, BillTotal } from "../BillTimeline";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { RefreshCw, Search } from "lucide-react";
 import { useI18n } from "../../i18n";
 import {
@@ -20,8 +20,10 @@ import {
   useMerchant,
   useResource,
   useStaffApi,
+  staffMessage,
   type Asset,
   type LivePlayer,
+  type Roster,
   type Player,
   type Preview,
 } from "./shared";
@@ -95,11 +97,31 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
   const list = useResource<{ players: Player[] }>(live ? null : "players");
   const onSite = useResource<{
     players: LivePlayer[];
+    roster?: Roster;
     billingSnapshot?: unknown;
   }>(live ? "live-players" : null);
+  const roster = onSite.data?.roster;
   const [search, setSearch] = useState("");
   const [groupBy, setGroupBy] = useState("none");
-  const [selectedId, setSelectedId] = useState<string>();
+  // A link to one player (`?player=`) opens them; someone who bills nothing is
+  // shown on the players tab instead of the in-shop one.
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [selectedId, setSelectedId] = useState<string | undefined>(() => params.get("player") ?? undefined);
+  const linked = params.get("player");
+  useEffect(() => {
+    if (!linked) return;
+    const players = live ? onSite.data?.players.map((player) => player.playerId) : list.data?.players.map((player) => player.id);
+    if (!players) return;
+    if (live && !players.includes(linked)) {
+      navigate(`/merchant/${segment(shopCode)}/players?player=${segment(linked)}`, { replace: true });
+      return;
+    }
+    setSelectedId(linked);
+    const next = new URLSearchParams(params);
+    next.delete("player");
+    setParams(next, { replace: true });
+  }, [linked, live, onSite.data, list.data, navigate, params, setParams, shopCode]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [selecting, setSelecting] = useState(false);
   const [bulk, setBulk] = useState<null | "checkout" | "override">(null);
@@ -204,9 +226,32 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
     };
   });
   const liveSelection = activeId ? quoted.get(activeId) ?? null : null;
+  // In the shop is playing or billing anything; an unpaid bill alone is not.
+  const present = roster?.total ?? visible.filter((player) => player.activeSessionId).length;
+  const unpaid = visible.filter((player) => !player.activeSessionId).length;
 
   const groups = useMemo(() => {
-    const result = new Map<string, { label: string; players: Row[] }>();
+    const result = new Map<string, { label: string; players: Row[]; count?: string }>();
+    if (groupBy === "place" && roster) {
+      // Each person is in one place; an occupied resource shows its head count
+      // against its capacity, unknown card holders included.
+      const byId = new Map(visible.map((player) => [player.id, player]));
+      const listed = new Set<string>();
+      roster.groups.forEach((group, index) => {
+        const players = group.members.flatMap((member) => {
+          const row = member.playerId ? byId.get(member.playerId) : undefined;
+          if (row) listed.add(row.id);
+          return row ? [row] : [];
+        });
+        result.set(`${group.kind}:${group.id ?? index}`, {
+          label: group.name,
+          players,
+          ...(group.kind === "resource" ? { count: `${group.members.length}/${group.capacity}` } : {}),
+        });
+      });
+      result.set(":unpaid", { label: t("待结账"), players: visible.filter((player) => !listed.has(player.id) && !player.activeSessionId) });
+      return [...result].filter(([, group]) => group.players.length > 0 || group.count);
+    }
     for (const player of visible) {
       const key =
         groupBy === "none"
@@ -231,7 +276,7 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
       result.set(key, group);
     }
     return [...result];
-  }, [visible, groupBy, t]);
+  }, [visible, groupBy, roster, t]);
 
   // Opening the tab shows the first player rather than an empty right column.
   const selected =
@@ -297,7 +342,12 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
           {t(live ? "在店玩家" : "玩家")}
           {rows && (
             <span className="ml-2 text-base font-normal text-ink/50">
-              {visible.length}
+              {live ? present : visible.length}
+            </span>
+          )}
+          {live && rows && unpaid > 0 && (
+            <span className="ml-3 text-sm font-normal text-ink/50">
+              {t("待结账")} {unpaid}
             </span>
           )}
         </h2>
@@ -343,6 +393,7 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
           <option value="none">{t("不分组")}</option>
           <option value="status">{t("按状态分组")}</option>
           {live && <option value="plan">{t("按计费方案分组")}</option>}
+          {live && <option value="place">{t("按位置分组")}</option>}
         </select>
       </div>
       {live && cashierEnabled && <CashierSlot onChanged={refresh} />}
@@ -387,15 +438,15 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink/55">
             {t(
               live
-                ? "玩家扫设备二维码并确认入场后会出现在这里，可以看实时账单、替他们结账。"
-                : "玩家第一次扫设备二维码登录后自动建档。从旧系统迁移的玩家可以在「设置 → 数据管理」导入。",
+                ? "玩家扫码并确认开始计费后会出现在这里，可以看实时账单、替他们结账。"
+                : "玩家第一次扫码登录后自动建档。从旧系统迁移的玩家可以在「设置 → 数据管理」导入。",
             )}
           </p>
           <Link
             className={`${button} mt-5`}
-            to={`/merchant/${encodeURIComponent(shopCode)}/devices`}
+            to={`/merchant/${encodeURIComponent(shopCode)}/resources`}
           >
-            {t("打开设备二维码")}
+            {t("打开资源二维码")}
           </Link>
         </div>
       ) : (
@@ -408,7 +459,7 @@ export function PlayerWorkspace({ live = false }: { live?: boolean }) {
                   <h3 className="border-b border-ink/10 bg-ink/[0.025] px-4 py-2 text-xs font-semibold">
                     {group.label}
                     <span className="ml-2 text-ink/50">
-                      {group.players.length}
+                      {group.count ?? group.players.length}
                     </span>
                   </h3>
                 )}
@@ -707,7 +758,8 @@ function PlayerPanel({
   };
   const billing = !!player.activeSessionId || !!livePlayer;
   const entryPlans = (plans.data?.pricingConfigs ?? []).filter(
-    (plan) => plan.enabled && plan.status !== "archived" && plan.kind !== "time.cap",
+    // Time plans and fixed charges run as sessions; a cap never does.
+    (plan) => plan.enabled && plan.status !== "archived" && (plan.kind === "time.priority" || plan.kind === "charge.fixed"),
   );
 
   async function checkout() {
@@ -877,6 +929,7 @@ function PlayerPanel({
               </button>
             </div>
           )}
+          {livePlayer.timeline && <BillLegend timeline={livePlayer.timeline} />}
           {livePlayer.timeline && (
             <BillTimeline
               timeZone={timeZone || undefined}
@@ -897,8 +950,8 @@ function PlayerPanel({
                   className="flex items-center justify-between gap-3 border-t border-ink/10 pt-2 text-sm"
                 >
                   <span>
-                    {[...new Set(session.pricingCharges.map((c) => c.planName))]
-                      .join(" + ") || t("入场")}
+                    {(plans.data?.pricingConfigs ?? []).find((plan) => plan.id === session.pricingConfigId)?.name ??
+                      ([...new Set(session.pricingCharges.map((c) => c.planName))].join(" + ") || t("计费"))}
                   </span>
                   <button
                     type="button"
@@ -919,36 +972,7 @@ function PlayerPanel({
       )}
       <div className="grid gap-3 px-4 py-3">
         {action === "entry" && (
-          <ActionForm
-            done={done}
-            label="开始计费"
-            submitDisabled={!entryPlans.length}
-            submit={(form) => {
-              const chosen = form.getAll("plan").map(String);
-              return request(`${base}/session/start`, "POST", {
-                ...(chosen.length ? { pricingConfigIds: chosen } : {}),
-              });
-            }}
-          >
-            <fieldset className="grid gap-2">
-              <legend className="mb-1 text-sm font-medium">{t("计费方案")}</legend>
-              {entryPlans.length ? (
-                entryPlans.map((plan) => (
-                  <label className="flex items-center gap-2 text-sm" key={plan.id}>
-                    <input
-                      type="checkbox"
-                      name="plan"
-                      value={plan.id}
-                      defaultChecked={plan.id === entryPlans[0]?.id}
-                    />
-                    {plan.name}
-                  </label>
-                ))
-              ) : (
-                <p className="text-sm text-ink/55">{t("没有可用的计费方案")}</p>
-              )}
-            </fieldset>
-          </ActionForm>
+          <PlanStart base={base} plans={entryPlans} done={done} />
         )}
         {action === "wallet" && (
           <ActionForm
@@ -1278,5 +1302,62 @@ function PlayerPanel({
         </details>
       </div>
     </section>
+  );
+}
+
+type PlanStartPreview = { changed: boolean; revision: string; started: string[]; stopped: string[]; kept: string[] };
+
+/** Staff start one plan; what it starts, stops and keeps is shown before confirming. */
+function PlanStart({ base, plans, done }: { base: string; plans: readonly { id: string; name: string }[]; done: () => void }) {
+  const { t } = useI18n();
+  const request = useStaffApi();
+  const [planId, setPlanId] = useState(plans[0]?.id ?? "");
+  const [preview, setPreview] = useState<PlanStartPreview | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!planId) return;
+    let cancelled = false;
+    setPreview(null);
+    setError("");
+    request<PlanStartPreview>(`${base}/session/preview`, "POST", { pricingConfigId: planId })
+      .then((result) => { if (!cancelled) setPreview(result); })
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? staffMessage(e) : t("操作失败")); });
+    return () => { cancelled = true; };
+  }, [base, planId, request, t]);
+  const rows: [string, string[]][] = preview
+    ? [[t("新增方案"), preview.started], [t("结束方案"), preview.stopped], [t("保留方案"), preview.kept]]
+    : [];
+  return (
+    <ActionForm
+      done={done}
+      label="开始计费"
+      submitDisabled={!preview?.changed}
+      submit={() => request(`${base}/session/start`, "POST", { pricingConfigId: planId, expectedRevision: preview!.revision })}
+    >
+      <fieldset className="grid gap-2">
+        <legend className="mb-1 text-sm font-medium">{t("计费方案")}</legend>
+        {plans.length ? (
+          plans.map((plan) => (
+            <label className="flex items-center gap-2 text-sm" key={plan.id}>
+              <input type="radio" name="plan" value={plan.id} checked={plan.id === planId} onChange={() => setPlanId(plan.id)} />
+              {plan.name}
+            </label>
+          ))
+        ) : (
+          <p className="text-sm text-ink/55">{t("没有可用的计费方案")}</p>
+        )}
+      </fieldset>
+      {error && <p role="alert" className="text-sm text-coral">{error}</p>}
+      {rows.some(([, names]) => names.length) && (
+        <dl className="grid gap-2 text-sm">
+          {rows.filter(([, names]) => names.length).map(([label, names]) => (
+            <div className="flex flex-wrap gap-x-3" key={label}>
+              <dt className="text-ink/60">{label}</dt>
+              <dd className="font-medium">{names.join("、")}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </ActionForm>
   );
 }

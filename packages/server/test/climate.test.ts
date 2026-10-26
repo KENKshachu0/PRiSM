@@ -5,10 +5,10 @@ import type { Session } from "@prism/core";
 import { createDeviceEventRepository, sqliteSchema } from "@prism/storage-sql";
 import type { Env } from "../src/bindings.js";
 import { encryptSecret } from "../src/crypto.js";
-import { createDeviceActionService } from "../src/devices/actions.js";
-import { loadDevice } from "../src/devices/device.js";
-import { readClimate } from "../src/devices/runtime.js";
-import { readDeviceFacts } from "../src/devices/state-view.js";
+import { createDeviceActionService } from "../src/resources/capabilities/actions.js";
+import { loadResource } from "../src/resources/resource.js";
+import { readClimate } from "../src/resources/capabilities/runtime.js";
+import { readDeviceFacts } from "../src/resources/capabilities/state-view.js";
 import { createD1DatabaseFromSqlite, platformSchema } from "../src/local-server.js";
 
 const KEY = "unit-test-encryption-key";
@@ -136,7 +136,7 @@ describe("climate capability", () => {
   it("asks Home Assistant when nothing watches the device, and records nothing", async () => {
     const { db, env, machine, sqlite, fetcher } = await fixture();
     await machine("ac", "空调", { climate: "climate.room" });
-    const device = (await loadDevice(db, SHOP, "ac"))!;
+    const device = (await loadResource(db, SHOP, "ac"))!;
     const runtime = { db, env, shopId: SHOP, fetcher, now: () => NOW };
     expect(await readClimate(runtime, device)).toEqual({
       mode: "off", modes: ["off", "cool", "heat", "dry", "fan_only", "auto"],
@@ -168,7 +168,7 @@ describe("climate capability", () => {
     let asked = 0;
     const counting = ((...args: Parameters<typeof fetch>) => { asked += 1; return fetcher(...args); }) as typeof fetch;
     const runtime = { db, env, shopId: SHOP, fetcher: counting, now: () => NOW };
-    const device = (await loadDevice(db, SHOP, "ac"))!;
+    const device = (await loadResource(db, SHOP, "ac"))!;
 
     // The stored view is not trusted until the shop hub says the connection is watched.
     expect(await readDeviceFacts(db, SHOP, device)).toEqual({ watching: false, power: null, climate: null });

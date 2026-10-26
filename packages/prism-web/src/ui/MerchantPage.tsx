@@ -27,7 +27,7 @@ import { AssetsPage } from "./merchant/Assets";
 import { ReportsPage } from "./merchant/Reports";
 import { SettingsPage } from "./merchant/Settings";
 import { BillingSetupFields, defaultBillingSetup } from "./merchant/BillingSetup";
-import { DevicesPage } from "./merchant/Devices";
+import { ResourcesPage } from "./merchant/Resources";
 import { ShopForm, MembersPanel } from "./merchant/ShopDetails";
 import { SetupContext, ShopGuide, useSetupStatus } from "./merchant/ShopGuide";
 import type { StaffMeView } from "@prism/core";
@@ -82,7 +82,7 @@ function MerchantContent() {
           <Store className="mx-auto text-mint" size={36} />
           <h1 className="text-2xl font-semibold">{t("创建你的店铺")}</h1>
           <p className="text-sm text-ink/60">
-            {t("创建后，开店指引会带你一步步把设备和计费接入店里。")}
+            {t("创建后，开店指引会带你一步步把资源和计费接入店里。")}
           </p>
           <button className={primary} onClick={() => setCreating(true)}>
             <Plus size={18} />
@@ -157,7 +157,7 @@ function Workspace({
   const setup = useSetupStatus(shop.publicId, shop.id, !!state?.owner);
   if (!state || !setup.loaded) return <State error={error} />;
   // A bare shop URL opens where the owner has work left, otherwise on the
-  // screen used every day: who is in the shop, or the devices.
+  // screen used every day: who is in the shop, or the resources.
   if (!requested)
     return (
       <Navigate
@@ -167,10 +167,13 @@ function Workspace({
             ? "guide"
             : state.billingEnabled
               ? "live"
-              : "devices"
+              : "resources"
         }`}
       />
     );
+  // Older links and printed guides point at the page under its former name.
+  if (requested === "devices")
+    return <Navigate replace to={`/merchant/${shop.publicId}/resources${window.location.search}`} />;
   const section = requested;
   const tabs = [
     ...(state.owner && setup.status && (!setup.status.complete || section === "guide")
@@ -180,12 +183,12 @@ function Workspace({
       ? [
           ["live", "在店"],
           ["players", "玩家"],
-          ["devices", "设备"],
+          ["resources", "资源"],
           ["pricing", "计费"],
           ["assets", "资产"],
           ["reports", "记录"],
         ]
-      : [["devices", "设备"]]),
+      : [["resources", "资源"]]),
     ...(!state.billingEnabled &&
     state.owner &&
     ["pricing", "assets"].includes(section)
@@ -257,8 +260,8 @@ function Workspace({
           <SetupContext.Provider value={setup}>
             <ShopGuide />
           </SetupContext.Provider>
-        ) : section === "devices" ? (
-          <DevicesPage />
+        ) : section === "resources" ? (
+          <ResourcesPage />
         ) : state.billingEnabled && section === "cashier" ? (
           <CashierRedirect shopCode={shop.publicId} />
         ) : state.billingEnabled && section === "live" ? (

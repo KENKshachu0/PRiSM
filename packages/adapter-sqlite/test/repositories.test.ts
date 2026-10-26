@@ -890,6 +890,7 @@ describe("createSqliteRepositories", () => {
         endedAt: undefined,
         status: "active",
         pricingConfigIds: ["config-1"],
+        pricingConfigId: "config-1",
         paymentStatus: "unpaid",
       },
     ]);

@@ -59,9 +59,9 @@ const CATALOG: Record<string, Entry> = {
   PLAYER_NOT_ACTIVE: { title: t("无法使用", "Not available"), body: t("你在本店的玩家资格已停用，请联系店员", "Your membership at this shop is suspended. Please ask the staff.") },
   INSUFFICIENT_BALANCE: { title: t("余额不足", "Insufficient balance"), body: t("余额不足，请充值后再结账，计费会继续", "Not enough balance. Top up and check out again; billing continues."), level: "warning" },
   DEVICE_UNAVAILABLE: { body: t("设备连接失败，请联系店员", "Could not reach the device. Please ask the staff."), retry: true },
-  DEVICE_DISABLED: { body: t("这台设备已停用", "This device is disabled.") },
-  DEVICE_NOT_FOUND: { body: t("没有找到这台设备", "Device not found.") },
-  DEVICE_ACTION_UNSUPPORTED: { body: t("设备不支持此操作", "This device cannot do that.") },
+  DEVICE_DISABLED: { body: t("这个资源已停用", "This is disabled.") },
+  DEVICE_NOT_FOUND: { body: t("没有找到这个资源", "Not found.") },
+  DEVICE_ACTION_UNSUPPORTED: { body: t("这里不支持此操作", "This cannot be done here.") },
   BILLING_DISABLED: { body: t("店铺未启用计费", "This shop does not bill visits.") },
   LOCATION_REQUIRED: { title: t("需要定位", "Location needed"), body: t("此操作需要获取当前位置，请允许定位", "This needs your location. Please allow location access."), level: "warning", retry: true },
 
@@ -83,6 +83,13 @@ const CATALOG: Record<string, Entry> = {
   PLAYER_HAS_NO_UNSETTLED_SESSIONS: { body: t("没有需要结账的场次", "Nothing to check out."), level: "info", display: "inline" },
   ACTIVE_SESSION_NOT_FOUND: { body: t("没有进行中的场次", "No visit in progress."), level: "info", display: "inline" },
   SESSION_NOT_ACTIVE: { body: t("这个场次已经结束", "This visit has ended."), level: "info", display: "inline" },
+  // Why a scanned resource cannot bill now: shown in place of its pricing rules. Each is the shop's to fix.
+  PRICING_PLAN_NOT_FOUND: { body: t("这里的计费方案已不存在，请联系店员", "This place's pricing plan no longer exists. Please ask the staff."), level: "warning", display: "inline" },
+  PRICING_PLAN_NOT_STARTABLE: { body: t("这里的计费方案不能用来计时，请联系店员", "This place's pricing plan cannot time a visit. Please ask the staff."), level: "warning", display: "inline" },
+  PRICING_REQUIREMENT_UNAVAILABLE: { body: t("这里依赖的计费方案已停用，请联系店员", "A pricing plan this place depends on is disabled. Please ask the staff."), level: "warning", display: "inline" },
+  PRICING_RELATION_UNKNOWN_TARGET: { body: t("这里依赖的计费方案已不存在，请联系店员", "A pricing plan this place depends on no longer exists. Please ask the staff."), level: "warning", display: "inline" },
+  PRICING_RELATION_CONTRADICTION: { body: t("这里的计费方案设置互相冲突，请联系店员", "This place's pricing plans conflict with each other. Please ask the staff."), level: "warning", display: "inline" },
+  PRICING_RELATION_CYCLE: { body: t("这里的计费方案设置互相依赖成环，请联系店员", "This place's pricing plans depend on each other in a loop. Please ask the staff."), level: "warning", display: "inline" },
 
   // Outcomes of a swipe, sent with a successful response and shown on the card
   // row, one short part each. The coin after a swipe is a side effect: whatever

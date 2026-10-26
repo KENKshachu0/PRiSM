@@ -68,7 +68,7 @@ export function BillingConversionWizard({ shopCode, close, done }: {
             <dt>{t("全天封顶")}</dt><dd>{setup.dailyCap === 0 ? t("不封顶") : money(setup.dailyCap)}</dd>
             <dt>{t("前台收银")}</dt><dd>{t(cashier ? "启用" : "停用")}</dd>
           </dl>
-          <p className="text-sm">{t("将补齐基础余额资产，创建并选用新的标准入场方案，然后启用计费。已有设备、玩家、资产和计费方案会保留。")}</p>
+          <p className="text-sm">{t("将补齐基础余额资产，创建并选用新的标准入场方案，然后启用计费。已有资源、玩家、资产和计费方案会保留。")}</p>
         </>}
         {error && <p role="alert" className="text-sm text-coral">{error}</p>}
         <div className="flex flex-wrap justify-between gap-3">

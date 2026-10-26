@@ -151,7 +151,32 @@ export const platformSchema = [
     aliases_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    hinata_password_encrypted TEXT
+    hinata_password_encrypted TEXT,
+    resource_group_id TEXT,
+    pricing_config_override_id TEXT,
+    capacity INTEGER NOT NULL DEFAULT 0,
+    occupancy_minutes INTEGER NOT NULL DEFAULT 15
+  )`,
+  `CREATE TABLE IF NOT EXISTS mahjong_seats (
+    shop_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    entry_session_id TEXT,
+    entry_owned INTEGER NOT NULL DEFAULT 0,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (shop_id, player_id),
+    UNIQUE (shop_id, session_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS resource_groups (
+    shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    default_pricing_config_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (shop_id, id)
   )`,
   `CREATE TABLE IF NOT EXISTS machine_tickets (
     id TEXT PRIMARY KEY,
@@ -324,6 +349,20 @@ export function initializeLocalDatabase(
 
   for (const statement of platformSchema) {
     db.run(statement);
+  }
+  const seatOwned = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('mahjong_seats') WHERE name = 'entry_owned'").get();
+  if (!seatOwned) db.run("ALTER TABLE mahjong_seats ADD COLUMN entry_owned INTEGER NOT NULL DEFAULT 0");
+  // A local database created before resource groups or occupancy lacks their columns.
+  for (const [column, type] of [
+    ["resource_group_id", "TEXT"],
+    ["pricing_config_override_id", "TEXT"],
+    ["capacity", "INTEGER NOT NULL DEFAULT 0"],
+    ["occupancy_minutes", "INTEGER NOT NULL DEFAULT 15"],
+  ] as const) {
+    const exists = db
+      .query<{ name: string }, [string]>("SELECT name FROM pragma_table_info('machines') WHERE name = ?")
+      .get(column);
+    if (!exists) db.run(`ALTER TABLE machines ADD COLUMN ${column} ${type}`);
   }
 
   db.run("PRAGMA foreign_keys = ON;");

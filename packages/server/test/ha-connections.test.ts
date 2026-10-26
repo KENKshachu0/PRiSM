@@ -5,11 +5,11 @@ import type { D1BoundStatementLike, D1DatabaseLike, SqlValue } from "@prism/adap
 import type { AppBindings, Env } from "../src/bindings.js";
 import { deviceEventSchema } from "@prism/storage-sql";
 import { decryptSecret, encryptSecret } from "../src/crypto.js";
-import { merchantMachineRouter } from "../src/routes/platform/merchant-machines.js";
+import { merchantResourceRouter } from "../src/routes/platform/merchant-resources.js";
 import { merchantHaRouter } from "../src/routes/platform/merchant-ha.js";
-import { loadDevices } from "../src/devices/device.js";
-import { getHaConnection, listHaConnections, newHaConnection, writeHaConnection } from "../src/devices/ha-connections.js";
-import { provisionReadAccess } from "../src/devices/ha-read-access.js";
+import { loadResources } from "../src/resources/resource.js";
+import { getHaConnection, listHaConnections, newHaConnection, writeHaConnection } from "../src/resources/capabilities/ha-connections.js";
+import { provisionReadAccess } from "../src/resources/capabilities/ha-read-access.js";
 import type { HaSocket } from "../src/hardware/home-assistant-ws.js";
 
 const KEY = "unit-test-encryption-key";
@@ -43,7 +43,7 @@ function fixture() {
     CREATE TABLE machines(shop_id TEXT NOT NULL,id TEXT NOT NULL,public_id TEXT NOT NULL,name TEXT NOT NULL,
       hinata_url_encrypted TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,kind TEXT NOT NULL DEFAULT 'machine',
       aliases_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(shop_id,id));
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,resource_group_id TEXT,pricing_config_override_id TEXT,capacity INTEGER NOT NULL DEFAULT 0,occupancy_minutes INTEGER NOT NULL DEFAULT 15,PRIMARY KEY(shop_id,id));
   `);
   sqlite.run("CREATE TABLE players(shop_id TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(shop_id,id))");
   for (const statement of deviceEventSchema) sqlite.run(statement);
@@ -55,7 +55,7 @@ function fixture() {
     c.set("user", { id: "admin-1", role: "admin", username: "admin", displayName: "Admin", bannedAt: null });
     await next();
   });
-  app.route("/api/v1/merchant", merchantMachineRouter);
+  app.route("/api/v1/merchant", merchantResourceRouter);
   app.route("/api/v1/merchant", merchantHaRouter);
   const send = (method: string, path: string, body?: unknown) =>
     app.fetch(new Request(`https://prism.test/api/v1/merchant${path}`, {
@@ -120,13 +120,13 @@ describe("shop Home Assistant connections", () => {
        VALUES ('shop-1','m1','power','{}',?,'2026-01-01','2026-01-01')`,
       [JSON.stringify({ binding })],
     );
-    const [device] = await loadDevices(db, "shop-1", KEY);
+    const [device] = await loadResources(db, "shop-1", KEY);
     const [connection] = await listHaConnections(db, "shop-1");
     expect(connection!.url).toBe("https://ha.example");
     expect(JSON.parse(capabilities()[0]!.config_json)).toEqual({ connectionId: connection!.id, entityId: "switch.old" });
     expect(capabilities()[0]!.secret_json).toBe("{}");
     // Reading again changes nothing.
-    await loadDevices(db, "shop-1", KEY);
+    await loadResources(db, "shop-1", KEY);
     expect(await listHaConnections(db, "shop-1")).toHaveLength(1);
     expect(device!.name).toBe("Old");
   });

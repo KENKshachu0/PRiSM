@@ -396,22 +396,47 @@ function normalizeCurrencyCode(assetCode: string): string {
 export type BillTimeline = {
   pricingReleaseIds?: string[];
   totals: { name: string; amount: number }[];
-  tracks: { id: string; name: string; lane: number; color: number; startedAt: string; endedAt: string }[];
+  tracks: {
+    id: string; name: string; lane: number; color: number; startedAt: string; endedAt: string;
+    /** When a full cap kept this track from charging: drawn dashed. */
+    capped?: { startedAt: string; endedAt: string }[];
+  }[];
   events: { at: string; time: string; date: string; entries: BillTimelineEntry[] }[];
 };
 export type BillTimelineEntry = {
   trackId: string | null;
-  kind: "start" | "end" | "current" | "switch" | "adjustment";
+  /**
+   * Where a track's stretch ends. `split`: the same rule starting its next
+   * window (a 全天 rule at midnight). `full`: a cap filled, keeping the tracks
+   * in `trackIds` from charging until `until`. `over`: the cap keeping this
+   * track from charging ended.
+   */
+  kind: "start" | "end" | "current" | "switch" | "split" | "full" | "over" | "adjustment";
   name: string;
   rule: string | null;
   nextRule: string | null;
   periodLabel: string | null;
+  /** What the stretch ending here charged; null where it was capped or did not charge. */
   amount: number | null;
   startedAt: string | null;
   endedAt: string | null;
   unitMinutes: number | null;
   unitPrice: number | null;
   units: number | null;
+  /** The cap over this entry's window, when the window has one. */
   cap: number | null;
+  /** What was charged in the window before this bill. */
   paidBefore: number | null;
+  /** What the window has counted including this bill, against `cap`. */
+  counted?: number | null;
+  /** Each unit charged in the stretch, as the share of its own price it was charged. */
+  unitFills?: number[] | null;
+  /** The unit begun but not charged yet (inside its grace), as the share of it that has passed. */
+  pending?: number | null;
+  /** The stretch ending here was capped: nothing to charge, the line is dashed. */
+  capped?: boolean;
+  /** On `full`: the tracks the cap keeps from charging. */
+  trackIds?: string[] | null;
+  /** On `full`: when the cap's window ends. */
+  until?: string | null;
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { vkFromKeyText } from "../src/devices/key-text.js";
+import { vkFromKeyText } from "../src/resources/capabilities/key-text.js";
 
 describe("coin key text", () => {
   it("maps a typed key to its Virtual-Key code", () => {

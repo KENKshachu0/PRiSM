@@ -10,10 +10,10 @@ import { jsonError } from "../../http.js";
 import { requireUser, staffPrincipal } from "../../middleware/auth.js";
 import { getShop, getShopDeps } from "../../middleware/tenant.js";
 import { checkShopLocation } from "../../middleware/geo.js";
-import { can, loadDevice, type Device } from "../../devices/device.js";
-import { createRuntimeBus } from "../../devices/runtime.js";
+import { can, loadResource, type Resource } from "../../resources/resource.js";
+import { createRuntimeBus } from "../../resources/capabilities/runtime.js";
 import { notice, requestLocale } from "../../notices.js";
-import { resolveMachineSession } from "../platform/machine-session.js";
+import { resolveResourceTicket } from "../platform/resource-ticket.js";
 import { runPlayerOperation } from "./player-operation.js";
 import {
   toPlayerAssetsView,
@@ -28,6 +28,7 @@ import {
   toStoppedSessionView,
   toDeviceCommandView,
   toBusinessItemOrderView,
+  toBillingChangeView,
 } from "./views.js";
 
 export async function hasPlatformBinding(
@@ -261,27 +262,39 @@ playerRouter.post("/session/start", async (c) => {
   const shop = getShop(c);
   const player = await requireShopPlayer(c, shop, false, true);
   const body = (await c.req.json<SessionStartBody>().catch(() => ({}))) as SessionStartBody;
-  const machine = await resolveMachineSession(c, body.ticket ?? "");
+  const machine = await resolveResourceTicket(c, body.ticket ?? "");
   if (machine.shop_id !== shop.id) {
-    jsonError(403, "请扫描设备二维码", "DEVICE_QR_REQUIRED");
+    jsonError(403, "请扫描店内的二维码", "DEVICE_QR_REQUIRED");
   }
   if (body.consent !== true) {
     jsonError(409, "请确认入场计费规则", "CHECKIN_CONSENT_REQUIRED");
   }
   checkShopLocation(shop, "checkin", body.location);
-  const door = body.openDoor === true ? await loadDevice(c.env.DB, shop.id, machine.id) : null;
+  const door = body.openDoor === true ? await loadResource(c.env.DB, shop.id, machine.id) : null;
   if (body.openDoor === true && (!door || !can(door, "door.open"))) {
-    jsonError(409, "设备不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
+    jsonError(409, "这里不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
+  }
+  if (body.expectedRevision !== undefined && typeof body.expectedRevision !== "string") {
+    jsonError(400, "计费确认无效", "VALIDATION_FAILED");
   }
   return runPlayerOperation(c, shop.id, "session/start", body, async () => {
     const opening = door ? openDoor(c, shop, door, player.id, body.operationId!) : null;
+    // The scanned resource's plan starts, with whatever it requires; a plan the
+    // page previewed against a different state is refused, not applied.
     const [entry, code] = await Promise.allSettled([
-      getShopDeps(c).playerCommands.startSession({ playerId: player.id }),
+      getShopDeps(c).resourceBilling.activate({
+        resourceId: machine.id,
+        playerId: player.id,
+        ...(body.expectedRevision !== undefined ? { expectedRevision: body.expectedRevision } : {}),
+      }),
       opening ?? Promise.resolve(null),
     ]);
     // Without entry the code is dropped unseen; the error is entry's.
     if (entry.status === "rejected") throw entry.reason;
-    const result: Record<string, unknown> = { session: toSessionView(entry.value) };
+    const result: Record<string, unknown> = {
+      session: toSessionView(entry.value.session),
+      billing: toBillingChangeView(entry.value),
+    };
     if (opening) {
       result.door = code.status === "fulfilled" && code.value
         ? code.value
@@ -294,13 +307,13 @@ playerRouter.post("/session/start", async (c) => {
   });
 });
 
-type SessionStartBody = { ticket?: string; consent?: boolean; location?: unknown; operationId?: string; openDoor?: boolean };
+type SessionStartBody = { ticket?: string; consent?: boolean; location?: unknown; operationId?: string; openDoor?: boolean; expectedRevision?: string };
 
 /** The door code, or null when the lock did not give one. */
 async function openDoor(
   c: Context<AppBindings>,
   shop: TenantShop,
-  device: Device,
+  device: Resource,
   playerId: string,
   operationId: string,
 ): Promise<{ temporaryPassword: string; expiresAt: string } | null> {
@@ -381,7 +394,7 @@ playerRouter.post("/device-commands", async (c) => {
   // As before the consolidation, authenticated players must operate devices
   // through the short-lived QR machine-session endpoint, not a tenant command
   // accepting arbitrary target identifiers.
-  jsonError(409, "请通过设备二维码操作", "DEVICE_QR_REQUIRED");
+  jsonError(409, "请扫描店内的二维码操作", "DEVICE_QR_REQUIRED");
 });
 
 // Purchase Business Item

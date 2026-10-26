@@ -1,13 +1,13 @@
 import type { DurableObject } from "cloudflare:workers";
 import type { Env } from "../bindings.js";
 import { decryptSecret } from "../crypto.js";
-import type { DeviceBus } from "../devices/bus.js";
-import { climateState, createRuntimeBus, type ClimateState } from "../devices/runtime.js";
-import { listHaConnections } from "../devices/ha-connections.js";
-import { provisionReadAccess } from "../devices/ha-read-access.js";
-import { DEFAULT_WATCHERS, MAX_WATCHERS, readWatcherLimit } from "../devices/ha-watchers.js";
-import { loadDevice } from "../devices/device.js";
-import { readBoardStates, readDeviceFacts, writeEventConnections } from "../devices/state-view.js";
+import type { DeviceBus } from "../resources/capabilities/bus.js";
+import { climateState, createRuntimeBus, type ClimateState } from "../resources/capabilities/runtime.js";
+import { listHaConnections } from "../resources/capabilities/ha-connections.js";
+import { provisionReadAccess } from "../resources/capabilities/ha-read-access.js";
+import { DEFAULT_WATCHERS, MAX_WATCHERS, readWatcherLimit } from "../resources/capabilities/ha-watchers.js";
+import { loadResource } from "../resources/resource.js";
+import { readBoardStates, readDeviceFacts, writeEventConnections } from "../resources/capabilities/state-view.js";
 import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
 import type { HaEntityState, HaReport } from "../hardware/aimeio-relay.js";
 import type { HaWatch } from "./machine-relay.js";
@@ -216,7 +216,7 @@ export class ShopHub extends BaseDurableObject<Env> {
   /** Whether the device's state is pushed, and what it is now if so. */
   private async pageSnapshot(shopId: string, deviceId: string): Promise<{ watching: boolean; power?: "on" | "off" | null; climate?: ClimateState | null }> {
     try {
-      const device = await loadDevice(this.env.DB, shopId, deviceId);
+      const device = await loadResource(this.env.DB, shopId, deviceId);
       if (!device) return { watching: false };
       const facts = await readDeviceFacts(this.env.DB, shopId, device);
       if (!facts.watching) return { watching: false };
@@ -341,6 +341,18 @@ export class ShopHub extends BaseDurableObject<Env> {
   }
 
   /** Tell the open device pages of one user that something they show changed. */
+  /** Something a bot is told about changed (its settings, staff, tables): each rereads it. */
+  async botsChanged(): Promise<void> {
+    const frame = JSON.stringify({ type: "config.changed" });
+    for (const ws of this.bots()) {
+      try {
+        ws.send(frame);
+      } catch {
+        // A bot that left is reaped by the runtime.
+      }
+    }
+  }
+
   async notifyUser(userId: string, frame: Record<string, unknown>): Promise<void> {
     const encoded = JSON.stringify(frame);
     for (const ws of this.ctx.getWebSockets(`user:${userId}`)) {
@@ -400,6 +412,9 @@ export class ShopHub extends BaseDurableObject<Env> {
     const frame = parseBotFrame(message);
     if (!frame) return;
     if (frame.type === "hello") {
+      // A bot that rereads its settings says hello again; one no longer
+      // allowed to watch hands its watch on first.
+      if (attachment.ha && !frame.ha) await this.botGone(ws);
       const id = attachment.id ?? crypto.randomUUID();
       ws.serializeAttachment({
         ...attachment,

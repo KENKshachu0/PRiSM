@@ -6,7 +6,7 @@ import { splitD1MigrationStatements } from "@prism/storage-sql";
 import { createApp } from "../src/app.js";
 import { createD1DatabaseFromSqlite } from "../src/local-server.js";
 import { sha256, encryptSecret } from "../src/crypto.js";
-import { mintMachineTicket } from "../src/routes/platform/machine-session.js";
+import { mintResourceTicket } from "../src/routes/platform/resource-ticket.js";
 import type { Env } from "../src/bindings.js";
 
 const migrations=resolve(import.meta.dir,"../../../migrations");
@@ -42,7 +42,7 @@ async function fixture(){
     SESSION_SECRET:"session-test-secret",URL_ENCRYPTION_KEY:secret,
     RATE_LIMIT_5:limiter,RATE_LIMIT_20:limiter,RATE_LIMIT_30:limiter,
   } as unknown as Env;
-  const {ticket}=await mintMachineTicket(env.SESSION_SECRET,"shop-code","cabinet-code");
+  const {ticket}=await mintResourceTicket(env.SESSION_SECRET,"shop-code","cabinet-code");
   return {sqlite,app:createApp(),env,ticket,token};
 }
 

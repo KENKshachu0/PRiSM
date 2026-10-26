@@ -3,9 +3,9 @@ import { Database } from "bun:sqlite";
 import { createD1DatabaseFromSqlite } from "../src/local-server.js";
 import { deviceEventSchema } from "@prism/storage-sql";
 import { encryptSecret } from "../src/crypto.js";
-import { loadDevice } from "../src/devices/device.js";
-import { getHaConnection, newHaConnection, writeHaConnection } from "../src/devices/ha-connections.js";
-import { readDeviceFacts } from "../src/devices/state-view.js";
+import { loadResource } from "../src/resources/resource.js";
+import { getHaConnection, newHaConnection, writeHaConnection } from "../src/resources/capabilities/ha-connections.js";
+import { readDeviceFacts } from "../src/resources/capabilities/state-view.js";
 import { LEASE_MS, ShopHub } from "../src/durable-objects/shop-hub.js";
 import type { HaWatch } from "../src/durable-objects/machine-relay.js";
 
@@ -17,7 +17,7 @@ async function fixture(options: { climate?: boolean; legacy?: boolean } = {}) {
   sqlite.run(`CREATE TABLE players(shop_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(shop_id, id))`);
   sqlite.run(
     `CREATE TABLE machines(shop_id TEXT NOT NULL, id TEXT NOT NULL, public_id TEXT, name TEXT, aliases_json TEXT,
-       kind TEXT DEFAULT 'machine', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT '2026-01-01', PRIMARY KEY(shop_id, id))`,
+       kind TEXT DEFAULT 'machine', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT '2026-01-01', capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15, PRIMARY KEY(shop_id, id))`,
   );
   sqlite.run(`CREATE TABLE app_settings(shop_id TEXT, key TEXT, value_json TEXT, updated_at TEXT, PRIMARY KEY(shop_id, key))`);
   for (const statement of deviceEventSchema) sqlite.run(statement);
@@ -90,7 +90,7 @@ async function fixture(options: { climate?: boolean; legacy?: boolean } = {}) {
     `SELECT name, payload_json FROM device_events WHERE kind='change' AND capability='${capability}' ORDER BY occurred_at, id`,
   );
   const watched = () => rows<{ connection_id: string }>("SELECT connection_id FROM ha_event_connections").map((row) => row.connection_id);
-  const facts = async (deviceId: string) => readDeviceFacts(db, SHOP, (await loadDevice(db, SHOP, deviceId))!);
+  const facts = async (deviceId: string) => readDeviceFacts(db, SHOP, (await loadResource(db, SHOP, deviceId))!);
   const assigned = () => watches.filter((entry) => entry.watch).map((entry) => [entry.channel, entry.watch!.term] as const);
   return {
     hub, watches, reachable, state, sqlite, sockets, puts, alarm: () => alarm, alarms: () => alarms, alarmHistory,

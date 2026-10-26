@@ -47,8 +47,12 @@ Both are necessary.
 
 - Player entry requires a valid shop-scoped QR ticket, `consent:true`, and
   check-in location when configured. The tenant dependency's `startSession`
-  already performs the leased, shop-priced entry operation: do not nest another
-  `player.entry` lease around it.
+  already performs the leased, shop-priced entry operation.
+- Session start, session stop, checkout, wallet, redeem and item purchases all
+  take the one player billing lease (`PLAYER_BILLING_LOCK_SCOPE`, stored as
+  `player.assets`), so a start can never interleave with a checkout. The lease
+  is re-entrant within one call chain: a route already holding it (cashier
+  entry, mahjong seating) may call a service that takes it again.
 - Player checkout requires the checkout location outside the configured
   geofence; arbitrary player device commands are forbidden in favour of the
   QR-scoped machine-session actions.
@@ -111,6 +115,19 @@ The original 31 public response serializer bodies in
 `node scripts/check-api-view-compat.cjs` parses both original and current
 TypeScript ASTs and rejects deletion or alteration of their function bodies.
 In particular `toPlayerManagementView` must always output `createdAt`.
+
+Intentional changes since the freeze, each additive and covered by
+`packages/server/test/view-contracts.test.ts` (every earlier field still
+present, only the listed additions):
+
+- `toPricingConfigManagementView` adds `relations` (`{ requires, conflicts }`)
+  for `time.priority` plans; other kinds are unchanged.
+- `toPlayerCheckoutPreviewView` builds `timeline` through
+  `previewBillTimeline()`, the one function every preview surface uses; same
+  shape and content as before.
+- `toPlayerCheckoutResultView` returns the timeline persisted with the
+  checkout (what receipts read back later) instead of rebuilding it; same
+  shape, plus `pricingReleaseIds`.
 
 **Do not mistake these gates for a full semantic equivalence proof.**
 Registration checks cannot detect returned 200s with wrong data. Serializer

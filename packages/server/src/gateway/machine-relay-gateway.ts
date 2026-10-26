@@ -8,7 +8,7 @@ export type RelayGatewayResult =
   | { kind: "rejected"; response: Response }
   | { kind: "dispatch"; channel: string; shopId: string; machineId: string };
 
-type DeviceRow = { device_id: string; shop_id: string; channel: string | null };
+type ResourceRow = { device_id: string; shop_id: string; channel: string | null };
 
 /**
  * Authenticate a device connecting to the embedded relay.
@@ -42,7 +42,7 @@ export async function relayGateway(
        AND json_extract(c.config_json, '$.transport') = 'embedded' AND m.enabled = 1`,
   )
     .bind(tokenHash)
-    .first<DeviceRow>();
+    .first<ResourceRow>();
   if (!device) return { kind: "rejected", response: rejected("unknown or disabled device token") };
   if (!device.channel) {
     return { kind: "rejected", response: rejected("device has no relay channel") };
@@ -88,6 +88,10 @@ export type MachineRelayNamespace = {
     sendKeyPress(input: { key: number; messageId: string; expiresAt: number; count?: number }):
       Promise<{ ok: boolean; error?: string }>;
     watchHa(watch: HaWatch | null): Promise<{ ok: boolean }>;
+    startCardCapture(input: {
+      id: string; shopId: string; userId: string; playerId: string; expiresAt: number;
+    }): Promise<{ ok: boolean; error?: string }>;
+    cardCaptureResult(id: string, userId: string): Promise<{ status: string; cardType?: string }>;
     getCapabilities(): Promise<{
       online: boolean;
       e2ee: boolean;

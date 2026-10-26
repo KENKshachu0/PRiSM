@@ -550,6 +550,7 @@ describe("createIntegrationService", () => {
             assetLedgerEntries: [],
             wallet: { balanceBefore: centsOf(120), balanceAfter: centsOf(90) },
             globalCapWindows: [],
+            timeline: { totals: [], tracks: [], events: [] },
           };
         },
         async stopSession() {

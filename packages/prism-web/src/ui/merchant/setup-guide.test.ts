@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Machine } from "../../api";
+import type { Resource } from "../../api";
 import type { Settings } from "../BillingPages";
 import {
   identityPolicy,
@@ -9,7 +9,7 @@ import {
   type SetupSignals,
 } from "./setup-guide";
 
-const machine = (over: Partial<Machine> = {}): Machine => ({
+const machine = (over: Partial<Resource> = {}): Resource => ({
   id: "m1",
   publicId: "p1",
   shopId: "s1",

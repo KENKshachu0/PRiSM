@@ -362,6 +362,32 @@ input::placeholder {
 .device-card-heading.session-task {
   margin: 0 0 30px;
 }
+.device-card-heading {
+  position: relative;
+}
+/* The heading stays centred; adding a card sits at its right edge. */
+.card-capture-add {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: rgb(var(--color-ink) / 0.7);
+}
+.card-capture-add:not(:disabled):active {
+  background: rgb(var(--color-ink) / 0.08);
+}
+.card-capture {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  margin-bottom: 20px;
+  text-align: center;
+}
 .machine-hero + .session-actions {
   margin-top: 52px;
 }
@@ -832,6 +858,7 @@ button.credential-row:not(:disabled):active {
 .bill-line.above { top: 0; height: 11px; }
 .bill-line.below { top: 11px; bottom: 0; }
 .bill-dot { position: absolute; left: -3px; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.bill-cap-mark { position: absolute; left: -4px; top: 4px; width: 11px; height: 13px; border-radius: 3px; background: var(--color-mint); box-shadow: 0 0 0 2px var(--color-canvas); }
 .bill-event-heading, .bill-entry-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .bill-event-heading { margin-bottom: 12px; font-size: 15px; }
 .bill-event-heading > span, .bill-entry p { color: rgb(var(--color-ink) / .55); font-size: 13px; }
@@ -840,10 +867,7 @@ button.credential-row:not(:disabled):active {
 .bill-entry-heading strong { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bill-entry-heading small { font-size: 12px; font-weight: 400; }
 .bill-entry p { margin-top: 5px; }
-.bill-adjustment { background: none; padding-inline: 0; }
 .bill-negative { color: #23815d; }
-.bill-breakdown { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 8px; color: rgb(var(--color-ink) / .55); font-size: 12px; }
-.bill-breakdown b { font-weight: 500; }
 .account-bill { position: relative; }
 .account-bill .account-scroll { padding-bottom: 100px; }
 .account-bill .account-footer { position: absolute; bottom: 0; left: 0; right: 0; pointer-events: none; }

@@ -1,8 +1,11 @@
 import type { DurableObject } from "cloudflare:workers";
 import type { Env } from "../bindings.js";
-import { hinataIo } from "../devices/capabilities.js";
-import { createRuntimeBus } from "../devices/runtime.js";
+import { hinataIo } from "../resources/capabilities/catalog.js";
+import { createRuntimeBus } from "../resources/capabilities/runtime.js";
 import { shopHub } from "./shop-hub-client.js";
+import { createCardStore, reportedCard, withoutCardNumber } from "../resources/cards.js";
+import { bindReaderCard, type CardCapture, type CardCaptureResult } from "../resources/card-capture.js";
+import { createOccupancy } from "../resources/occupancy/service.js";
 import {
   capabilitiesForAttachment,
   capabilitiesFromRequest,
@@ -18,6 +21,7 @@ import {
 
 const STATE_KEY = "state-message";
 const CHANNEL_KEY = "channel";
+const CAPTURE_KEY = "card-capture";
 
 /** The IO forgets a remote card this long after receiving it unless told otherwise. */
 const CARD_LIFETIME_MS = 3000;
@@ -291,13 +295,7 @@ export class MachineRelay extends BaseDurableObject<Env> {
       if (wait.unit === null || (wait.unit !== ANY_UNIT && wait.unit !== unit)) continue;
       this.finish(source, verdict);
       void this.record("card.login", (bus, channel) =>
-        bus.signal({
-          device: { id: channel.machineId },
-          capability: "hinata_io",
-          name: "card.login",
-          operationId: source,
-          payload: { result: verdict, unit_no: unit },
-        }),
+        this.signal(bus, channel, "card.login", source, { result: verdict, unit_no: unit }, null),
       );
     }
   }
@@ -412,18 +410,85 @@ export class MachineRelay extends BaseDurableObject<Env> {
       const stored = await this.ctx.storage.get<Partial<StoredCard>>(STATE_KEY);
       if (stored?.source === source) await this.ctx.storage.delete(STATE_KEY);
     }
+    const card = reportedCard(event.params.card);
+    // A card the platform did not send may be one a player is adding here.
+    if (event.method === "event.cardStateChanged" && event.params.card && !source) await this.capture(card);
     if (!hinataIo.signals[name]?.store) return;
-    await this.record(name, (bus, channel) =>
-      bus.signal({
-        device: { id: channel.machineId },
-        capability: "hinata_io",
-        name,
-        operationId: source,
-        payload: event.params,
-      }),
-    );
+    // Card numbers never leave this object: the log keeps the card's type and
+    // whose it is.
+    const payload = {
+      ...event.params,
+      card: withoutCardNumber(event.params.card),
+      ...("previous_card" in event.params ? { previous_card: withoutCardNumber(event.params.previous_card) } : {}),
+    };
+    await this.record(name, (bus, channel) => this.signal(bus, channel, name, source, payload, card?.accessCode ?? null));
     // Someone is at this machine; its idle countdown starts over.
     if (hinataIo.signals[name]?.activity) await this.touchHub();
+  }
+
+  /**
+   * Record a signal about whoever it concerns, and tell occupancy. A card names
+   * its owner at this shop; otherwise the operation the signal belongs to names
+   * the player it was for. A card nobody owns here concerns nobody.
+   */
+  private async signal(
+    bus: ReturnType<typeof createRuntimeBus>,
+    channel: Channel,
+    name: string,
+    source: string | null,
+    payload: Record<string, unknown>,
+    accessCode: string | null,
+  ) {
+    const cards = createCardStore(this.env.DB, channel.shopId, this.env.URL_ENCRYPTION_KEY);
+    const playerId = (accessCode ? await cards.playerOf(accessCode) : null)
+      ?? (source ? await this.operationPlayer(channel.shopId, source) : null);
+    await bus.signal({ device: { id: channel.machineId }, capability: "hinata_io", name, operationId: source, payload, playerId });
+    await createOccupancy({ db: this.env.DB, shopId: channel.shopId })
+      .observe({ resourceId: channel.machineId, event: { kind: "signal", name, payload, playerId } });
+  }
+
+  /** The player a platform operation was requested by or for. */
+  private async operationPlayer(shopId: string, operationId: string): Promise<string | null> {
+    const row = await this.env.DB.prepare(
+      `SELECT COALESCE(player_id, json_extract(payload_json, '$.forPlayerId')) AS player_id FROM device_events
+       WHERE shop_id = ? AND operation_id = ? AND kind = 'request' LIMIT 1`,
+    ).bind(shopId, operationId).first<{ player_id: string | null }>();
+    return row?.player_id ?? null;
+  }
+
+  /** Open a window in which the next card on this reader is added to a player's account. */
+  async startCardCapture(input: Omit<CardCapture, "result">): Promise<{ ok: boolean; error?: string }> {
+    if (!this.agents().length) return { ok: false, error: "机台未在线" };
+    await this.ctx.storage.put(CAPTURE_KEY, input);
+    return { ok: true };
+  }
+
+  /** What became of a capture window: still waiting, the card's outcome, or gone. */
+  async cardCaptureResult(id: string, userId: string): Promise<{ status: "waiting" | "expired" } | CardCaptureResult> {
+    const capture = await this.ctx.storage.get<CardCapture>(CAPTURE_KEY);
+    if (!capture || capture.id !== id || capture.userId !== userId) return { status: "expired" };
+    if (capture.result) {
+      await this.ctx.storage.delete(CAPTURE_KEY);
+      return capture.result;
+    }
+    if (capture.expiresAt <= Date.now()) {
+      await this.ctx.storage.delete(CAPTURE_KEY);
+      return { status: "expired" };
+    }
+    return { status: "waiting" };
+  }
+
+  private async capture(card: ReturnType<typeof reportedCard>) {
+    const capture = await this.ctx.storage.get<CardCapture>(CAPTURE_KEY);
+    if (!capture || capture.result || capture.expiresAt <= Date.now()) return;
+    let result: CardCaptureResult;
+    try {
+      result = await bindReaderCard(this.env.DB, this.env.URL_ENCRYPTION_KEY, capture, card);
+    } catch (error) {
+      console.error("Card capture failed", error);
+      return;
+    }
+    await this.ctx.storage.put(CAPTURE_KEY, { ...capture, result });
   }
 
   private async touchHub() {

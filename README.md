@@ -122,14 +122,17 @@ The root `package.json` owns the release SemVer. `bun run version:bump patch|min
 - [商户工作台的开店指引](docs/merchant-setup-guide.md)
 - [已有店铺转换为计费店铺](docs/billing-setup.md)
 - [前台收银与 WebHID 读卡](docs/cashier.md)
+- [资源与资源组](docs/resources.md)
+- [计费状态编排：会话、依赖与冲突](docs/pricing-sessions.md)
+- [卡片、占用与查人](docs/occupancy.md)
+- [计费流程、封顶与账单显示](docs/billing-flow.md)
+- [实时活动推送](docs/live-activity-push.md)
 - [Deployment](docs/deployment.md)
 - [Integrations And Machines](docs/integrations-and-machines.md)
 - [Extension Guide](docs/extensions.md)
 - [Money Precision](docs/money.md)
 - [Migration From prism-neo](docs/migration-from-prism-neo.md)
-- [Production Checklist](docs/production-checklist.md)
 - [Roadmap](docs/roadmap.md)
-- [TDD Evidence](docs/tdd-evidence.md)
 
 ## Production Notes
 

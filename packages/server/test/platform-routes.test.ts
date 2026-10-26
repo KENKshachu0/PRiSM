@@ -194,7 +194,12 @@ function createTestEnvironment(): { db: D1DatabaseLike; sqlite: Database; env: E
     CREATE TABLE IF NOT EXISTS machines (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
-      name TEXT NOT NULL
+      name TEXT NOT NULL, capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15
+    );
+    CREATE TABLE IF NOT EXISTS resource_groups (
+      shop_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      PRIMARY KEY (shop_id, id)
     );
     CREATE TABLE IF NOT EXISTS players (
       id TEXT PRIMARY KEY,
