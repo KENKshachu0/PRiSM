@@ -27,11 +27,11 @@ import {
   capabilitySpec,
   type ActionName,
   type CapabilityId,
-} from "./capabilities.js";
-import { can, type Device } from "./device.js";
+} from "./catalog.js";
+import { can, type Resource } from "../resource.js";
 
 export type ActionContext = {
-  device: Device;
+  device: Resource;
   operationId: string;
   payload: Record<string, unknown>;
 };
@@ -49,7 +49,7 @@ export type RunOutcome =
 /**
  * Reads an external state. Returns null when the source cannot be reached.
  */
-export type StateReader = (device: Device) => Promise<unknown | null>;
+export type StateReader = (device: Resource) => Promise<unknown | null>;
 
 export type DeviceBusDependencies = {
   events: DeviceEventRepository;
@@ -60,7 +60,7 @@ export type DeviceBusDependencies = {
 };
 
 export type PerformInput = {
-  device: Device;
+  device: Resource;
   action: ActionName;
   actor: DeviceEventActor;
   operationId?: string;
@@ -68,6 +68,8 @@ export type PerformInput = {
   payload?: Record<string, unknown>;
   /** Values that reach the runner but are never persisted, such as a card number. */
   transient?: Record<string, unknown>;
+  /** The player a staff member acted for, when it was not the player themselves. */
+  forPlayerId?: string;
 };
 
 export type PerformResult = {
@@ -93,7 +95,7 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
   });
 
   async function observe(
-    device: Device,
+    device: Resource,
     capability: CapabilityId,
     key: string,
   ): Promise<unknown | null> {
@@ -145,7 +147,8 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
 
       const operationId = input.operationId ?? deps.id();
       const actorFields = deviceActorFields(input.actor);
-      const payload = input.payload ?? {};
+      // Whom staff acted for is kept with the request: a later card report names it.
+      const payload = { ...(input.payload ?? {}), ...(input.forPlayerId ? { forPlayerId: input.forPlayerId } : {}) };
       const requestedAt = deps.now();
       const operation: DeviceOperation = {
         id: operationId,
@@ -236,11 +239,13 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
      * (e.g. the card reached the game) the operation it names is marked confirmed.
      */
     async signal(input: {
-      device: Pick<Device, "id">;
+      device: Pick<Resource, "id">;
       capability: CapabilityId;
       name: string;
       operationId?: string | null;
       payload?: Record<string, unknown>;
+      /** The player the signal is about, such as the owner of the card it carried. */
+      playerId?: string | null;
     }): Promise<boolean> {
       const spec = capabilitySpec(input.capability);
       const signal = spec?.signals[input.name];
@@ -253,6 +258,7 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
         operationId: input.operationId ?? null,
         origin: "device",
         payload: input.payload ?? {},
+        playerId: input.playerId ?? null,
       });
       const confirms =
         !!input.operationId &&
@@ -266,7 +272,7 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
 
     /** Set a state the platform owns. A change event is written only when the value differs. */
     async setOwned(input: {
-      device: Pick<Device, "id">;
+      device: Pick<Resource, "id">;
       capability: CapabilityId;
       key: string;
       value: unknown;
@@ -316,7 +322,7 @@ export function createDeviceBus(deps: DeviceBusDependencies) {
      */
     async reportMany(
       items: ReadonlyArray<{
-        device: Pick<Device, "id">;
+        device: Pick<Resource, "id">;
         capability: CapabilityId;
         key: string;
         value: unknown;

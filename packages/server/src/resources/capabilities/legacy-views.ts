@@ -6,7 +6,7 @@
 import type { DeviceState, MachineConnection } from "@prism/core";
 import { createD1Executor } from "@prism/adapter-d1";
 import { createDeviceEventRepository } from "@prism/storage-sql";
-import { loadDevices } from "./device.js";
+import { loadResources } from "../resource.js";
 import { readPower, type DeviceRuntime } from "./runtime.js";
 
 /**
@@ -17,7 +17,7 @@ import { readPower, type DeviceRuntime } from "./runtime.js";
  */
 export async function listDeviceStates(runtime: DeviceRuntime): Promise<DeviceState[]> {
   const now = runtime.now ?? (() => new Date());
-  const devices = (await loadDevices(runtime.db, runtime.shopId, runtime.env.URL_ENCRYPTION_KEY))
+  const devices = (await loadResources(runtime.db, runtime.shopId, runtime.env.URL_ENCRYPTION_KEY))
     .filter((device) => device.enabled && device.capabilities.has("power"));
   if (!devices.length) return [];
   const stored = new Map(

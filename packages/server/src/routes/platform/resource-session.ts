@@ -1,21 +1,29 @@
 import { Hono, type Context } from "hono";
-import { createD1Repositories } from "@prism/adapter-d1";
+import { z } from "zod";
+import { PrismDomainError } from "@prism/core";
 import type { AppBindings } from "../../bindings.js";
 import { jsonError } from "../../http.js";
 import { optionalUser, requireUser } from "../../middleware/auth.js";
-import { isEntry } from "../../middleware/tenant.js";
-import { getShopForMachine } from "./machine-login.js";
-import { publicMachine, resolveMachineSession, type Machine } from "./machine-session.js";
-import { executeDeviceAction, actionSchema, deviceClimateState, devicePowerState } from "./device-actions.js";
-import { has, loadDevice } from "../../devices/device.js";
-import { readDeviceState } from "../../devices/runtime.js";
-import { noFacts, readBoardStates, readDeviceFacts } from "../../devices/state-view.js";
-import { assertMachineShop } from "./merchant-machines.js";
+import { getOrCreateShopDependencies } from "../../middleware/tenant.js";
+import type { ResourceBillingPreview } from "../../resources/activation.js";
+import { toPricingConfigManagementView } from "../shops/views.js";
+import { getShopForMachine, requireShopPlayer } from "./machine-login.js";
+import { publicResource, resolveResourceTicket, type ScannedResource } from "./resource-ticket.js";
+import { executeResourceAction, actionSchema, resourceClimateState, resourcePowerState } from "./resource-actions.js";
+import { has, hinataConfigOf, loadResource } from "../../resources/resource.js";
+import { CARD_CAPTURE_MS } from "../../resources/card-capture.js";
+import { createOccupancy } from "../../resources/occupancy/service.js";
+import { machineRelayNamespace } from "../../gateway/machine-relay-gateway.js";
+import { checkShopLocation } from "../../middleware/geo.js";
+import { readDeviceState } from "../../resources/capabilities/runtime.js";
+import { noFacts, readBoardStates, readDeviceFacts } from "../../resources/capabilities/state-view.js";
+import { assertResourceShop } from "./merchant-resources.js";
+import { errorNotice, requestLocale } from "../../notices.js";
 import { allowedOrigins } from "../../middleware/cors.js";
 import { mahjongState, operateMahjong } from "./mahjong.js";
 
-export const deviceSessionRouter=new Hono<AppBindings>();
-export const merchantMachineActionRouter=new Hono<AppBindings>();
+export const resourceSessionRouter=new Hono<AppBindings>();
+export const merchantResourceActionRouter=new Hono<AppBindings>();
 
 /**
  * Live updates for a device page: the shop hub pushes this device's power and
@@ -24,10 +32,10 @@ export const merchantMachineActionRouter=new Hono<AppBindings>();
  * whether the device is watched at all, so an unwatched page keeps asking for
  * what it needs.
  */
-deviceSessionRouter.get("/session/ws", async c=>{
+resourceSessionRouter.get("/session/ws", async c=>{
   if(c.req.header("upgrade")?.toLowerCase()!=="websocket")jsonError(426,"需要 WebSocket 连接","UPGRADE_REQUIRED");
   const user=requireUser(c);
-  const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
+  const machine=await resolveResourceTicket(c,c.req.query("ticket")??"");
   const shop=await getShopForMachine(c,machine.shop_public_id);
   const hub=c.env.SHOP_HUB as unknown as {getByName(name:string):{fetch(request:Request):Promise<Response>}}|undefined;
   if(!hub)jsonError(503,"店铺连接服务尚未配置","SHOP_HUB_UNAVAILABLE");
@@ -44,22 +52,34 @@ type C=Context<AppBindings,any,any>;
 
 /**
  * What the page needs before it can show anything: whether the player must
- * bind an identity or enter first, mahjong seats, and the device's stored
- * facts. The facts are only what is already known (`device.watching` says
- * whether they are current); nothing here asks Home Assistant. `includePower`
- * and `includeClimate` keep the older contract, where this read also asked
- * Home Assistant, for clients that have not moved to `device`.
+ * bind an identity or confirm billing first, mahjong seats, and the device's
+ * stored facts. In a shop that bills, every resource, hardware or not, needs
+ * its plan running for the player; `billing` then says what confirming would
+ * start, keep and end. Reading this never starts anything. The facts are only
+ * what is already known (`device.watching` says whether they are current);
+ * nothing here asks Home Assistant. `includePower` and `includeClimate` keep the
+ * older contract, where this read also asked Home Assistant, for clients that
+ * have not moved to `device`.
  */
-async function sessionState(c:C,machine:Machine,options:{includePower:boolean;includeClimate:boolean}){
+async function sessionState(c:C,machine:ScannedResource,options:{includePower:boolean;includeClimate:boolean}){
   const user=requireUser(c);
   const shop=await getShopForMachine(c,machine.shop_public_id);
   let gate:"ready"|"binding"|"entry"="ready";
-  const device=await loadDevice(c.env.DB,shop.id,machine.id);
+  let billing:{preview?:ResourceBillingPreview;error?:{code:string;message:string};rules?:unknown}|null=null;
+  const device=await loadResource(c.env.DB,shop.id,machine.id);
   const bound=(id:Parameters<typeof has>[1])=>!!device&&has(device,id);
-  const needsEntry=
-    (shop.billing_enabled&&(bound("hinata_io")||bound("power")||bound("climate")||bound("mahjong")))
-    ||bound("door")||bound("mahjong");
-  if(needsEntry){
+  const resourceBilling=getOrCreateShopDependencies(c.env.DB,shop,c.env.URL_ENCRYPTION_KEY,c.env).resourceBilling;
+  /** A resource that cannot bill is shown as such instead of failing the page. */
+  const billingRead=async<T,>(read:()=>Promise<T>):Promise<T|undefined>=>{
+    try{return await read();}
+    catch(error){
+      if(!(error instanceof PrismDomainError))throw error;
+      // Worded for the player, as an error response would be: developer text never reaches the page.
+      billing={...billing,error:{code:error.code,message:errorNotice({code:error.code,message:error.message,status:409},requestLocale(c.req.header("accept-language"))).body}};
+      return undefined;
+    }
+  };
+  if(shop.billing_enabled||bound("door")||bound("mahjong")){
     const player=await c.env.DB.prepare(
       `SELECT a.player_id AS playerId,p.status,
        EXISTS(SELECT 1 FROM shop_platform_bindings b WHERE b.shop_id=? AND b.user_id=?) AS identityBound
@@ -71,24 +91,46 @@ async function sessionState(c:C,machine:Machine,options:{includePower:boolean;in
     else if(!player?.playerId)gate=shop.billing_enabled?"entry":"ready";
     else if(player.status!=="active")jsonError(403,"店铺玩家资格已停用","PLAYER_DISABLED");
     else if(shop.billing_enabled){
-      const repos=createD1Repositories({db:c.env.DB,shopId:shop.id,id:()=>crypto.randomUUID(),now:()=>new Date()});
-      const sessions=await repos.sessions.findActiveByPlayerId(player.playerId);
-      if(!sessions.some(session=>isEntry(session,shop)))gate="entry";
+      const running=await billingRead(()=>resourceBilling.activeSession({resourceId:machine.id,playerId:player.playerId!}));
+      // A seat here is billed for already, by the plan the seat runs on.
+      if(!running&&!await createOccupancy({db:c.env.DB,shopId:shop.id}).holds(machine.id,player.playerId))gate="entry";
+    }
+    if(gate==="entry"&&shop.billing_enabled&&!billing){
+      // A player not yet registered here has nothing running, so the preview is
+      // simply everything the plan needs.
+      const preview=await billingRead(()=>resourceBilling.preview({resourceId:machine.id,playerId:player?.playerId??""}));
+      if(preview)billing={preview};
+    }
+    // What the page shows as this resource's pricing: its own plan and every
+    // plan that bills with it, as the player's locked release defines them.
+    if(shop.billing_enabled&&gate!=="binding"&&!billing?.error){
+      // Caps only matter where the rules are read before confirming.
+      const rules=await billingRead(()=>resourceBilling.rulesOf({resourceId:machine.id,playerId:player?.playerId??"",withCaps:gate==="entry"}));
+      if(rules)billing={...billing,rules:{
+        ...rules,
+        plans:rules.plans.map(plan=>({...plan,config:toPricingConfigManagementView(plan.config)})),
+        ...(rules.caps?{caps:{
+          unsettled:rules.caps.unsettled,
+          plans:rules.caps.plans.map(cap=>({...cap,startsAt:cap.startsAt.toISOString(),endsAt:cap.endsAt.toISOString()})),
+          shared:rules.caps.shared.map(cap=>({...cap,startsAt:cap.startsAt.toISOString(),endsAt:cap.endsAt.toISOString(),config:toPricingConfigManagementView(cap.config)})),
+        }}:{}),
+        timeZone:shop.time_zone,
+      }};
     }
   }
   const facts=device?await readDeviceFacts(c.env.DB,shop.id,device):noFacts;
   return {
-    gate,coinUsed:false,
+    gate,coinUsed:false,billing,
     mahjong:gate==="ready"?await mahjongState(c,machine):null,
     power:gate==="ready"&&bound("power")&&options.includePower
-      ?await devicePowerState(c,machine):"unmanaged",
-    climate:gate==="ready"&&bound("climate")&&options.includeClimate?await deviceClimateState(c,machine):null,
+      ?await resourcePowerState(c,machine):"unmanaged",
+    climate:gate==="ready"&&bound("climate")&&options.includeClimate?await resourceClimateState(c,machine):null,
     device:facts,
   };
 }
 
-deviceSessionRouter.get("/session/state", async c=>{
-  const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
+resourceSessionRouter.get("/session/state", async c=>{
+  const machine=await resolveResourceTicket(c,c.req.query("ticket")??"");
   return c.json(await sessionState(c,machine,{
     includePower:c.req.query("includePower")!=="0",
     includeClimate:c.req.query("includeClimate")!=="0",
@@ -99,10 +141,10 @@ deviceSessionRouter.get("/session/state", async c=>{
  * The first read of a scanned page: the machine and, for a signed-in player,
  * the page state, in one request instead of two in sequence.
  */
-deviceSessionRouter.get("/session/bootstrap", async c=>{
-  const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
+resourceSessionRouter.get("/session/bootstrap", async c=>{
+  const machine=await resolveResourceTicket(c,c.req.query("ticket")??"");
   return c.json({
-    machine:await publicMachine(c,machine),
+    machine:await publicResource(c,machine),
     state:optionalUser(c)?await sessionState(c,machine,{includePower:false,includeClimate:false}):null,
   });
 });
@@ -112,37 +154,71 @@ deviceSessionRouter.get("/session/bootstrap", async c=>{
  * from its stored facts; otherwise Home Assistant is asked now, in parallel
  * for both, and nothing is recorded.
  */
-deviceSessionRouter.get("/session/device", async c=>{
+resourceSessionRouter.get("/session/device", async c=>{
   requireUser(c);
-  const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
-  const device=await loadDevice(c.env.DB,machine.shop_id,machine.id);
+  const machine=await resolveResourceTicket(c,c.req.query("ticket")??"");
+  const device=await loadResource(c.env.DB,machine.shop_id,machine.id);
   if(!device)return c.json(noFacts);
   return c.json(await readDeviceState({db:c.env.DB,env:c.env,shopId:machine.shop_id},device));
 });
 
-deviceSessionRouter.get("/session/power",async c=>{
+resourceSessionRouter.get("/session/power",async c=>{
   requireUser(c);
-  const machine=await resolveMachineSession(c,c.req.query("ticket")??"");
-  return c.json({power:await devicePowerState(c,machine)});
+  const machine=await resolveResourceTicket(c,c.req.query("ticket")??"");
+  return c.json({power:await resourcePowerState(c,machine)});
 });
 
-deviceSessionRouter.post("/session/actions",async c=>{
+/**
+ * Adding a card at this cabinet's reader: open a short window, then ask what
+ * the reader saw. The first card put on the reader in the window, other than
+ * one the platform sent, is added to the player's account and bound to them at
+ * this shop. Only a cabinet connected directly reports cards back.
+ */
+resourceSessionRouter.post("/session/cards/capture",async c=>{
+  const user=requireUser(c);
+  const body=z.object({ticket:z.string().min(1),location:z.unknown().optional()}).parse(await c.req.json());
+  const machine=await resolveResourceTicket(c,body.ticket);
+  const shop=await getShopForMachine(c,machine.shop_public_id);
+  checkShopLocation(shop,"machine",body.location);
+  const device=await loadResource(c.env.DB,shop.id,machine.id);
+  const io=device?hinataConfigOf(device):null;
+  if(!io||io.transport!=="embedded"||!io.channel)jsonError(409,"这台机器不能添加卡片","CARD_CAPTURE_UNSUPPORTED");
+  const relay=machineRelayNamespace(c.env);
+  if(!relay||!c.env.URL_ENCRYPTION_KEY)jsonError(503,"添加卡片服务尚未配置","CARD_CAPTURE_UNAVAILABLE");
+  const player=await requireShopPlayer(c,shop,true);
+  const id=crypto.randomUUID(),expiresAt=Date.now()+CARD_CAPTURE_MS;
+  const started=await relay.getByName(io.channel).startCardCapture({id,shopId:shop.id,userId:user.id,playerId:player.id,expiresAt});
+  if(!started.ok)jsonError(409,"机台未在线，请联系店员","DEVICE_UNAVAILABLE");
+  return c.json({captureId:id,expiresAt:new Date(expiresAt).toISOString()});
+});
+
+resourceSessionRouter.get("/session/cards/capture/:id",async c=>{
+  const user=requireUser(c);
+  const machine=await resolveResourceTicket(c,c.req.query("ticket")??"");
+  const device=await loadResource(c.env.DB,machine.shop_id,machine.id);
+  const io=device?hinataConfigOf(device):null;
+  const relay=machineRelayNamespace(c.env);
+  if(!io?.channel||!relay)return c.json({status:"expired"});
+  return c.json(await relay.getByName(io.channel).cardCaptureResult(c.req.param("id"),user.id));
+});
+
+resourceSessionRouter.post("/session/actions",async c=>{
   requireUser(c);
   const body=actionSchema.parse(await c.req.json());
   if(body.action==="power.off")jsonError(403,"关机需要店员权限","FORBIDDEN");
-  const machine=await resolveMachineSession(c,body.ticket);
+  const machine=await resolveResourceTicket(c,body.ticket);
   if(body.action.startsWith("mahjong."))return operateMahjong(c,machine,body);
-  return executeDeviceAction(c,machine,body);
+  return executeResourceAction(c,machine,body);
 });
 
-async function merchantMachine(c:import("hono").Context<AppBindings, any, any>,write=false):Promise<Machine>{
+async function merchantMachine(c:import("hono").Context<AppBindings, any, any>,write=false):Promise<ScannedResource>{
   const user=requireUser(c);
   const id=c.req.param("id");
-  if(!id)jsonError(400,"缺少设备编号","INVALID_REQUEST");
+  if(!id)jsonError(400,"缺少资源编号","INVALID_REQUEST");
   const machine=await c.env.DB.prepare(
     "SELECT m.*,s.public_id AS shop_public_id FROM machines m JOIN shops s ON s.id=m.shop_id WHERE m.id=?",
-  ).bind(id).first<Machine>();
-  if(!machine)jsonError(404,"没有找到这台设备","DEVICE_NOT_FOUND");
+  ).bind(id).first<ScannedResource>();
+  if(!machine)jsonError(404,"没有找到这个资源","DEVICE_NOT_FOUND");
   if(user.role!=="admin"){
     const member=await c.env.DB.prepare(
       "SELECT role FROM shop_members WHERE shop_id=? AND user_id=?",
@@ -157,7 +233,7 @@ async function merchantMachine(c:import("hono").Context<AppBindings, any, any>,w
       if(role?.role==="viewer")jsonError(403,"只读账号不能操作设备","FORBIDDEN");
     }
   }
-  if(write&&!machine.enabled)jsonError(409,"设备已停用","DEVICE_DISABLED");
+  if(write&&!machine.enabled)jsonError(409,"这个资源已停用","DEVICE_DISABLED");
   return machine;
 }
 
@@ -168,14 +244,14 @@ async function merchantMachine(c:import("hono").Context<AppBindings, any, any>,w
  * the browser's Origin must be the platform's own, because the session is a
  * cookie.
  */
-merchantMachineActionRouter.get("/machines/ws",async c=>{
+merchantResourceActionRouter.get("/machines/ws",async c=>{
   if(c.req.header("upgrade")?.toLowerCase()!=="websocket")jsonError(426,"需要 WebSocket 连接","UPGRADE_REQUIRED");
   const origin=c.req.header("origin");
   if(origin&&!allowedOrigins(c.env).has(origin))jsonError(403,"请求来源无效","FORBIDDEN");
   const user=requireUser(c);
   const shopId=c.req.query("shopId");
   if(!shopId)jsonError(400,"请选择店铺","SHOP_REQUIRED");
-  await assertMachineShop(c,user,shopId);
+  await assertResourceShop(c,user,shopId);
   const hub=c.env.SHOP_HUB as unknown as {getByName(name:string):{fetch(request:Request):Promise<Response>}}|undefined;
   if(!hub)jsonError(503,"店铺连接服务尚未配置","SHOP_HUB_UNAVAILABLE");
   const headers=new Headers(c.req.raw.headers);
@@ -193,11 +269,11 @@ merchantMachineActionRouter.get("/machines/ws",async c=>{
  * asked for exactly those devices now, a few at a time, and nothing is recorded.
  */
 const BOARD_LIVE_CONCURRENCY=4;
-merchantMachineActionRouter.get("/machines/states",async c=>{
+merchantResourceActionRouter.get("/machines/states",async c=>{
   const user=requireUser(c);
   const shopId=c.req.query("shopId");
   if(!shopId)jsonError(400,"请选择店铺","SHOP_REQUIRED");
-  await assertMachineShop(c,user,shopId);
+  await assertResourceShop(c,user,shopId);
   const {devices,states}=await readBoardStates(c.env.DB,shopId);
   // A device nothing watches has no stored state, so Home Assistant is the only place to ask.
   const runtime={db:c.env.DB,env:c.env,shopId};
@@ -217,9 +293,9 @@ merchantMachineActionRouter.get("/machines/states",async c=>{
  * Home Assistant is asked now (and nothing is recorded). For re-reading a device with no
  * state of its own after an action on it.
  */
-merchantMachineActionRouter.get("/machines/:id/state",async c=>{
+merchantResourceActionRouter.get("/machines/:id/state",async c=>{
   const machine=await merchantMachine(c);
-  const device=await loadDevice(c.env.DB,machine.shop_id,machine.id);
+  const device=await loadResource(c.env.DB,machine.shop_id,machine.id);
   if(!device)return c.json(noFacts);
   return c.json(await readDeviceState({db:c.env.DB,env:c.env,shopId:machine.shop_id},device));
 });
@@ -228,15 +304,15 @@ merchantMachineActionRouter.get("/machines/:id/state",async c=>{
  * Seats let staff see who is at the table before seating someone else. They are not Home
  * Assistant state, nothing pushes them, and reading them asks Home Assistant nothing.
  */
-merchantMachineActionRouter.get("/machines/:id/mahjong",async c=>{
+merchantResourceActionRouter.get("/machines/:id/mahjong",async c=>{
   const machine=await merchantMachine(c);
   return c.json({mahjong:await mahjongState(c,machine)});
 });
 
-merchantMachineActionRouter.post("/machines/:id/actions",async c=>{
+merchantResourceActionRouter.post("/machines/:id/actions",async c=>{
   const machine=await merchantMachine(c,true);
   const raw=await c.req.json();
   const body=actionSchema.parse({...(raw as object),ticket:`staff:${machine.id}`});
   if(body.action.startsWith("mahjong."))return operateMahjong(c,machine,body,{staff:true});
-  return executeDeviceAction(c,machine,body,true);
+  return executeResourceAction(c,machine,body,true);
 });

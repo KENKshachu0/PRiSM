@@ -9,6 +9,11 @@ import { toPricingConfigManagementView, toStaffPricingExtensionView } from "./vi
 
 export const pricingRouter = new Hono<AppBindings>();
 
+const relationsInput = z.object({
+  requires: z.array(z.string().min(1)).max(50),
+  conflicts: z.array(z.string().min(1)).max(50),
+}).strict();
+
 // List Pricing Configs
 pricingRouter.get("/", async (c) => {
   const shop = getShop(c);
@@ -51,6 +56,7 @@ pricingRouter.post("/", async (c) => {
     name: body.name,
     enabled: body.enabled ?? true,
     provider: body.provider,
+    relations: relationsInput.optional().parse(body.relations),
   });
   return c.json({ pricingConfig: toPricingConfigManagementView(config) }, 201);
 });
@@ -92,6 +98,7 @@ pricingRouter.patch("/:pricingConfigId", async (c) => {
     name: body.name,
     enabled: body.enabled,
     provider: body.provider,
+    relations: relationsInput.optional().parse(body.relations),
   });
   return c.json({ pricingConfig: toPricingConfigManagementView(config) });
 });

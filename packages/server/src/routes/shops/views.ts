@@ -1,4 +1,4 @@
-import { buildBillTimeline } from "@prism/application";
+import { previewBillTimeline } from "@prism/application";
 import type {
   ChargeItem,
   DeviceCommand,
@@ -308,7 +308,7 @@ export function toPlayerCheckoutPreviewView(
   result: PreviewPlayerCheckoutResult,
 ): Record<string, unknown> {
   return {
-    timeline: buildBillTimeline({ at: result.settlementPreview.previewedAt, sessions: result.sessionPreviews, adjustments: result.adjustments, globalCapWindows: result.globalCapWindows }),
+    timeline: previewBillTimeline(result),
     settlementPreview: {
       ...result.settlementPreview,
       subtotal: yuanOf(result.settlementPreview.subtotal),
@@ -343,7 +343,8 @@ export function toPlayerCheckoutResultView(
 ): Record<string, unknown> {
   const detailsBySessionId = new Map(result.sessionDetails.map((detail) => [detail.sessionId, detail]));
   return {
-    timeline: buildBillTimeline({ at: result.playerSettlement.settledAt, sessions: result.sessionDetails.map(detail => ({ ...detail, endedAt: detail.endedAt ?? result.playerSettlement.settledAt, chargeItems: result.settlements.find(record => record.settlement.sessionId === detail.sessionId)?.chargeItems ?? [] })), adjustments: result.adjustments, globalCapWindows: result.globalCapWindows }),
+    // The timeline persisted with the checkout, which the receipt reads back later.
+    timeline: result.timeline,
     playerSettlement: {
       ...result.playerSettlement,
       subtotal: yuanOf(result.playerSettlement.subtotal),
@@ -391,6 +392,7 @@ function toGlobalCapWindowView(window: TimeCapPricingWindow): Record<string, unk
     paidBefore: yuanOf(window.paidBefore),
     currentAmount: yuanOf(window.currentAmount),
     amountApplied: yuanOf(window.amountApplied),
+    ...(window.heldBack != null ? { heldBack: yuanOf(window.heldBack) } : {}),
     contributions: window.contributions.map((contribution) => ({
       ...contribution,
       amount: yuanOf(contribution.amount),
@@ -606,6 +608,9 @@ export function toPricingConfigManagementView(
     enabled: config.enabled,
     status: config.status ?? "active",
     provider,
+    ...(config.kind === "time.priority"
+      ? { relations: config.relations ?? { requires: [], conflicts: [] } }
+      : {}),
     createdAt: config.createdAt.toISOString(),
     updatedAt: config.updatedAt.toISOString(),
   };
@@ -704,5 +709,45 @@ export function toStaffUserManagementView(
     status: user.status,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
+  };
+}
+
+/** What a plan start changed, by plan name. */
+export function toBillingChangeView(result: {
+  changed: boolean;
+  created?: boolean;
+  started: readonly { planName: string }[];
+  stopped: readonly { planName: string }[];
+  kept: readonly { planName: string }[];
+}): Record<string, unknown> {
+  return {
+    changed: result.changed,
+    ...(result.created !== undefined ? { created: result.created } : {}),
+    started: result.started.map((item) => item.planName),
+    stopped: result.stopped.map((item) => item.planName),
+    kept: result.kept.map((item) => item.planName),
+  };
+}
+
+function toRosterMemberView(member: import("../../resources/roster.js").RosterMember): Record<string, unknown> {
+  return {
+    playerId: member.playerId,
+    displayName: member.displayName,
+    identities: member.identities,
+    startedAt: member.since.toISOString(),
+  };
+}
+
+/** `total` counts everyone listed: each person is in exactly one group. */
+export function toRosterView(roster: import("../../resources/roster.js").Roster): Record<string, unknown> {
+  return {
+    total: roster.total,
+    groups: roster.groups.map((group) => ({
+      kind: group.kind,
+      id: group.id,
+      name: group.name,
+      ...(group.kind === "resource" ? { capacity: group.capacity } : {}),
+      members: group.members.map(toRosterMemberView),
+    })),
   };
 }

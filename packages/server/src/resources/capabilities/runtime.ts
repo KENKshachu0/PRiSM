@@ -3,25 +3,26 @@
  * bus that wires them together. Runners only talk to hardware; recording what
  * happened is the bus's job.
  */
+import { createOccupancy } from "../occupancy/service.js";
 import type { D1DatabaseLike } from "@prism/adapter-d1";
 import { createD1Executor } from "@prism/adapter-d1";
 import { normalizeTTLockConnectionConfig } from "@prism/application";
 import { createDeviceEventRepository } from "@prism/storage-sql";
-import type { Env } from "../bindings.js";
+import type { Env } from "../../bindings.js";
 import {
   callHomeAssistantPower,
   callHomeAssistantService,
   getHomeAssistantEntity,
   getHomeAssistantEntityState,
-} from "../hardware/home-assistant.js";
-import { normalizeHinataUrl, sendHinataCard, sendHinataCoin } from "../hardware/hinata.js";
-import { TTLockClient } from "../hardware/ttlock.js";
-import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
+} from "../../hardware/home-assistant.js";
+import { normalizeHinataUrl, sendHinataCard, sendHinataCoin } from "../../hardware/hinata.js";
+import { TTLockClient } from "../../hardware/ttlock.js";
+import { machineRelayNamespace } from "../../gateway/machine-relay-gateway.js";
 import { createDeviceBus, type ActionRunner, type PerformInput, type PerformResult, type RunOutcome } from "./bus.js";
-import type { HaEntityConfig } from "./capabilities.js";
-import { doorConfigOf, hinataConfigOf, readSecret, type Device } from "./device.js";
+import type { HaEntityConfig } from "./catalog.js";
+import { doorConfigOf, hinataConfigOf, readSecret, type Resource } from "../resource.js";
 import { openHaConnection } from "./ha-connections.js";
-import { markWatcherDown } from "../durable-objects/shop-hub-client.js";
+import { markWatcherDown } from "../../durable-objects/shop-hub-client.js";
 import { readDeviceFacts } from "./state-view.js";
 
 const KEY_PRESS_TTL_MS = 30_000;
@@ -51,7 +52,7 @@ export type DeviceRuntime = {
 
 async function haBinding(
   runtime: DeviceRuntime,
-  device: Device,
+  device: Resource,
   capability: "power" | "climate" = "power",
 ): Promise<HaBinding | null> {
   const config = device.capabilities.get(capability)?.config as HaEntityConfig | undefined;
@@ -80,13 +81,13 @@ async function haBinding(
  * Assistant is asked now and the answer is not recorded: only a watcher's
  * events and the platform's own actions write device state.
  */
-export async function readPower(runtime: DeviceRuntime, device: Device): Promise<"on" | "off" | null> {
+export async function readPower(runtime: DeviceRuntime, device: Resource): Promise<"on" | "off" | null> {
   const facts = await readDeviceFacts(runtime.db, runtime.shopId, device);
   if (facts.watching) return facts.power;
   return askPower(runtime, device);
 }
 
-async function askPower(runtime: DeviceRuntime, device: Device): Promise<"on" | "off" | null> {
+async function askPower(runtime: DeviceRuntime, device: Resource): Promise<"on" | "off" | null> {
   const binding = await haBinding(runtime, device);
   if (!binding) return null;
   const state = await getHomeAssistantEntityState({
@@ -151,13 +152,13 @@ const strings = (value: unknown) =>
  * watched and from Home Assistant itself otherwise (not recorded). Null when
  * neither works.
  */
-export async function readClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
+export async function readClimate(runtime: DeviceRuntime, device: Resource): Promise<ClimateState | null> {
   const facts = await readDeviceFacts(runtime.db, runtime.shopId, device);
   if (facts.watching) return facts.climate;
   return askClimate(runtime, device);
 }
 
-async function askClimate(runtime: DeviceRuntime, device: Device): Promise<ClimateState | null> {
+async function askClimate(runtime: DeviceRuntime, device: Resource): Promise<ClimateState | null> {
   const binding = await haBinding(runtime, device, "climate");
   if (!binding) return null;
   const entity = await getHomeAssistantEntity({
@@ -174,7 +175,7 @@ async function askClimate(runtime: DeviceRuntime, device: Device): Promise<Clima
 /** Power and climate of a device in one read: stored facts when watched, else both asked of Home Assistant at once. */
 export async function readDeviceState(
   runtime: DeviceRuntime,
-  device: Device,
+  device: Resource,
 ): Promise<{ watching: boolean; power: "on" | "off" | null; climate: ClimateState | null }> {
   const facts = await readDeviceFacts(runtime.db, runtime.shopId, device);
   if (facts.watching) return facts;
@@ -354,14 +355,22 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
       },
     },
   });
-  if (runtime.notifyHub === false) return bus;
+  const occupancy = createOccupancy({ db: runtime.db, shopId: runtime.shopId, ...(runtime.now ? { now: runtime.now } : {}) });
   return {
     ...bus,
     async perform(input: PerformInput): Promise<PerformResult> {
       const result = await bus.perform(input);
+      if (result.operation.status === "succeeded") {
+        // Who a swipe or a coin was for may now occupy the resource. Losing
+        // that must not fail the action the player already got.
+        const playerId = input.actor.type === "player" ? input.actor.playerId : input.forPlayerId ?? null;
+        await occupancy.observe({ resourceId: input.device.id, event: { kind: "action", action: input.action, playerId } })
+          .catch((error) => console.error("Occupancy update failed", { shopId: runtime.shopId, deviceId: input.device.id, error }));
+      }
       // A HINATA IO that was just powered off will not report again; the hub
       // need not wait out its lease to hand the watch to another.
-      if (input.action === "power.off" && result.operation.status === "succeeded" && input.device.capabilities.has("hinata_io"))
+      if (runtime.notifyHub !== false && input.action === "power.off" && result.operation.status === "succeeded"
+        && input.device.capabilities.has("hinata_io"))
         await markWatcherDown(runtime.env, runtime.shopId, input.device.id);
       return result;
     },

@@ -15,6 +15,7 @@ type ShopHubNamespace = {
     haReport(shopId: string, machineId: string, report: HaReport): Promise<void>;
     touch(shopId: string): Promise<void>;
     notifyUser(userId: string, frame: Record<string, unknown>): Promise<void>;
+    botsChanged(): Promise<void>;
   };
 };
 
@@ -88,4 +89,31 @@ export function touchShopHubAfter(c: { env: Env; executionCtx: { waitUntil(promi
     return;
   }
   touchShopHub(c.env, shopId, ctx);
+}
+
+/**
+ * Tell the shop's connected bots to reread their configuration. Never throws;
+ * run after the response when an execution context is at hand.
+ */
+export function notifyBotsChanged(env: Env, shopId: string, ctx?: { waitUntil(promise: Promise<unknown>): void } | null): void {
+  const task = (async () => {
+    try {
+      await shopHub(env, shopId)?.botsChanged();
+    } catch (error) {
+      console.error("Shop hub bot notify failed", error);
+    }
+  })();
+  if (ctx) ctx.waitUntil(task);
+}
+
+/** `notifyBotsChanged` from a Hono handler, after the response. */
+export function notifyBotsChangedAfter(c: { env: Env; executionCtx: { waitUntil(promise: Promise<unknown>): void } }, shopId: string): void {
+  let ctx: { waitUntil(promise: Promise<unknown>): void } | null = null;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    // Local server and tests: nothing would keep the call alive.
+    return;
+  }
+  notifyBotsChanged(c.env, shopId, ctx);
 }

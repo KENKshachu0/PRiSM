@@ -43,7 +43,7 @@ async function fixture(input: {
 } = {}) {
   const sqlite = new Database(":memory:");
   sqlite.run(`CREATE TABLE machines(
-    id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1
+    id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15
   )`);
   for (const statement of deviceEventSchema) sqlite.run(statement);
   sqlite.run("INSERT INTO machines(id,shop_id,enabled) VALUES (?,?,?)", ["machine-1", "shop-1", input.enabled ?? 1]);

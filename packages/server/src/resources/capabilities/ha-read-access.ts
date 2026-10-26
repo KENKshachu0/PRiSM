@@ -9,8 +9,8 @@
  * removes its password, so the token is the account's only way in.
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
-import { encryptSecret, randomToken } from "../crypto.js";
-import { HaCommandError, openHaSession, type HaSocketFactory } from "../hardware/home-assistant-ws.js";
+import { encryptSecret, randomToken } from "../../crypto.js";
+import { HaCommandError, openHaSession, type HaSocketFactory } from "../../hardware/home-assistant-ws.js";
 import { getHaConnection, openHaConnection, writeHaConnection, type ReadAccess } from "./ha-connections.js";
 
 type Fetch = (url: string | URL | Request, init?: RequestInit) => Promise<Response>;

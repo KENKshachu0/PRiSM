@@ -13,7 +13,7 @@
  * onto a connection the next time the shop's device list is read.
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
-import { decryptSecret, encryptSecret, sha256Hex } from "../crypto.js";
+import { decryptSecret, encryptSecret, sha256Hex } from "../../crypto.js";
 
 export const HA_CONNECTION_PREFIX = "devices.ha_connection:";
 

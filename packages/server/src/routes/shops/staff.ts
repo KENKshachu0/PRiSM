@@ -20,6 +20,8 @@ import {
   toSessionHistoryDetailView,
   toSessionHistoryView,
   toSessionView,
+  toBillingChangeView,
+  toRosterView,
   toStaffActiveSessionView,
   toStaffReportPlayerView,
   toStaffReportSettlementView,
@@ -184,21 +186,51 @@ staffRouter.delete("/players/:playerId/identities/:provider/:subject", async (c)
   return c.json({ ok: true });
 });
 
-// Start Session
-staffRouter.post("/players/:playerId/session/start", async (c) => {
+type PlanStartBody = { pricingConfigId?: unknown; pricingConfigIds?: unknown; expectedRevision?: unknown };
+
+/** The plan a staff start names, or undefined for the shop's default plan. */
+function namedPlan(body: PlanStartBody): string | undefined {
+  const named = typeof body.pricingConfigId === "string" && body.pricingConfigId
+    ? [body.pricingConfigId]
+    : Array.isArray(body.pricingConfigIds) ? body.pricingConfigIds.filter((id): id is string => typeof id === "string") : [];
+  if (named.length > 1) jsonError(400, "一次只能开始一个计费方案", "PRICING_CONFIG_SINGLE_PLAN_REQUIRED");
+  return named[0];
+}
+
+// Preview a plan start: what would start, stop and keep.
+staffRouter.post("/players/:playerId/session/preview", async (c) => {
   const shop = getShop(c);
   await staffPrincipal(c, shop);
-  const deps = getShopDeps(c);
-  const body = (await c.req.json<{ pricingConfigIds?: string[]; label?: string }>().catch(() => ({}))) as {
-    pricingConfigIds?: string[];
-    label?: string;
-  };
-  const session = await deps.playerCommands.startSession({
+  const body = (await c.req.json<PlanStartBody>().catch(() => ({}))) as PlanStartBody;
+  const pricingConfigId = namedPlan(body);
+  const preview = await getShopDeps(c).resourceBilling.preview({
     playerId: c.req.param("playerId"),
-    pricingConfigIds: body?.pricingConfigIds,
-    label: body?.label,
+    ...(pricingConfigId ? { pricingConfigId } : {}),
   });
-  return c.json({ session: toSessionView(session) });
+  return c.json({
+    pricingConfigId: preview.pricingConfigId,
+    planName: preview.planName,
+    revision: preview.revision,
+    ...toBillingChangeView(preview),
+  });
+});
+
+// Start Session: the named plan, or the shop's default plan.
+staffRouter.post("/players/:playerId/session/start", async (c) => {
+  const shop = getShop(c);
+  const staff = await staffPrincipal(c, shop);
+  const body = (await c.req.json<PlanStartBody>().catch(() => ({}))) as PlanStartBody;
+  const pricingConfigId = namedPlan(body);
+  if (body.expectedRevision !== undefined && typeof body.expectedRevision !== "string") {
+    jsonError(400, "计费确认无效", "VALIDATION_FAILED");
+  }
+  const result = await getShopDeps(c).resourceBilling.activate({
+    playerId: c.req.param("playerId"),
+    ...(pricingConfigId ? { pricingConfigId } : {}),
+    ...(typeof body.expectedRevision === "string" ? { expectedRevision: body.expectedRevision } : {}),
+    metadata: { createdBy: "staff", staffId: staff.staffId },
+  });
+  return c.json({ session: toSessionView(result.session), billing: toBillingChangeView(result) });
 });
 
 // Stop Session
@@ -336,10 +368,24 @@ staffRouter.get("/live-players", async (c) => {
   const billingSnapshot = players.length && deps.staffLiveBillingSnapshot
     ? await deps.staffLiveBillingSnapshot(players.map((player) => player.playerId))
     : undefined;
+  // Where each person is listed: the resource they occupy or their most specific plan.
+  const roster = toRosterView(await deps.roster.list());
   const data = await withPrismAccountIdentities(c.env.DB, shop.id, {
-    players, ...(billingSnapshot ? { billingSnapshot } : {}),
+    players, roster, ...(billingSnapshot ? { billingSnapshot } : {}),
   });
   return c.json(data);
+});
+
+// Who is in the shop, each listed once; with `?name=`, one resource or one plan only.
+staffRouter.get("/roster", async (c) => {
+  const shop = getShop(c);
+  await staffPrincipal(c, shop, true);
+  const deps = getShopDeps(c);
+  const name = c.req.query("name")?.trim();
+  if (!name) return c.json(toRosterView(await deps.roster.list()));
+  const roster = await deps.roster.only(name);
+  if (!roster) jsonError(404, `找不到「${name}」`, "ROSTER_TARGET_NOT_FOUND");
+  return c.json(toRosterView(roster));
 });
 
 // Active Sessions

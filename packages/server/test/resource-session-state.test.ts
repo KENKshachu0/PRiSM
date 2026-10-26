@@ -6,10 +6,10 @@ import { splitD1MigrationStatements } from "@prism/storage-sql";
 import { createApp } from "../src/app.js";
 import { createD1DatabaseFromSqlite } from "../src/local-server.js";
 import { sha256 } from "../src/crypto.js";
-import { loadDevice } from "../src/devices/device.js";
-import { newHaConnection, writeHaConnection } from "../src/devices/ha-connections.js";
-import { createRuntimeBus } from "../src/devices/runtime.js";
-import { mintMachineTicket } from "../src/routes/platform/machine-session.js";
+import { loadResource } from "../src/resources/resource.js";
+import { newHaConnection, writeHaConnection } from "../src/resources/capabilities/ha-connections.js";
+import { createRuntimeBus } from "../src/resources/capabilities/runtime.js";
+import { mintResourceTicket } from "../src/routes/platform/resource-ticket.js";
 import type { Env } from "../src/bindings.js";
 
 const migrations = resolve(import.meta.dir, "../../../migrations");
@@ -74,7 +74,7 @@ async function fixture() {
       }),
     },
   } as unknown as Env;
-  const ticket = async (publicId: string) => (await mintMachineTicket(env.SESSION_SECRET, "shop-code", publicId)).ticket;
+  const ticket = async (publicId: string) => (await mintResourceTicket(env.SESSION_SECRET, "shop-code", publicId)).ticket;
   const app = createApp();
   const call = (path: string, token: string | null = PLAYER, init: RequestInit = {}) =>
     app.fetch(new Request(`https://prism.test${path}`, {
@@ -388,7 +388,7 @@ describe("switching a HINATA IO off", () => {
     const { db, env, hub, sqlite } = await fixture();
     const ha = homeAssistant();
     try {
-      const device = (await loadDevice(db, "shop-id", machine))!;
+      const device = (await loadResource(db, "shop-id", machine))!;
       const bus = createRuntimeBus({ db, env, shopId: "shop-id", ...runtime });
       const done = await bus.perform({ device, action: "power.off", actor: { type: "system" } });
       return { status: done.operation.status, markDown: hub.markDown };

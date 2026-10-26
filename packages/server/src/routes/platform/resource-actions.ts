@@ -7,15 +7,16 @@ import { enforceRateLimits } from "../../middleware/rate-limit.js";
 import { getOrCreateShopDependencies } from "../../middleware/tenant.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
 import { runPlayerOperation } from "../shops/player-operation.js";
-import { assertNotBanned, claimCoin, getShopForMachine as getBillingShop, requireShopPlayer, requireActiveEntry } from "./machine-login.js";
-import type { Machine as MachineRow } from "./machine-session.js";
+import { assertNotBanned, claimCoin, getShopForMachine as getBillingShop, requireShopPlayer, requireResourcePlan } from "./machine-login.js";
+import type { ScannedResource as ScannedResource } from "./resource-ticket.js";
 import type { AppBindings } from "../../bindings.js";
-import { can, hinataConfigOf, loadDevice } from "../../devices/device.js";
-import { vkFromKeyText } from "../../devices/key-text.js";
-import { createRuntimeBus, readClimate, readPower, type ClimateState } from "../../devices/runtime.js";
+import { can, hinataConfigOf, loadResource } from "../../resources/resource.js";
+import { vkFromKeyText } from "../../resources/capabilities/key-text.js";
+import { createRuntimeBus, readClimate, readPower, type ClimateState } from "../../resources/capabilities/runtime.js";
+import { createCardStore } from "../../resources/cards.js";
 import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { notice, requestLocale } from "../../notices.js";
-import type { ActionName } from "../../devices/capabilities.js";
+import type { ActionName } from "../../resources/capabilities/catalog.js";
 
 type C = Context<AppBindings, any, any>;
 
@@ -46,19 +47,19 @@ export const actionSchema=z.object({
  * watched connection answers from the stored fact; otherwise Home Assistant is
  * asked now. Neither writes anything.
  */
-export async function devicePowerState(
+export async function resourcePowerState(
   c: C,
-  machine: MachineRow,
+  machine: ScannedResource,
 ): Promise<"on" | "off" | "unknown" | "unmanaged"> {
-  const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
+  const device = await loadResource(c.env.DB, machine.shop_id, machine.id);
   if (!device?.capabilities.has("power")) return "unmanaged";
   const power = await readPower({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device).catch(() => null);
   return power ?? "unknown";
 }
 
 /** Climate state for a device page; null when it has no climate binding or the state is unknown. */
-export async function deviceClimateState(c: C, machine: MachineRow): Promise<ClimateState | null> {
-  const device = await loadDevice(c.env.DB, machine.shop_id, machine.id);
+export async function resourceClimateState(c: C, machine: ScannedResource): Promise<ClimateState | null> {
+  const device = await loadResource(c.env.DB, machine.shop_id, machine.id);
   if (!device?.capabilities.has("climate")) return null;
   return readClimate({ db: c.env.DB, env: c.env, shopId: machine.shop_id }, device).catch(() => null);
 }
@@ -80,9 +81,9 @@ function climatePayload(body: z.infer<typeof actionSchema>): Record<string, unkn
   return {};
 }
 
-export async function executeDeviceAction(
+export async function executeResourceAction(
   c: C,
-  machine: MachineRow,
+  machine: ScannedResource,
   body: z.infer<typeof actionSchema>,
   staff = false,
 ) {
@@ -94,9 +95,9 @@ export async function executeDeviceAction(
     ["machine", machine.id],
   ]);
   const action = body.action as ActionName;
-  const device = await loadDevice(c.env.DB, shop.id, machine.id);
+  const device = await loadResource(c.env.DB, shop.id, machine.id);
   if (!device || !can(device, action))
-    jsonError(409, "设备不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
+    jsonError(409, "这里不支持此操作", "DEVICE_ACTION_UNSUPPORTED");
   const isDoor = action === "door.open";
   const isClimate = action.startsWith("climate.");
   const climate = isClimate ? climatePayload(body) : {};
@@ -107,7 +108,7 @@ export async function executeDeviceAction(
     : isDoor
       ? await requireShopPlayer(c, shop, true)
       : shop.billing_enabled
-        ? { id: await requireActiveEntry(c, shop) }
+        ? { id: (await requireResourcePlan(c, shop, machine.id)).playerId }
         : device.capabilities.has("door")
           ? await requireShopPlayer(c, shop, true)
           : null;
@@ -127,15 +128,11 @@ export async function executeDeviceAction(
     if (body.cardNumber) {
       accessCode = body.cardNumber;
     } else if (body.playerId) {
-      const identity = await c.env.DB.prepare(
-        `SELECT subject FROM player_identities
-         WHERE shop_id=? AND player_id=?
-         ORDER BY CASE WHEN provider='aime' THEN 0 ELSE 1 END, created_at
-         LIMIT 1`,
-      ).bind(shop.id, body.playerId).first<{ subject: string }>();
-      if (!identity)
+      // The player's most recently used card at this shop, decrypted for the
+      // machine only.
+      accessCode = await createCardStore(c.env.DB, shop.id, c.env.URL_ENCRYPTION_KEY).latestOf(body.playerId);
+      if (!accessCode)
         jsonError(409, "该玩家没有绑定的卡片", "SCAN_IDENTITY_NOT_BOUND_TO_PLAYER");
-      accessCode = identity.subject;
     } else {
       jsonError(400, "请输入卡号或选择玩家", "CARD_REQUIRED");
     }
@@ -166,15 +163,16 @@ export async function executeDeviceAction(
       if (action === "coin" && !(await claimCoin(c, shop.id, machine.id, body.operationId))) {
         jsonError(429, "请稍后再投币", "COIN_COOLDOWN");
       }
-      if (!staff && isDoor && shop.billing_enabled) {
-        try {
-          await requireActiveEntry(c, shop);
-        } catch (error) {
-          if (!(error instanceof Error && "status" in error && error.status === 403)) throw error;
-          if (!body.consent)
-            jsonError(409, "请确认入场计费规则", "CHECKIN_CONSENT_REQUIRED");
-          await deps.playerCommands.startSession({ playerId: player!.id });
-        }
+      // Opening a door starts the door's plan when the player agreed to it, as
+      // scanning any other resource and confirming does.
+      if (!staff && isDoor && shop.billing_enabled &&
+          !(await deps.resourceBilling.activeSession({ resourceId: machine.id, playerId: player!.id }))) {
+        if (!body.consent)
+          jsonError(409, "请确认计费规则", "CHECKIN_CONSENT_REQUIRED");
+        await deps.resourceBilling.activate({
+          resourceId: machine.id,
+          playerId: player!.id,
+        });
       }
       await c.env.DB.prepare(
         "UPDATE player_operations SET device_id=? WHERE shop_id=? AND user_id=? AND id=?",
@@ -189,6 +187,8 @@ export async function executeDeviceAction(
         actor: player ? { type: "player", playerId: player.id } : { type: "staff", staffId: `user:${user.id}` },
         operationId: body.operationId,
         payload: { holder: player?.id ?? user.id, ...climate },
+        // Staff swiping or coining for a named player act for them.
+        ...(staff && body.playerId ? { forPlayerId: body.playerId } : {}),
         ...(accessCode || coinKey !== null
           ? {
               transient: {

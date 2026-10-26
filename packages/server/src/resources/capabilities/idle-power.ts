@@ -7,46 +7,60 @@
  * - **Shop empty**: no active entry for N minutes, then every powered device
  *   and every air conditioner is switched off. Nobody is billed, so this rule
  *   never needs to know who is playing what.
- * - **Device idle**: a device with power has had no activity for its idle time.
- *   Sessions are not tied to devices, and a guest game or a physical coin shows
- *   no activity at all, so while the shop has players the owner chooses what
- *   happens: only mark it idle, remind through the bot, or switch it off.
+ * - **Device idle**: a device with power that has been free for the shop's
+ *   idle time. While the shop has players the owner chooses what happens: only
+ *   mark it idle, remind through the bot, or switch it off.
  *
- * Activity is anything that shows a person at the device: a card signal from
- * its IO, or an action that counts as play requested by a player or staff
- * (power on, coin, swipe, keep-alive). Being switched on counts too, so a
- * machine turned on outside the platform gets its full idle time.
+ * A device is busy while someone occupies it (see `occupancy/`). Being switched
+ * on, kept from idling, or operated through the platform keeps it busy for its
+ * occupancy time too, so a guest game or a machine switched on outside the
+ * platform is not cut short. Once nothing keeps it busy it is free, and after
+ * the idle time free it is idle. A device is never switched off while occupied.
  */
 import { z } from "zod";
 
 export const IDLE_SETTINGS_KEY = "devices.idle_power";
 
-export const idleSettingsSchema = z.object({
-  shopEmpty: z
-    .object({
-      enabled: z.boolean().default(false),
-      minutes: z.number().int().min(1).max(24 * 60).default(15),
-    })
-    .default({}),
-  device: z
-    .object({
-      /** 0 turns the per-device rule off unless a device sets its own time. */
-      defaultMinutes: z.number().int().min(0).max(24 * 60).default(0),
-      whileOccupied: z.enum(["mark", "remind", "off"]).default("mark"),
-    })
-    .default({}),
-  devices: z
-    .record(
-      z.object({
-        /** null or absent: the shop default. 0: this device has no idle time. */
-        minutes: z.number().int().min(0).max(24 * 60).nullable().optional(),
-        /** Never switched off automatically (a router, a lock's supply). */
-        exclude: z.boolean().optional(),
-      }),
-    )
-    .default({}),
-});
-export type IdleSettings = z.infer<typeof idleSettingsSchema>;
+export const idleSettingsSchema = z.preprocess(
+  // Before idle times moved onto each resource, a device idle time above zero
+  // was what turned the device rule on.
+  (value) => {
+    if (!value || typeof value !== "object") return value;
+    const stored = value as { device?: { enabled?: unknown; defaultMinutes?: unknown }; devices?: Record<string, { minutes?: unknown }> };
+    if (stored.device && stored.device.enabled === undefined) {
+      const legacy = (typeof stored.device.defaultMinutes === "number" && stored.device.defaultMinutes > 0)
+        || Object.values(stored.devices ?? {}).some((device) => typeof device?.minutes === "number" && device.minutes > 0);
+      const minutes = typeof stored.device.defaultMinutes === "number" && stored.device.defaultMinutes > 0 ? stored.device.defaultMinutes : undefined;
+      return { ...stored, device: { ...stored.device, enabled: legacy, ...(minutes ? { minutes } : {}) } };
+    }
+    return value;
+  },
+  z.object({
+    shopEmpty: z
+      .object({
+        enabled: z.boolean().default(false),
+        minutes: z.number().int().min(1).max(24 * 60).default(15),
+      })
+      .default({}),
+    device: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** How long a device stays free before it counts as idle. */
+        minutes: z.number().int().min(1).max(24 * 60).default(10),
+        whileOccupied: z.enum(["mark", "remind", "off"]).default("mark"),
+      })
+      .default({}),
+    devices: z
+      .record(
+        z.object({
+          /** Never switched off automatically (a router, a lock's supply). */
+          exclude: z.boolean().optional(),
+        }),
+      )
+      .default({}),
+  }),
+);
+export type IdleSettings = z.output<typeof idleSettingsSchema>;
 
 export function parseIdleSettings(value: unknown): IdleSettings {
   const parsed = idleSettingsSchema.safeParse(value ?? {});
@@ -65,8 +79,15 @@ export type IdleDevice = {
   power: "on" | "off" | null;
   /** Climate mode; anything other than "off" is running. Null when unknown. */
   climate: string | null;
-  /** Latest activity, in ms. */
+  /** How long a sign of someone (switching on, a hold) keeps it busy: its occupancy time, or 0 where seats decide. */
+  minutes: number;
+  /** Latest sign of someone at it (an occupant seen, a hold), in ms. */
   lastActivity: number | null;
+  /**
+   * Until when its occupants keep it busy, in ms: the latest expiry among them,
+   * or Infinity while one has no expiry (a seat). Null when nobody occupies it.
+   */
+  busyUntil: number | null;
   /** When it was last seen switching on, in ms. */
   poweredOnAt: number | null;
   idle: boolean;
@@ -101,10 +122,9 @@ export type IdlePlan = {
   nextWake: number | null;
 };
 
-export function idleMinutes(settings: IdleSettings, deviceId: string): number {
-  const own = settings.devices[deviceId];
-  if (own?.exclude) return 0;
-  return own?.minutes ?? settings.device.defaultMinutes;
+/** Whether the device rule looks at this device at all. */
+function watchedForIdle(settings: IdleSettings, device: Pick<IdleDevice, "id">): boolean {
+  return settings.device.enabled && !settings.devices[device.id]?.exclude;
 }
 
 export function planIdle(input: IdleInputs): IdlePlan {
@@ -156,17 +176,23 @@ export function planIdle(input: IdleInputs): IdlePlan {
   }
 
   for (const device of input.devices) {
-    const minutes = idleMinutes(settings, device.id);
     // Without a known state the device's own activity is the only clock, and it
     // is switched off once per stretch of idleness: nothing shows whether it took.
     const blind = device.power === null;
     const handled = blind && device.lastAutoOff !== null && device.lastAutoOff >= (device.lastActivity ?? 0);
-    if (!device.hasPower || device.power === "off" || minutes <= 0 || excluded(device) || (blind && (device.lastActivity === null || handled))) {
+    if (!device.hasPower || device.power === "off" || !watchedForIdle(settings, device) || (blind && (device.lastActivity === null || handled))) {
       if (device.idle) plan.clearIdle.push(device.id);
       continue;
     }
     const since = Math.max(device.lastActivity ?? 0, device.poweredOnAt ?? 0) || now;
-    const deadline = since + minutes * 60_000;
+    // Never idle while occupied: an occupant without an expiry holds it indefinitely.
+    if (device.busyUntil === Infinity) {
+      if (device.idle) plan.clearIdle.push(device.id);
+      continue;
+    }
+    // Free once nothing keeps it busy; idle after the idle time free.
+    const free = Math.max(since + device.minutes * 60_000, device.busyUntil ?? 0);
+    const deadline = free + settings.device.minutes * 60_000;
     if (now < deadline) {
       if (device.idle) plan.clearIdle.push(device.id);
       wake(deadline);

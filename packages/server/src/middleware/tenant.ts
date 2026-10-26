@@ -8,6 +8,7 @@ import {
   createSqlReadModels,
 } from "@prism/storage-sql";
 import {
+  capProgressAt,
   createAssetDefinitionEffectProvider,
   createAvailableAssetReader,
   createBusinessItemOrderService,
@@ -30,8 +31,16 @@ import {
   createStaffReportService,
   createVersionedPricingResolvers,
   createStaffUserService,
+  createPricingSessionOrchestrator,
+  PLAYER_BILLING_LOCK_SCOPE,
   withOperationLease,
+  type StartPlayerSessionCommand,
 } from "@prism/application";
+import { shopDefaultPlanId } from "../resources/billing.js";
+import { createResourceBilling } from "../resources/activation.js";
+import { createOccupancy } from "../resources/occupancy/service.js";
+import { createRoster } from "../resources/roster.js";
+import { resourcePlanUsers } from "../resources/repository.js";
 import {
   canStartPriorityTimePricingSession,
   PrismDomainError,
@@ -41,8 +50,8 @@ import {
 import type { AppBindings, Env, PrismAppDependencies, TenantShop } from "../bindings.js";
 import { jsonError } from "../http.js";
 import { sha256Hex, toBase64Url } from "../crypto.js";
-import { createDeviceActionService, coinCooldownMs } from "../devices/actions.js";
-import { listDeviceStates, listMachineConnections } from "../devices/legacy-views.js";
+import { createDeviceActionService, coinCooldownMs } from "../resources/capabilities/actions.js";
+import { listDeviceStates, listMachineConnections } from "../resources/capabilities/legacy-views.js";
 
 type CachedShopDependencies = { settings: string; encryptionKey?: string; deps: PrismAppDependencies };
 // A D1 client is request/deployment scoped. Never reuse tenant repositories across databases.
@@ -52,20 +61,27 @@ export function clearShopDependenciesCache(): void {
   depsCache = new WeakMap();
 }
 
-export function isEntry(session: Session, shop: TenantShop): boolean {
-  if (session.metadata?.mahjongDeviceId) return false;
-  if (session.label === "entry" || session.metadata?.entry === true) return true;
-  let rules: string[] = [];
-  try {
-    rules = JSON.parse(shop.entry_pricing_ids_json) as string[];
-  } catch {
-    rules = [];
+/**
+ * The plan a start command names. Several plans in one session are refused
+ * rather than silently billed together; none means the caller wants the
+ * shop's default plan.
+ */
+function namedPlanOf(command: StartPlayerSessionCommand): string | null {
+  const named = command.pricingConfigIds ?? [];
+  if (named.length > 1) {
+    throw new PrismDomainError("A session bills exactly one pricing plan.", "PRICING_CONFIG_SINGLE_PLAN_REQUIRED");
   }
-  return (
-    rules.length > 0 &&
-    session.pricingConfigIds?.length === rules.length &&
-    rules.every((id) => session.pricingConfigIds!.includes(id))
-  );
+  return named[0] ?? null;
+}
+
+/** The shop's default plan setting as stored; at most one id once saved. */
+function defaultPlanSetting(shop: TenantShop): string[] {
+  try {
+    const ids: unknown = JSON.parse(shop.entry_pricing_ids_json);
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -214,11 +230,91 @@ export function createShopDependencies(input: {
         };
   };
 
+  /**
+   * Every config of the release a player's next session is pinned to — the one
+   * their earliest unsettled session uses, otherwise the current one — disabled
+   * and archived configs included, so plan relations always resolve.
+   */
+  const pricingCatalog = async (playerId: string): Promise<PricingConfig[]> => {
+    const sessions = [
+      ...(await repos.sessions.findActiveByPlayerId(playerId)),
+      ...((await repos.sessions.findUnpaidClosedByPlayerId?.(playerId)) ?? []),
+    ].sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime() || a.id.localeCompare(b.id));
+    const releaseId = sessions[0]?.pricingReleaseId;
+    if (!releaseId) return repos.pricingConfigs.listAll();
+    const release = await repos.pricingConfigs.findRelease?.(releaseId);
+    if (!release) throw new PrismDomainError("Pinned pricing release not found.", "PRICING_RELEASE_NOT_FOUND");
+    return release.configs;
+  };
+
+  const pricingSessions = createPricingSessionOrchestrator({
+    sessions: repos.sessions as typeof repos.sessions & {
+      applyTransition: NonNullable<typeof repos.sessions.applyTransition>;
+    },
+    operationLocks: repos.operationLocks,
+    pricingCatalog,
+    canStartPlanAt: ({ config, at }) =>
+      canStartPriorityTimePricingSession({
+        config: { ...config.provider, timeZone: config.provider.timeZone ?? (input.shop.time_zone || "UTC") },
+        at,
+      }),
+    // A seat belongs to its mahjong session: when a switch or a stop ends that
+    // session, the player is no longer seated.
+    afterClose: async (closed) => {
+      await input.db
+        .prepare("DELETE FROM mahjong_seats WHERE shop_id = ? AND session_id IN (SELECT value FROM json_each(?))")
+        .bind(shopId, JSON.stringify(closed.map((session) => session.id)))
+        .run();
+    },
+    // Display only. The default plan keeps the `entry` label older bots look for.
+    labelOf: (planId, catalog) => {
+      let defaultPlanId: string | null = null;
+      try { defaultPlanId = shopDefaultPlanId(defaultPlanSetting(input.shop), catalog); } catch { /* ambiguous setting */ }
+      return planId === defaultPlanId ? "entry" : catalog.find((config) => config.id === planId)?.name;
+    },
+    now,
+    id,
+  });
+
+  const resourceBilling = createResourceBilling({
+    db: input.db,
+    shopId,
+    defaultPlanIds: () => defaultPlanSetting(input.shop),
+    pricingCatalog,
+    sessions: repos.sessions,
+    pricingSessions,
+    startPlaceholder: (command) => startPlaceholder(command),
+    withPlayerLock: (playerId, action) =>
+      withOperationLease({ repository: repos.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: playerId, id, now }, action),
+    capProgress: async ({ playerId, configs, planIds }) => {
+      // An unsettled bill has charged into the current windows already.
+      const unsettled = playerId
+        ? (await repos.sessions.findActiveByPlayerId(playerId)).length > 0
+          || ((await repos.sessions.findUnpaidClosedByPlayerId?.(playerId)) ?? []).length > 0
+        : false;
+      const running = playerId && unsettled ? await playerCheckoutCommands.previewCheckout({ playerId }) : null;
+      return capProgressAt({
+        configs,
+        planIds,
+        timeZone: input.shop.time_zone || "UTC",
+        playerId,
+        at: now(),
+        pricingHistory: repos.pricingHistory,
+        pricingCapHistory: repos.pricingCapHistory,
+        running,
+      });
+    },
+    now,
+  });
+
   const deviceActions = createDeviceActionService({
     db: input.db,
     env: input.env ?? ({ DB: input.db, URL_ENCRYPTION_KEY: input.encryptionKey } as Env),
     shopId,
     sessions: repos.sessions,
+    ...(input.shop.billing_enabled
+      ? { resourcePlanSession: (target: { resourceId: string; playerId: string }) => resourceBilling.activeSession(target) }
+      : {}),
     deviceEvents: repos.deviceEvents,
     playerIdentities: repos.playerIdentities,
     coinCooldownMs: () => coinCooldownMs(input.db, shopId),
@@ -269,6 +365,7 @@ export function createShopDependencies(input: {
     resolvePricingConfigs: async (playerId) =>
       (await playerPricing(playerId)).configs,
     playerIdentities: repos.playerIdentities,
+    operationLocks: repos.operationLocks,
     canStartSessionAt: async ({ at, playerId }) => {
       const pinned = await playerPricing(playerId);
       const timeConfigs = pinned.configs.filter(
@@ -290,6 +387,36 @@ export function createShopDependencies(input: {
     id,
     now,
   });
+
+  // Every session start goes through `resourceBilling.activate`: one plan per
+  // session, a running plan is reused, requirements and conflicts are applied,
+  // and only a shop without any time plan keeps the unpriced placeholder.
+  const startPlaceholderSession = playerCommands.startSession;
+  const startPlanSession: typeof startPlaceholderSession = async (command) => {
+    const pricingConfigId = namedPlanOf(command);
+    const result = await resourceBilling.activate({
+      playerId: command.playerId,
+      ...(pricingConfigId ? { pricingConfigId } : {}),
+      ...(command.label ? { label: command.label } : {}),
+      ...(command.metadata ? { metadata: command.metadata } : {}),
+    });
+    const stored = await repos.sessions.findById(result.session.id);
+    return { ...result.session, ...(stored?.pricingReleaseId ? { pricingReleaseId: stored.pricingReleaseId } : {}) };
+  };
+  playerCommands = { ...playerCommands, startSession: startPlanSession };
+
+  // A shop billing without any time plan keeps one placeholder session a visit.
+  function startPlaceholder(command: Pick<StartPlayerSessionCommand, "playerId" | "label" | "metadata">) {
+    return withOperationLease(
+      { repository: repos.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: command.playerId, id, now },
+      async () => {
+        const running = (await repos.sessions.findActiveByPlayerId(command.playerId)).find((session) => !session.pricingConfigId);
+        return running
+          ? { ...running, status: "active" as const }
+          : startPlaceholderSession({ ...command, label: command.label ?? "entry" });
+      },
+    );
+  }
 
   let playerCheckoutCommands = createSettlementService({
     players: repos.players,
@@ -315,6 +442,27 @@ export function createShopDependencies(input: {
     id,
     now,
   });
+
+  // Stopping a plan's session stops what requires that plan at the same instant.
+  const stopLegacySession = playerCheckoutCommands.stopSession;
+  playerCheckoutCommands = {
+    ...playerCheckoutCommands,
+    stopSession: (stopInput) =>
+      withOperationLease(
+        { repository: repos.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: stopInput.playerId, id, now },
+        async () => {
+          const session = await repos.sessions.findById(stopInput.sessionId);
+          if (!session || session.playerId !== stopInput.playerId || session.status !== "active" || !session.pricingConfigId) {
+            return stopLegacySession(stopInput);
+          }
+          const result = await pricingSessions.deactivate({
+            playerId: stopInput.playerId,
+            pricingConfigId: session.pricingConfigId,
+          });
+          return result.closed.find((closed) => closed.id === session.id)!;
+        },
+      ),
+  };
 
   const playerRedeemCommands = createRedeemService({
     assets: repos.assets,
@@ -345,6 +493,7 @@ export function createShopDependencies(input: {
 
   const staffPricingCommands = createStaffPricingService({
     pricingConfigs: repos.pricingConfigs,
+    planUsers: (planId) => resourcePlanUsers(input.db, shopId, defaultPlanSetting(input.shop), planId),
     async getDefaultTimeZone() {
       return input.shop.time_zone || "UTC";
     },
@@ -414,74 +563,22 @@ export function createShopDependencies(input: {
     now,
   });
 
-  // Wrap playerCommands.startSession for shop entry rule
-  const origStartSession = playerCommands.startSession;
-  const startEntry: typeof origStartSession = (cmdInput) =>
-    withOperationLease(
-      {
-        repository: repos.operationLocks,
-        scope: "player.entry",
-        resourceId: cmdInput.playerId,
-        now,
-      },
-      async () => {
-        const active = (
-          await repos.sessions.findActiveByPlayerId(cmdInput.playerId)
-        ).find((session) => isEntry(session, input.shop));
-        if (active) return { ...active, status: "active" as const };
-        let rules: string[] = [];
-        try {
-          rules = JSON.parse(input.shop.entry_pricing_ids_json) as string[];
-        } catch {
-          rules = [];
-        }
-        return origStartSession({
-          ...cmdInput,
-          pricingConfigIds:
-            rules.length > 0 ? rules : cmdInput.pricingConfigIds,
-          label: "entry",
-        });
-      },
-    );
-  playerCommands = { ...playerCommands, startSession: startEntry };
-
-  // Wrap integrationCommands.startSessionByIdentity
+  // A bot admission (entry:true, or an older bot's admission label) starts the
+  // plan it names, otherwise the shop's default plan. Its own label is dropped
+  // so the default plan keeps the `entry` label bots look for.
   const origStartByIdentity = integrationCommands.startSessionByIdentity;
   integrationCommands = {
     ...integrationCommands,
-    startSessionByIdentity: async (startInput) => {
-      let rules: string[] = [];
-      try {
-        rules = JSON.parse(input.shop.entry_pricing_ids_json) as string[];
-      } catch {
-        rules = [];
-      }
-      // Mahjong and other named activity sessions must never be swallowed by
-      // admission deduplication, even if they use the same pricing rule IDs.
-      // Legacy Bot admission labels remain recognised; newer Bots set entry
-      // explicitly so a custom admission label also works.
+    startSessionByIdentity: (startInput) => {
       const admission =
         startInput.entry === true ||
         (startInput.entry !== false &&
           (!startInput.label || ["entry", "音游区间"].includes(startInput.label.trim())));
-      const authorizedInput = {
+      return origStartByIdentity({
         ...startInput,
         // The Bot caller cannot bypass the shop-level registration switch.
         autoRegister: !!input.shop.auto_register,
-      };
-      if (
-        !admission ||
-        (rules.length > 0 &&
-          startInput.pricingConfigIds?.some((item) => !rules.includes(item)))
-      ) {
-        return origStartByIdentity(authorizedInput);
-      }
-      const player =
-        await integrationCommands.resolveOrRegisterPlayerByIdentity(authorizedInput);
-      return startEntry({
-        ...startInput,
-        playerId: player.id,
-        metadata: { createdBy: "integration" },
+        ...(admission ? { label: undefined } : {}),
       });
     },
   };
@@ -518,11 +615,22 @@ export function createShopDependencies(input: {
     listMachineConnections: () => listMachineConnections(deviceRuntime),
   };
 
+  const occupancy = createOccupancy({ db: input.db, shopId, now });
   return {
     repositories: repos,
     playerQueries: queries.playerQueries,
     staffQueries,
     playerCommands,
+    pricingSessions,
+    resourceBilling,
+    occupancy,
+    roster: createRoster({
+      db: input.db,
+      shopId,
+      listActiveSessions: () => queries.staffQueries.listActiveSessions(),
+      listPlans: () => repos.pricingConfigs.listAll(),
+      occupancy,
+    }),
     playerCheckoutCommands,
     playerRedeemCommands,
     integrationCommands,

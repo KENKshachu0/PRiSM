@@ -21,7 +21,7 @@ type C = Context<AppBindings, any, any>;
 const limits = { fileBytes: maxFileBytes, rowBytes: maxChunkBytes };
 const warnings = [
   "仅导入空店铺，保留目标店铺的名称、位置、时区、封面和管理员。",
-  "不包含网页登录账号关联、登录凭据、Bot 凭据或设备连接；导入后需要重新绑定和配置设备。",
+  "不包含网页登录账号关联、登录凭据、Bot 凭据、玩家卡片或设备连接；导入后需要重新绑定账号并配置硬件连接，玩家再次刷卡时卡片重新绑定。",
   "业务备份包含玩家平台身份、卡片标识及财务数据，请妥善保管文件。",
 ];
 const settingsState = `(SELECT json_array(
@@ -30,7 +30,7 @@ const settingsState = `(SELECT json_array(
   json_array(s.name,s.latitude,s.longitude,s.radius_meters,s.hero_data,s.hero_hash,s.updated_at)) FROM shops s WHERE s.id=?)`;
 const billingState = `(SELECT COALESCE(json_group_array(json_array(billing_enabled,auto_register,checkin_geo,checkout_geo,
   machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)),'[]') FROM shop_billing_settings WHERE shop_id=?)`;
-const emptyTables = [...businessTables, "api_tokens", "machines", "shop_player_accounts", "shop_platform_bindings", "mahjong_seats", "device_capabilities", "device_operations", "device_events", "device_state"];
+const emptyTables = [...businessTables, "api_tokens", "machines", "resource_groups", "shop_player_accounts", "shop_platform_bindings", "mahjong_seats", "device_capabilities", "device_operations", "device_events", "device_state", "player_cards", "resource_occupancies"];
 // One statement captures all target state and is reused as the atomic apply condition.
 export const snapshotSql = `SELECT (${emptyTables.map(table => `(SELECT COUNT(*) FROM ${table} WHERE shop_id=?)`).join("+")})
   +(SELECT COUNT(*) FROM staff_users WHERE shop_id=? AND id NOT LIKE 'account:%')
@@ -80,7 +80,7 @@ function parseBody<T>(schema: z.ZodType<T>, input: unknown): T {
 async function inspect(c: C, shop: BillingShop, backup: ShopBackup) {
   const errors = validateBackup(backup);
   const state = await targetState(c, shop.id);
-  if (state.rows) errors.push("目标店铺已有玩家、账单、配置或设备，请选择空店铺导入");
+  if (state.rows) errors.push("目标店铺已有玩家、账单、配置或资源，请选择空店铺导入");
   const fingerprint = await sha256(JSON.stringify({ shopId: shop.id, backup, state }));
   return { canImport: errors.length === 0, errors, fingerprint, warnings, limits,
     scope: backup.scope, source: backup.source,
@@ -90,7 +90,7 @@ async function exportBackup(c: C, shop: BillingShop, scope: ShopBackup["scope"])
   const tables = tablesFor(scope);
   const result = await (c.env.DB as LegacyD1Database).batch<DataRow>([
     ...tables.map(table => (c.env.DB as LegacyD1Database).prepare(`SELECT ${tableSchemas[table].columns.map(column => column.name).join(",")} FROM ${table}
-      WHERE shop_id=? ${table === "player_identities" ? "AND provider!='web-account'" : ""} ORDER BY rowid`).bind(shop.id)),
+      WHERE shop_id=? ${table === "player_identities" ? "AND provider NOT IN ('web-account','aime')" : ""} ORDER BY rowid`).bind(shop.id)),
     (c.env.DB as LegacyD1Database).prepare("SELECT key,value_json FROM app_settings WHERE shop_id=? AND key IN ('venue.operations','player.registration','cashier.settings')").bind(shop.id),
     (c.env.DB as LegacyD1Database).prepare("SELECT * FROM shop_billing_settings WHERE shop_id=?").bind(shop.id),
   ]);

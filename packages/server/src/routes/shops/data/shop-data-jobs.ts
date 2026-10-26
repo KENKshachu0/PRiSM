@@ -1,4 +1,4 @@
-import { HA_CONNECTION_PREFIX, HA_CONNECTION_SECRETS } from "../../../devices/ha-connections.js";
+import { HA_CONNECTION_PREFIX, HA_CONNECTION_SECRETS } from "../../../resources/capabilities/ha-connections.js";
 import type { LegacyD1Database as D1Database, LegacyD1PreparedStatement as D1PreparedStatement } from "./compat.js";
 import type { LegacyD1Database } from "./compat.js";
 import { registerShopExportRoutes, sourceColumns, importAttemptStatement, shopExportError } from "./shop-data-export.js";
@@ -464,11 +464,11 @@ async function previewJob(
     warnings: [
       header.scope === "business"
         ? "业务备份将替换目标店铺现有玩家、余额、账单和计费配置；此操作不能撤销，请先保留原店铺备份。"
-        : "仅配置导入会覆盖同编号配置并新增文件中的配置和设备，保留玩家、余额、账单及其他配置。",
+        : "仅配置导入会覆盖同编号配置并新增文件中的配置和资源，保留玩家、余额、账单及其他配置。",
       header.version >= 2
         ? header.scope === "business"
           ? "将恢复完整店铺资料、设置、设备连接及业务记录。目标店铺编号和当前管理员保留。"
-          : "将恢复店铺资料和设置，并覆盖或新增配置及设备；目标店铺编号和当前管理员保留。"
+          : "将恢复店铺资料和设置，并覆盖或新增配置及资源；目标店铺编号和当前管理员保留。"
         : "此为 v1 备份，仅恢复文件已有内容，目标店铺资料保留。",
       "备份包含连接密钥、平台身份、卡片和财务数据，请妥善保管。",
       "账号按同一账号 ID 或已验证登录身份恢复关联；无法匹配的关联保留，需重新绑定。",
@@ -622,7 +622,10 @@ async function applyJob(
           ? "d.id"
           : col === "public_id"
             ? "d.public_id"
-            : `json_extract(r.payload_json,'$.${col}')`,
+            // A file written before these existed restores the defaults.
+            : col === "capacity" || col === "occupancy_minutes"
+              ? `COALESCE(json_extract(r.payload_json,'$.${col}'),${col === "capacity" ? 0 : 15})`
+              : `json_extract(r.payload_json,'$.${col}')`,
       );
     statements.push(
       db
@@ -704,6 +707,13 @@ async function applyJob(
     );
   }
   if (v2Devices) statements.push(...v2Devices.history);
+  // A mahjong table's size used to live in its capability; it is the resource's capacity now.
+  statements.push(db.prepare(
+    `UPDATE machines SET capacity=(SELECT json_extract(c.config_json,'$.capacity') FROM device_capabilities c
+       WHERE c.shop_id=machines.shop_id AND c.device_id=machines.id AND c.capability='mahjong')
+     WHERE shop_id=? AND EXISTS(SELECT 1 FROM device_capabilities c WHERE c.shop_id=machines.shop_id AND c.device_id=machines.id
+       AND c.capability='mahjong' AND json_type(c.config_json,'$.capacity')='integer')`,
+  ).bind(shop.id));
   const profile = header.shopProfile;
   const timeZone = profile ? resolveLocationTimeZone(profile.latitude, profile.longitude) : shop.time_zone;
   if (profile)

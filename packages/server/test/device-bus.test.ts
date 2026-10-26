@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { DeviceEvent, DeviceEventRepository, DeviceOperation, DeviceRecord, DeviceStateValue } from "@prism/core";
-import { createDeviceBus, type ActionRunner, type StateReader } from "../src/devices/bus.js";
-import type { BoundCapability, Device } from "../src/devices/device.js";
-import type { CapabilityId } from "../src/devices/capabilities.js";
+import { createDeviceBus, type ActionRunner, type StateReader } from "../src/resources/capabilities/bus.js";
+import type { BoundCapability, Resource } from "../src/resources/resource.js";
+import type { CapabilityId } from "../src/resources/capabilities/catalog.js";
 
 /** In-memory repository that applies a record the way the SQL one does. */
 function memoryRepository() {
@@ -40,12 +40,12 @@ function memoryRepository() {
   return { repo, events, operations, state };
 }
 
-function device(bound: Partial<Record<CapabilityId, Partial<BoundCapability>>>, enabled = true): Device {
+function device(bound: Partial<Record<CapabilityId, Partial<BoundCapability>>>, enabled = true): Resource {
   const capabilities = new Map<CapabilityId, BoundCapability>();
   for (const [id, value] of Object.entries(bound) as [CapabilityId, Partial<BoundCapability>][]) {
     capabilities.set(id, { id, config: {}, secretNames: new Set(), credentialHash: null, ...value });
   }
-  return { id: "m1", shopId: "shop", publicId: "pub", name: "Cabinet", aliases: [], enabled, kind: "machine", capabilities };
+  return { id: "m1", shopId: "shop", publicId: "pub", name: "Cabinet", aliases: [], enabled, kind: "machine", capacity: 1, occupancyMinutes: 15, capabilities };
 }
 
 const ioDevice = (config: Record<string, unknown> = {}, secrets: string[] = ["url", "password"]) =>

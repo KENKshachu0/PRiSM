@@ -5,8 +5,8 @@
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
 import { decryptSecret } from "../crypto.js";
-import { adoptHaBindings } from "./ha-connections.js";
-import { adoptLegacyRegistries } from "./legacy-registries.js";
+import { adoptHaBindings } from "./capabilities/ha-connections.js";
+import { adoptLegacyRegistries } from "./capabilities/legacy-registries.js";
 import {
   capabilities,
   capabilitySpec,
@@ -15,7 +15,7 @@ import {
   type DoorConfig,
   type HinataConfig,
   type MahjongConfig,
-} from "./capabilities.js";
+} from "./capabilities/catalog.js";
 
 export type BoundCapability = {
   id: CapabilityId;
@@ -25,7 +25,7 @@ export type BoundCapability = {
   credentialHash: string | null;
 };
 
-export type Device = {
+export type Resource = {
   id: string;
   shopId: string;
   publicId: string;
@@ -33,10 +33,14 @@ export type Device = {
   aliases: string[];
   enabled: boolean;
   kind: string;
+  /** How many can use it at once; 0 for one nobody occupies. A mahjong table's size. */
+  capacity: number;
+  /** How long someone counts as on it after the last sign of them. */
+  occupancyMinutes: number;
   capabilities: ReadonlyMap<CapabilityId, BoundCapability>;
 };
 
-type DeviceRow = {
+type ResourceRow = {
   id: string;
   shop_id: string;
   public_id: string;
@@ -44,6 +48,8 @@ type DeviceRow = {
   aliases_json: string | null;
   enabled: number;
   kind: string;
+  capacity: number | null;
+  occupancy_minutes: number | null;
 };
 
 type CapabilityRow = {
@@ -90,9 +96,9 @@ function bind(row: CapabilityRow): BoundCapability | null {
   };
 }
 
-const deviceColumns = "id, shop_id, public_id, name, aliases_json, enabled, kind";
+const deviceColumns = "id, shop_id, public_id, name, aliases_json, enabled, kind, capacity, occupancy_minutes";
 
-async function assemble(db: D1DatabaseLike, shopId: string, rows: DeviceRow[]): Promise<Device[]> {
+async function assemble(db: D1DatabaseLike, shopId: string, rows: ResourceRow[]): Promise<Resource[]> {
   if (!rows.length) return [];
   const capabilityRows = (
     await db
@@ -119,15 +125,17 @@ async function assemble(db: D1DatabaseLike, shopId: string, rows: DeviceRow[]): 
     aliases: parseAliases(row.aliases_json),
     enabled: row.enabled === 1,
     kind: row.kind,
+    capacity: row.capacity ?? 0,
+    occupancyMinutes: row.occupancy_minutes ?? 15,
     capabilities: byDevice.get(row.id) ?? new Map(),
   }));
 }
 
-export async function loadDevice(db: D1DatabaseLike, shopId: string, deviceId: string): Promise<Device | null> {
+export async function loadResource(db: D1DatabaseLike, shopId: string, deviceId: string): Promise<Resource | null> {
   const row = await db
     .prepare(`SELECT ${deviceColumns} FROM machines WHERE shop_id = ? AND id = ?`)
     .bind(shopId, deviceId)
-    .first<DeviceRow>();
+    .first<ResourceRow>();
   return row ? (await assemble(db, shopId, [row]))[0]! : null;
 }
 
@@ -136,12 +144,12 @@ export async function loadDevice(db: D1DatabaseLike, shopId: string, deviceId: s
  * registry entries or old bindings, so it only reads: for views that are opened
  * often and must not write.
  */
-export async function listDevices(db: D1DatabaseLike, shopId: string): Promise<Device[]> {
+export async function listResources(db: D1DatabaseLike, shopId: string): Promise<Resource[]> {
   const rows = (
     await db
       .prepare(`SELECT ${deviceColumns} FROM machines WHERE shop_id = ? ORDER BY created_at, id`)
       .bind(shopId)
-      .all<DeviceRow>()
+      .all<ResourceRow>()
   ).results;
   return assemble(db, shopId, rows);
 }
@@ -150,11 +158,11 @@ export async function listDevices(db: D1DatabaseLike, shopId: string): Promise<D
  * Every device of a shop. Registry entries left by older deployments are
  * adopted as devices first, so a listing is always complete.
  */
-export async function loadDevices(
+export async function loadResources(
   db: D1DatabaseLike,
   shopId: string,
   encryptionKey: string | undefined,
-): Promise<Device[]> {
+): Promise<Resource[]> {
   await adoptLegacyRegistries({ db, shopId, encryptionKey });
   try {
     await adoptHaBindings(db, shopId, encryptionKey);
@@ -163,15 +171,15 @@ export async function loadDevices(
     // backup holds the shop read-only) is retried on the next listing.
     console.error("Home Assistant binding adoption failed", error);
   }
-  return listDevices(db, shopId);
+  return listResources(db, shopId);
 }
 
-export function has(device: Device, capability: CapabilityId): boolean {
+export function has(device: Resource, capability: CapabilityId): boolean {
   return device.capabilities.has(capability);
 }
 
 /** Whether the device offers an action right now, given its bound capabilities. */
-export function can(device: Device, action: ActionName): boolean {
+export function can(device: Resource, action: ActionName): boolean {
   for (const [id, bound] of device.capabilities) {
     const spec = capabilities[id];
     if (!(action in spec.actions)) continue;
@@ -184,22 +192,22 @@ export function can(device: Device, action: ActionName): boolean {
   return false;
 }
 
-export function hinataConfigOf(device: Device): HinataConfig | null {
+export function hinataConfigOf(device: Resource): HinataConfig | null {
   return (device.capabilities.get("hinata_io")?.config as HinataConfig | undefined) ?? null;
 }
 
-export function doorConfigOf(device: Device): DoorConfig | null {
+export function doorConfigOf(device: Resource): DoorConfig | null {
   return (device.capabilities.get("door")?.config as DoorConfig | undefined) ?? null;
 }
 
-export function mahjongConfigOf(device: Device): MahjongConfig | null {
+export function mahjongConfigOf(device: Resource): MahjongConfig | null {
   return (device.capabilities.get("mahjong")?.config as MahjongConfig | undefined) ?? null;
 }
 
 /** Decrypt one secret of a bound capability. Reads storage, so only call when acting. */
 export async function readSecret(
   db: D1DatabaseLike,
-  device: Pick<Device, "id" | "shopId">,
+  device: Pick<Resource, "id" | "shopId">,
   capability: CapabilityId,
   name: string,
   encryptionKey: string | undefined,
@@ -219,7 +227,7 @@ export async function readSecret(
 }
 
 /** Case- and space-insensitive device lookup by id, public id, name or alias. */
-export function matchesRef(device: Device, ref: string): boolean {
+export function matchesRef(device: Resource, ref: string): boolean {
   const target = ref.trim().toLowerCase();
   if (!target) return false;
   return [device.id, device.publicId, device.name, ...device.aliases].some(
@@ -228,7 +236,7 @@ export function matchesRef(device: Device, ref: string): boolean {
 }
 
 /** The capability flags the player page and native apps have always received. */
-export function publicCapabilities(device: Device) {
+export function publicCapabilities(device: Resource) {
   return {
     power: has(device, "power"),
     climate: has(device, "climate"),

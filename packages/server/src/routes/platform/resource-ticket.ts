@@ -3,17 +3,17 @@ import { z } from "zod";
 import type { AppBindings } from "../../bindings.js";
 import { decryptSecret, encryptSecret, sha256 } from "../../crypto.js";
 import { jsonError } from "../../http.js";
-import { hinataConfigOf, loadDevice, publicCapabilities } from "../../devices/device.js";
+import { hinataConfigOf, loadResource, publicCapabilities } from "../../resources/resource.js";
 
-export const machineSessionRouter = new Hono<AppBindings>();
-export const machineTicketRouter = new Hono<AppBindings>();
+export const resourceTicketRouter = new Hono<AppBindings>();
+export const resourceQrRouter = new Hono<AppBindings>();
 const ttlSeconds = 300;
 type Navigation = { shopCode: string; publicId: string; expiresAt: number };
 const validId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const navigationKey = (secret: string) => `prism:machine-navigation:v1:${secret}`;
 
-export type Machine = {
+export type ScannedResource = {
   id: string;
   shop_id: string;
   public_id: string;
@@ -39,12 +39,18 @@ const machineSelect = `SELECT machines.*, shops.name AS shop_name,
   FROM machines JOIN shops ON shops.id=machines.shop_id
   LEFT JOIN shop_billing_settings b ON b.shop_id=shops.id`;
 
-async function findMachine(c: Context<AppBindings>, publicId: string): Promise<Machine | null> {
-  return c.env.DB.prepare(`${machineSelect} WHERE machines.public_id=?`)
-    .bind(publicId).first<Machine>();
+/** A resource of a shop by its id, in the shape the scan routes use. */
+export async function loadScannedResource(c: Context<AppBindings>, shopId: string, id: string): Promise<ScannedResource | null> {
+  return c.env.DB.prepare(`${machineSelect} WHERE machines.shop_id=? AND machines.id=?`)
+    .bind(shopId, id).first<ScannedResource>();
 }
 
-export async function mintMachineTicket(secret: string | undefined, shopCode: string, publicId: string, now = Date.now()) {
+async function findMachine(c: Context<AppBindings>, publicId: string): Promise<ScannedResource | null> {
+  return c.env.DB.prepare(`${machineSelect} WHERE machines.public_id=?`)
+    .bind(publicId).first<ScannedResource>();
+}
+
+export async function mintResourceTicket(secret: string | undefined, shopCode: string, publicId: string, now = Date.now()) {
   if (!validId(shopCode) || !validId(publicId)) jsonError(404, "机台不可用", "MACHINE_NOT_FOUND");
   if (!secret) jsonError(503, "会话密钥尚未配置", "SESSION_SECRET_NOT_CONFIGURED");
   const payload: Navigation = { shopCode, publicId, expiresAt: now + ttlSeconds * 1000 };
@@ -54,7 +60,7 @@ export async function mintMachineTicket(secret: string | undefined, shopCode: st
   };
 }
 
-export async function readMachineTicket(secret: string | undefined, ticket: string, now = Date.now()): Promise<Navigation> {
+export async function readResourceTicket(secret: string | undefined, ticket: string, now = Date.now()): Promise<Navigation> {
   let payload: Navigation;
   try {
     if (!secret || !ticket.startsWith("v1.") || ticket.length > 1024) throw Error("invalid ticket");
@@ -68,12 +74,12 @@ export async function readMachineTicket(secret: string | undefined, ticket: stri
   return payload;
 }
 
-export async function resolveMachineSession(c: Context<AppBindings>, ticket: string, routePublicId?: string) {
+export async function resolveResourceTicket(c: Context<AppBindings>, ticket: string, routePublicId?: string) {
   const normalized = ticket.trim(), route = routePublicId?.trim();
   if (!normalized || normalized.length > 1024) jsonError(410, "本次会话已失效", "TICKET_EXPIRED");
-  let machine: Machine | null = null;
+  let machine: ScannedResource | null = null;
   if (normalized.startsWith("v1.")) {
-    const navigation = await readMachineTicket(c.env.SESSION_SECRET, normalized);
+    const navigation = await readResourceTicket(c.env.SESSION_SECRET, normalized);
     if (route && route !== navigation.publicId) jsonError(410, "本次会话已失效", "TICKET_EXPIRED");
     machine = await findMachine(c, navigation.publicId);
     if (!machine || machine.shop_public_id !== navigation.shopCode) jsonError(404, "机台不可用", "MACHINE_NOT_FOUND");
@@ -81,15 +87,19 @@ export async function resolveMachineSession(c: Context<AppBindings>, ticket: str
     machine = await c.env.DB.prepare(
       `${machineSelect} JOIN machine_tickets t ON t.machine_id=machines.id
       WHERE t.token_hash=? AND t.expires_at>?`,
-    ).bind(await sha256(normalized), new Date().toISOString()).first<Machine>();
+    ).bind(await sha256(normalized), new Date().toISOString()).first<ScannedResource>();
     if (!machine || (route && route !== machine.public_id)) jsonError(410, "本次会话已失效", "TICKET_EXPIRED");
   }
   if (machine.enabled !== 1) jsonError(404, "机台不可用", "MACHINE_NOT_FOUND");
+  // A bot is managed as a resource but is not something players scan.
+  const bot = await c.env.DB.prepare("SELECT 1 FROM device_capabilities WHERE shop_id=? AND device_id=? AND capability='bot'")
+    .bind(machine.shop_id, machine.id).first();
+  if (bot) jsonError(404, "这里不能扫码使用", "MACHINE_NOT_FOUND");
   return machine;
 }
 
-export async function publicMachine(c: Context<AppBindings>, m: Machine) {
-  const device = await loadDevice(c.env.DB, m.shop_id, m.id);
+export async function publicResource(c: Context<AppBindings>, m: ScannedResource) {
+  const device = await loadResource(c.env.DB, m.shop_id, m.id);
   const capabilities = device
     ? publicCapabilities(device)
     : { power: false, climate: false, card: false, coin: false, door: false, mahjong: false };
@@ -97,6 +107,8 @@ export async function publicMachine(c: Context<AppBindings>, m: Machine) {
   return {
     publicId: m.public_id, name: m.name, kind: m.kind, coinAfterSwipe: !!io?.coinAfterSwipe,
     capabilities,
+    // Only a cabinet connected directly reports the cards on its reader.
+    cardCapture: capabilities.card && io?.transport === "embedded" && !!io.channel,
     // Native apps render the full device flow only for a plain card cabinet.
     webOnly: !!io?.coinAfterSwipe || !!m.billing_enabled || !capabilities.card ||
       capabilities.door || capabilities.power || capabilities.climate,
@@ -109,7 +121,7 @@ export async function publicMachine(c: Context<AppBindings>, m: Machine) {
   };
 }
 
-machineSessionRouter.post("/session/start", async (c) => {
+resourceTicketRouter.post("/session/start", async (c) => {
   const body = z.object({
     shopCode: z.string().trim().min(1).max(32),
     publicId: z.string().trim().min(1).max(80),
@@ -117,21 +129,21 @@ machineSessionRouter.post("/session/start", async (c) => {
   const machine = await findMachine(c, body.publicId);
   if (!machine || machine.enabled !== 1 || machine.shop_public_id !== body.shopCode)
     jsonError(404, "机台不可用", "MACHINE_NOT_FOUND");
-  const navigation = await mintMachineTicket(c.env.SESSION_SECRET, body.shopCode, body.publicId);
-  return c.json({ ...navigation, machine: await publicMachine(c, machine) });
+  const navigation = await mintResourceTicket(c.env.SESSION_SECRET, body.shopCode, body.publicId);
+  return c.json({ ...navigation, machine: await publicResource(c, machine) });
 });
 
-machineSessionRouter.get("/session", async (c) => {
-  const machine = await resolveMachineSession(c, c.req.query("ticket") ?? "");
-  return c.json({ machine: await publicMachine(c, machine) });
+resourceTicketRouter.get("/session", async (c) => {
+  const machine = await resolveResourceTicket(c, c.req.query("ticket") ?? "");
+  return c.json({ machine: await publicResource(c, machine) });
 });
-machineSessionRouter.get("/:publicId", async (c) => {
-  const machine = await resolveMachineSession(c, c.req.query("ticket") || c.req.param("publicId"), c.req.param("publicId"));
-  return c.json({ machine: await publicMachine(c, machine) });
+resourceTicketRouter.get("/:publicId", async (c) => {
+  const machine = await resolveResourceTicket(c, c.req.query("ticket") || c.req.param("publicId"), c.req.param("publicId"));
+  return c.json({ machine: await publicResource(c, machine) });
 });
 
-machineTicketRouter.get("/:shopCode/:publicId", async (c) => {
-  const navigation = await mintMachineTicket(
+resourceQrRouter.get("/:shopCode/:publicId", async (c) => {
+  const navigation = await mintResourceTicket(
     c.env.SESSION_SECRET, c.req.param("shopCode"), c.req.param("publicId"),
   );
   c.header("cache-control", "no-store");

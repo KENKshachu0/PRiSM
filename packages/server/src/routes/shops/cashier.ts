@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { withOperationLease } from "@prism/application";
+import { PLAYER_BILLING_LOCK_SCOPE, withOperationLease } from "@prism/application";
 import type { AppBindings, TenantShop } from "../../bindings.js";
 import { jsonError } from "../../http.js";
 import { staffPrincipal } from "../../middleware/auth.js";
@@ -164,7 +164,7 @@ cashierRouter.post("/profiles/:playerId/entry", async (c) => {
   return withOperationLease(
     {
       repository: deps.repositories.operationLocks,
-      scope: "player.assets",
+      scope: PLAYER_BILLING_LOCK_SCOPE,
       resourceId: playerId,
       now: () => new Date(),
     },

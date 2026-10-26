@@ -15,13 +15,13 @@ import {
   openHaConnection,
   writeHaConnection,
   type StoredHaConnection,
-} from "../../devices/ha-connections.js";
-import { provisionReadAccess } from "../../devices/ha-read-access.js";
-import { MAX_WATCHERS, writeWatcherLimit } from "../../devices/ha-watchers.js";
+} from "../../resources/capabilities/ha-connections.js";
+import { provisionReadAccess } from "../../resources/capabilities/ha-read-access.js";
+import { MAX_WATCHERS, writeWatcherLimit } from "../../resources/capabilities/ha-watchers.js";
 import { refreshShopHub } from "../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
-import { assertMachineShop, canConfigureMachine, encryptionKey } from "./merchant-machines.js";
+import { assertResourceShop, canConfigureResource, encryptionKey } from "./merchant-resources.js";
 
 export const merchantHaRouter = new Hono<AppBindings>();
 type C = Context<AppBindings>;
@@ -88,9 +88,9 @@ async function shopFromQuery(c: C, write: boolean) {
   const user = requireUser(c);
   const shopId = c.req.query("shopId");
   if (!shopId) jsonError(400, "请选择店铺", "SHOP_REQUIRED");
-  await assertMachineShop(c, user, shopId);
-  const canConfigure = await canConfigureMachine(c, user, shopId);
-  if (write && !canConfigure) jsonError(403, "只读账号不能配置设备", "FORBIDDEN");
+  await assertResourceShop(c, user, shopId);
+  const canConfigure = await canConfigureResource(c, user, shopId);
+  if (write && !canConfigure) jsonError(403, "只读账号不能配置资源", "FORBIDDEN");
   return { shopId, canConfigure };
 }
 

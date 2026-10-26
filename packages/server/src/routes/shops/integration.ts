@@ -5,6 +5,11 @@ import { sha256Hex } from "../../crypto.js";
 import { jsonError } from "../../http.js";
 import { confirmPlatformBinding } from "./binding.js";
 import { getShop, getShopDeps } from "../../middleware/tenant.js";
+import { botConfigView, ensureBotResource } from "../../resources/bot.js";
+import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
+import { loadResources, matchesRef } from "../../resources/resource.js";
+import { loadScannedResource } from "../platform/resource-ticket.js";
+import { mahjongState, operateMahjong } from "../platform/mahjong.js";
 import {
   toPlayerAssetsView,
   toPlayerCheckoutPreviewView,
@@ -15,12 +20,15 @@ import {
   toSessionView,
   toStaffActiveSessionView,
   toStoppedSessionView,
+  toBillingChangeView,
+  toRosterView,
 } from "./views.js";
 
-export async function requireIntegrationAuth(
+/** The integration token a bot request carries, or a 403. */
+export async function integrationToken(
   c: Context<AppBindings>,
   shop: TenantShop,
-): Promise<void> {
+): Promise<{ id: string; label: string }> {
   const auth = c.req.header("authorization");
   const token = auth?.match(/^Bearer (.+)$/i)?.[1];
   if (!token) {
@@ -30,15 +38,23 @@ export async function requireIntegrationAuth(
 
   const tokenHash = await sha256Hex(token);
   const row = await c.env.DB.prepare(
-    "SELECT id, role, status FROM api_tokens WHERE shop_id = ? AND token_hash = ? AND status = 'active'",
+    "SELECT id, label, role, status FROM api_tokens WHERE shop_id = ? AND token_hash = ? AND status = 'active'",
   )
     .bind(shop.id, tokenHash)
-    .first<{ id: string; role: string; status: string }>();
+    .first<{ id: string; label: string; role: string; status: string }>();
 
   if (!row || row.role !== "integration") {
     // Bot credentials are independent of platform admin sessions.
     jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
   }
+  return { id: row.id, label: row.label };
+}
+
+export async function requireIntegrationAuth(
+  c: Context<AppBindings>,
+  shop: TenantShop,
+): Promise<void> {
+  await integrationToken(c, shop);
 }
 
 export const integrationRouter = new Hono<AppBindings>();
@@ -52,7 +68,7 @@ export async function guardIntegration(c: Context<AppBindings>): Promise<void> {
   const shop = getShop(c);
   // The bot's connection carries reminders even for a shop without billing;
   // each request over it is guarded again on its own path.
-  const identityOnly = c.req.path.endsWith("/integration/platform-binding/confirm") || c.req.path.endsWith("/integration/ws");
+  const identityOnly = ["/integration/platform-binding/confirm", "/integration/ws", "/integration/bot"].some((path) => c.req.path.endsWith(path));
   if (!identityOnly && !shop.billing_enabled) {
     jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
   }
@@ -133,14 +149,48 @@ integrationRouter.post("/players/by-identity/register", async (c) => {
   return c.json({ player: toPlayerManagementView(player) });
 });
 
-// Start session by identity
+// Start session by identity. A bot is a resource: logging a player in through
+// it starts the bot's plan, as scanning any resource starts that resource's
+// plan (its own plan, otherwise its resource group's). Being in the shop is
+// having a session; a plan already billing is returned as it is
+// (`created: false`), so the bot can say the player is already there.
 integrationRouter.post("/players/by-identity/session/start", async (c) => {
+  const shop = getShop(c);
+  const deps = getShopDeps(c);
+  const bot = await ensureBotResource(c.env.DB, shop.id, await integrationToken(c, shop));
+  if (!bot.enabled) jsonError(403, "这个 Bot 已停用", "BOT_DISABLED");
+  const body = await c.req.json<any>();
+  const player = await deps.integrationCommands.resolveOrRegisterPlayerByIdentity(botRequest(c, body));
+  // Bots released before mahjong moved onto the platform start a table by naming
+  // its plan, then end it by stopping the session returned here: that plan's.
+  const named = Array.isArray(body.pricingConfigIds) && typeof body.pricingConfigIds[0] === "string"
+    ? body.pricingConfigIds[0] as string
+    : null;
+  const result = await deps.resourceBilling.activate({
+    playerId: player.id,
+    ...(named ? { pricingConfigId: named } : { resourceId: bot.id }),
+    ...(named && typeof body.label === "string" ? { label: body.label } : {}),
+    // Audit trail only: records which bot started this session.
+    metadata: { createdBy: "integration", botResourceId: bot.id },
+  });
+  const planName = result.session.pricingConfigId
+    ? (await deps.repositories.pricingConfigs.findById(result.session.pricingConfigId))?.name ?? null
+    : null;
+  return c.json({
+    session: toSessionView(result.session),
+    created: result.created,
+    planName,
+    billing: toBillingChangeView(result),
+  });
+});
+
+// One player: whether they are in the shop, the plans they bill and the resources they occupy.
+integrationRouter.post("/players/by-identity/presence", async (c) => {
   const deps = getShopDeps(c);
   const body = await c.req.json<any>();
-  const session = await deps.integrationCommands.startSessionByIdentity({
-    ...botRequest(c, body),
-  });
-  return c.json({ session: toSessionView(session) });
+  const player = await deps.integrationCommands.resolvePlayerByIdentity(botRequest(c, body));
+  const presence = await deps.roster.ofPlayer(player.id);
+  return c.json({ ...presence, plans: presence.plans.map((plan) => ({ ...plan, startedAt: plan.startedAt.toISOString() })) });
 });
 
 // Stop session by identity
@@ -243,11 +293,79 @@ integrationRouter.post("/players/by-identity/wallet/adjustment", async (c) => {
   return c.json(result);
 });
 
-// Active sessions
+// The bot's own settings and what the platform knows that it needs. A bot
+// reads this when it connects and again when told its configuration changed.
+integrationRouter.get("/bot", async (c) => {
+  const shop = getShop(c);
+  const bot = await ensureBotResource(c.env.DB, shop.id, await integrationToken(c, shop));
+  if (!bot.enabled) jsonError(403, "这个 Bot 已停用", "BOT_DISABLED");
+  return c.json(await botConfigView(c.env.DB, shop.id, bot));
+});
+
+/** The shop's mahjong table named by id, name or alias. */
+async function mahjongTable(c: Context<AppBindings>, ref: unknown) {
+  const shop = getShop(c);
+  const tables = (await loadResources(c.env.DB, shop.id, c.env.URL_ENCRYPTION_KEY))
+    .filter((resource) => resource.capabilities.has("mahjong") && resource.enabled);
+  const table = typeof ref === "string" ? tables.find((resource) => matchesRef(resource, ref)) : undefined;
+  if (!table) jsonError(404, "没有找到这张麻将桌", "MAHJONG_TABLE_NOT_FOUND");
+  return (await loadScannedResource(c, shop.id, table.id))!;
+}
+
+// Seat or unseat a player at a table, as the player's own command through the bot.
+integrationRouter.post("/players/by-identity/mahjong", async (c) => {
+  const deps = getShopDeps(c);
+  const body = await c.req.json<{ table?: unknown; action?: unknown } & Record<string, any>>();
+  if (body.action !== "join" && body.action !== "leave") jsonError(400, "请说明上桌还是下桌", "VALIDATION_FAILED");
+  const table = await mahjongTable(c, body.table);
+  const player = body.action === "join"
+    ? await deps.integrationCommands.resolveOrRegisterPlayerByIdentity(botRequest(c, body))
+    : await deps.integrationCommands.resolvePlayerByIdentity(botIdentity(body as Parameters<typeof botIdentity>[0]));
+  return operateMahjong(c, table, { action: `mahjong.${body.action}` }, { bot: { playerId: player.id } });
+});
+
+// Every table with its seats, for the bot's roster.
+integrationRouter.get("/mahjong-tables", async (c) => {
+  const shop = getShop(c);
+  const tables = (await loadResources(c.env.DB, shop.id, c.env.URL_ENCRYPTION_KEY))
+    .filter((resource) => resource.capabilities.has("mahjong") && resource.enabled);
+  return c.json({
+    tables: await Promise.all(tables.map(async (resource) => {
+      const state = await mahjongState(c, (await loadScannedResource(c, shop.id, resource.id))!, { playerId: "" });
+      return {
+        id: resource.id,
+        name: resource.name,
+        aliases: resource.aliases,
+        capacity: state?.capacity ?? 0,
+        seats: (state?.seats ?? []).map(({ playerId, name, playing }) => ({ playerId, name, playing })),
+      };
+    })),
+  });
+});
+
+// Who is in the shop, each listed once at the resource they occupy or their
+// most specific plan; with `?name=`, one resource or one plan only.
+integrationRouter.get("/roster", async (c) => {
+  const deps = getShopDeps(c);
+  const name = c.req.query("name")?.trim();
+  if (!name) return c.json(toRosterView(await deps.roster.list()));
+  const roster = await deps.roster.only(name);
+  if (!roster) jsonError(404, `找不到「${name}」`, "ROSTER_TARGET_NOT_FOUND");
+  return c.json(toRosterView(roster));
+});
+
+// Active sessions, flat, for older bots; each says which plan it bills.
 integrationRouter.get("/sessions/active", async (c) => {
   const deps = getShopDeps(c);
-  const sessions = await deps.staffQueries.listActiveSessions();
-  return c.json({ sessions: sessions.map(toStaffActiveSessionView) });
+  const [sessions, plans] = await Promise.all([deps.staffQueries.listActiveSessions(), deps.repositories.pricingConfigs.listAll()]);
+  const nameOf = new Map(plans.map((plan) => [plan.id, plan.name]));
+  return c.json({
+    sessions: sessions.map((session) => ({
+      ...toStaffActiveSessionView(session),
+      pricingConfigId: session.pricingConfigId ?? null,
+      planName: session.pricingConfigId ? nameOf.get(session.pricingConfigId) ?? null : null,
+    })),
+  });
 });
 
 // Device states
@@ -262,5 +380,8 @@ integrationRouter.get("/device-states", async (c) => {
 // Platform Binding Confirm
 integrationRouter.post("/platform-binding/confirm", async (c) => {
   const shop = getShop(c);
-  return confirmPlatformBinding(c, shop, "integration");
+  const response = await confirmPlatformBinding(c, shop, "integration");
+  // A staff member binding an identity changes who the bots treat as staff.
+  notifyBotsChangedAfter(c, shop.id);
+  return response;
 });

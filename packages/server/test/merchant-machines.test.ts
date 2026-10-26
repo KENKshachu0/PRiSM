@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { D1BoundStatementLike, D1DatabaseLike, SqlValue } from "@prism/adapter-d1";
 import type { AppBindings, Env } from "../src/bindings.js";
 import { deviceEventSchema } from "@prism/storage-sql";
-import { merchantMachineRouter } from "../src/routes/platform/merchant-machines.js";
+import { merchantResourceRouter } from "../src/routes/platform/merchant-resources.js";
 
 class SqliteD1 implements D1DatabaseLike {
   constructor(private readonly sqlite: Database) {}
@@ -47,7 +47,7 @@ function fixture() {
       coin_after_swipe INTEGER NOT NULL DEFAULT 0,mahjong_config_json TEXT,aliases_json TEXT NOT NULL DEFAULT '[]',
       relay_connection TEXT NOT NULL DEFAULT 'external',relay_token_hash TEXT,relay_channel TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(shop_id,id)
+      resource_group_id TEXT,pricing_config_override_id TEXT,capacity INTEGER NOT NULL DEFAULT 0,occupancy_minutes INTEGER NOT NULL DEFAULT 15,PRIMARY KEY(shop_id,id)
     );
     CREATE TABLE machine_login_events(id TEXT,machine_id TEXT);
     CREATE TABLE player_operations(id TEXT,device_id TEXT);
@@ -63,7 +63,7 @@ function fixture() {
     c.set("user",{id:"admin-1",role:"admin",username:"admin",displayName:"Admin",bannedAt:null});
     await next();
   });
-  app.route("/api/v1/merchant",merchantMachineRouter);
+  app.route("/api/v1/merchant",merchantResourceRouter);
   return {app,env,sqlite};
 }
 

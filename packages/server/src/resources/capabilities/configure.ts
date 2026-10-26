@@ -4,7 +4,7 @@
  * passed the catalog's schema.
  */
 import type { D1BoundStatementLike, D1DatabaseLike } from "@prism/adapter-d1";
-import { capabilitySpec, type CapabilityId } from "./capabilities.js";
+import { capabilitySpec, type CapabilityId } from "./catalog.js";
 
 /** A capability exactly as stored: secrets are still encrypted. */
 export type StoredCapability = {

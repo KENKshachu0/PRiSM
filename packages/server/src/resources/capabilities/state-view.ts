@@ -11,7 +11,7 @@
  * never ahead of the data it vouches for.
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
-import { listDevices, type Device } from "./device.js";
+import { listResources, type Resource } from "../resource.js";
 import type { ClimateState } from "./runtime.js";
 
 /** Power and climate state of one device as stored facts. */
@@ -31,7 +31,7 @@ export const noFacts: DeviceFacts = { watching: false, power: null, climate: nul
  * from before connections existed has none and can never be watched, which
  * shows up as an empty string.
  */
-export function haConnectionsOf(device: Pick<Device, "capabilities">): string[] {
+export function haConnectionsOf(device: Pick<Resource, "capabilities">): string[] {
   const ids = new Set<string>();
   for (const id of ["power", "climate"] as const) {
     const bound = device.capabilities.get(id);
@@ -66,7 +66,7 @@ function factsFrom(connections: readonly string[], watched: ReadonlySet<string>,
 export async function readDeviceFacts(
   db: D1DatabaseLike,
   shopId: string,
-  device: Pick<Device, "id" | "capabilities">,
+  device: Pick<Resource, "id" | "capabilities">,
 ): Promise<DeviceFacts> {
   const connections = haConnectionsOf(device);
   if (!connections.length || connections.includes("")) return noFacts;
@@ -92,7 +92,7 @@ export async function readDeviceFacts(
 export async function readShopFacts(
   db: D1DatabaseLike,
   shopId: string,
-  devices: ReadonlyArray<Pick<Device, "id" | "capabilities">>,
+  devices: ReadonlyArray<Pick<Resource, "id" | "capabilities">>,
 ): Promise<Map<string, DeviceFacts>> {
   const [watched, stored] = (await db.batch([
     db.prepare("SELECT connection_id FROM ha_event_connections WHERE shop_id = ?").bind(shopId),
@@ -121,8 +121,8 @@ export async function readShopFacts(
 export async function readBoardStates(
   db: D1DatabaseLike,
   shopId: string,
-): Promise<{ devices: Device[]; states: Record<string, DeviceFacts> }> {
-  const devices = (await listDevices(db, shopId)).filter(
+): Promise<{ devices: Resource[]; states: Record<string, DeviceFacts> }> {
+  const devices = (await listResources(db, shopId)).filter(
     (device) => device.capabilities.has("power") || device.capabilities.has("climate"),
   );
   const facts = await readShopFacts(db, shopId, devices);

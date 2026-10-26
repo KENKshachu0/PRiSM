@@ -72,6 +72,8 @@ routes/
 - `POST /players/:playerId/wallet/adjustment`: 店员快捷调整玩家的充值钱包余额。
 - `POST /players/:playerId/identities`: 为玩家绑定外部账号身份。
 - `DELETE /players/:playerId/identities/:provider/:subject`: 解绑玩家外部身份。
+- `POST /players/:playerId/session/preview`、`POST /players/:playerId/session/start`: 预览并开始一个方案的计费，与扫码、机器人同一个入口。
+- `GET /roster`: 在店的人，每人只列在一处（占用的资源或最具体的方案）；`?name=` 时只列一个资源或一个方案。
 - `GET /sessions/active`: 查看全店当前活跃会话列表。
 - `POST /sessions/start`: 店员为指定玩家开启入场会话。
 - `POST /sessions/:sessionId/stop`: 店员强制终止指定会话。
@@ -95,7 +97,8 @@ routes/
 - 需持有店铺 `api_tokens` 发行的 `integration` 角色 Bearer Token。
 - `POST /players/by-identity/resolve`: 根据第三方身份解析关联玩家。
 - `POST /players/by-identity/register`: 自动注册或获取第三方身份玩家。
-- `POST /players/by-identity/session/start`: 机器人代发起入场。
+- `POST /players/by-identity/session/start`: 机器人为玩家开始这个 Bot 资源的方案（专属方案，否则所属资源组的方案），返回 `created`、`planName` 与 `billing`。
+- `GET /roster`: 同 staff；`POST /players/by-identity/presence`: 一位玩家是否在店、计费的方案、占用的资源。
 - `POST /players/by-identity/sessions/:sessionId/stop`: 机器人代停止会话。
 - `POST /players/by-identity/checkout/preview`: 预计算第三方身份账单。
 - `POST /players/by-identity/checkout/confirm`: 确认结算第三方身份账单。
@@ -107,7 +110,7 @@ routes/
 - `PUT /api/v1/merchant/ha-watchers?shopId=`（`platform/merchant-ha.ts`）: 这家店同时监听 Home Assistant 的监听器数量（1–4，默认 2）。**只有平台管理员能改**，店主 403；写入后店铺 Hub 重新分配。设备页看板通过 `machines/ws` 的 `watchers` 帧看到谁在监听。
 
 #### 1.5 设备
-店铺级没有单独的设备路由。设备的增删改与日志在 `platform/merchant-machines.ts`（`/api/v1/merchant/machines`），员工与 Bot 的设备动作分别是 `/staff/device-actions` 与 `/integration/players/by-identity/device-actions`，玩家通过设备二维码页操作。设备模型见 `packages/server/src/devices` 与 `docs/integrations-and-machines.md`。
+店铺级没有单独的资源路由。资源的增删改与日志在 `platform/merchant-resources.ts`（HTTP 路径仍为 `/api/v1/merchant/machines`），资源组在 `platform/merchant-resource-groups.ts`。员工与 Bot 的设备动作分别是 `/staff/device-actions` 与 `/integration/players/by-identity/device-actions`，玩家通过资源二维码页（`platform/resource-session.ts`、`platform/resource-ticket.ts`）操作。资源模型见 `packages/server/src/resources`（`resource.ts`、能力目录在 `capabilities/`）与 `docs/resources.md`。
 
 #### 1.6 计费配置与资产规则 (`/pricing`, `/assets`, `/redeem`)
 - `/pricing`: 计费规则 CRUD、状态启停、费率时间线（Timeline）预演及规则版本归档。

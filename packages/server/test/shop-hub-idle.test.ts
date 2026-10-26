@@ -4,8 +4,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { splitD1MigrationStatements } from "@prism/storage-sql";
 import { createD1DatabaseFromSqlite } from "../src/local-server.js";
-import { newHaConnection, writeHaConnection } from "../src/devices/ha-connections.js";
-import { IDLE_SETTINGS_KEY } from "../src/devices/idle-power.js";
+import { newHaConnection, writeHaConnection } from "../src/resources/capabilities/ha-connections.js";
+import { IDLE_SETTINGS_KEY } from "../src/resources/capabilities/idle-power.js";
 import { ShopHub } from "../src/durable-objects/shop-hub.js";
 
 const migrations = resolve(import.meta.dir, "../../../migrations");
@@ -25,7 +25,8 @@ async function fixture(settings: unknown, options: { watched?: boolean } = {}) {
   sqlite.run("INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop','shop-code','A',0,0,80,'u')");
   const connection = await newHaConnection("https://ha.example", "control", KEY);
   await writeHaConnection(db, "shop", connection).run();
-  sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted) VALUES ('m1','p1','shop','舞萌','')");
+  // Signs of someone keep it busy for its occupancy time.
+  sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted,occupancy_minutes) VALUES ('m1','p1','shop','舞萌','',30)");
   sqlite.run(
     `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
      VALUES ('shop','m1','power',?,'{}','2026-01-01','2026-01-01')`,
@@ -98,18 +99,22 @@ describe("idle check in the shop hub", () => {
   });
 
   it("waits while the shop has players, and marks an idle machine when the owner chose only that", async () => {
-    const { run, offs, idle, sqlite, state } = await fixture({ shopEmpty: { enabled: true, minutes: 15 }, device: { defaultMinutes: 30, whileOccupied: "mark" } });
+    const { run, offs, idle, sqlite, state } = await fixture({ shopEmpty: { enabled: true, minutes: 15 }, device: { enabled: true, whileOccupied: "mark" } });
     sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z','active')");
     const spy = haCalls();
     try {
       await run();
       expect(offs()).toEqual([]);
       expect(idle()).toBe("true");
-      // A card at the machine is activity: the mark goes away.
+      // Someone occupying the machine: the mark goes away.
+      sqlite.run(`INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+        VALUES ('shop','m1','hinata_io','{}','{}','2026-01-01','2026-01-01')`);
+      sqlite.run("UPDATE machines SET capacity=1 WHERE id='m1'");
+      const seen = new Date();
       sqlite.run(
-        `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,origin,payload_json,occurred_at)
-         VALUES ('shop','e1','m1','hinata_io','signal','card.consumed','device','{}',?)`,
-        [new Date().toISOString()],
+        `INSERT INTO resource_occupancies(shop_id,id,resource_id,player_id,source,started_at,last_seen_at,expires_at)
+         VALUES ('shop','o1','m1','p','hinata_io',?,?,?)`,
+        [seen.toISOString(), seen.toISOString(), new Date(seen.getTime() + 30 * MIN).toISOString()],
       );
       await run();
       expect(idle()).toBe("false");
@@ -118,7 +123,7 @@ describe("idle check in the shop hub", () => {
   });
 
   it("does not count its own power-off as activity", async () => {
-    const { run, sqlite } = await fixture({ device: { defaultMinutes: 30, whileOccupied: "off" } });
+    const { run, sqlite } = await fixture({ device: { enabled: true, whileOccupied: "off" } });
     sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z','active')");
     const spy = haCalls();
     try {
@@ -158,21 +163,44 @@ describe("idle check in the shop hub", () => {
   });
 
   it("switches a machine of unknown state off once, from its own last activity", async () => {
-    const { run, offs, sqlite } = await fixture({ device: { defaultMinutes: 30, whileOccupied: "off" } }, { watched: false });
+    const { run, offs, sqlite } = await fixture({ device: { enabled: true, whileOccupied: "off" } }, { watched: false });
     sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z','active')");
     const spy = haCalls();
     try {
       // Nothing is known about it and nobody has touched it: there is no clock to judge by.
       await run();
       expect(offs()).toEqual([]);
+      // A player switched it on through the platform 40 minutes ago.
       sqlite.run(
-        `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,origin,payload_json,occurred_at)
-         VALUES ('shop','e1','m1','hinata_io','signal','card.consumed','device','{}',?)`,
+        `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,origin,player_id,payload_json,occurred_at)
+         VALUES ('shop','e1','m1','power','request','power.on','platform','p','{}',?)`,
         [new Date(Date.now() - 40 * MIN).toISOString()],
       );
       await run();
       expect(offs()).toHaveLength(1);
       // Nothing shows whether it took, so the same idleness does not switch it off again.
+      await run();
+      expect(offs()).toHaveLength(1);
+    } finally { spy.mockRestore(); sqlite.close(); }
+  });
+
+  it("ignores the occupancy time where seats decide who is on the resource", async () => {
+    const { run, offs, sqlite } = await fixture({ device: { enabled: true, minutes: 10, whileOccupied: "off" } }, { watched: false });
+    sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status) VALUES ('shop','s1','p','2026-01-01T00:00:00Z','active')");
+    sqlite.run(
+      `INSERT INTO device_events(shop_id,id,device_id,capability,kind,name,origin,player_id,payload_json,occurred_at)
+       VALUES ('shop','e1','m1','power','request','power.on','platform','p','{}',?)`,
+      [new Date(Date.now() - 20 * MIN).toISOString()],
+    );
+    const spy = haCalls();
+    try {
+      // Switched on 20 minutes ago, with 30 minutes of occupancy time: still busy.
+      await run();
+      expect(offs()).toEqual([]);
+      // As a mahjong table nobody sits at, it is free since then and idle after 10 minutes.
+      sqlite.run(`INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+        VALUES ('shop','m1','mahjong','{"pricingConfigIds":[]}','{}','2026-01-01','2026-01-01')`);
+      sqlite.run("UPDATE machines SET capacity=4 WHERE id='m1'");
       await run();
       expect(offs()).toHaveLength(1);
     } finally { spy.mockRestore(); sqlite.close(); }

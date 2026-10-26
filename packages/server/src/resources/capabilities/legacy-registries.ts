@@ -10,8 +10,8 @@
  * old client) simply queues those entries for adoption once more.
  */
 import type { D1BoundStatementLike, D1DatabaseLike } from "@prism/adapter-d1";
-import { decryptSecret, encryptSecret, sha256Hex } from "../crypto.js";
-import { normalizeHinataUrl } from "../hardware/hinata.js";
+import { decryptSecret, encryptSecret, sha256Hex } from "../../crypto.js";
+import { normalizeHinataUrl } from "../../hardware/hinata.js";
 import { listHaConnections, normalizeHaUrl } from "./ha-connections.js";
 
 const REGISTRY_KEYS = ["devices.homeassistant", "devices.hinata_io", "devices.ttlock"] as const;

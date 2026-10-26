@@ -11,7 +11,7 @@ import { shopRouter } from "../src/routes/shops/index.js";
 import { createApp } from "../src/app.js";
 import { billingSetupStatements } from "../src/routes/platform/shops.js";
 import { sha256, sha256Hex } from "../src/crypto.js";
-import { mintMachineTicket } from "../src/routes/platform/machine-session.js";
+import { mintResourceTicket } from "../src/routes/platform/resource-ticket.js";
 import { LiveBilling } from "../src/durable-objects/live-billing.js";
 import { activityBill } from "../src/durable-objects/live-activity-billing.js";
 
@@ -170,8 +170,27 @@ function createTestContext(): { db: D1DatabaseLike; sqlite: Database; env: Env }
       coin_after_swipe INTEGER NOT NULL DEFAULT 0 CHECK(coin_after_swipe IN (0,1)),
       mahjong_config_json TEXT,
       aliases_json TEXT NOT NULL DEFAULT '[]',
+      resource_group_id TEXT,
+      pricing_config_override_id TEXT,
+      capacity INTEGER NOT NULL DEFAULT 0,
+      occupancy_minutes INTEGER NOT NULL DEFAULT 15,
       PRIMARY KEY(shop_id,id),
       UNIQUE(shop_id,public_id)
+    );
+    CREATE TABLE IF NOT EXISTS mahjong_seats (
+      shop_id TEXT NOT NULL, player_id TEXT NOT NULL, machine_id TEXT NOT NULL, session_id TEXT NOT NULL,
+      entry_session_id TEXT, entry_owned INTEGER NOT NULL DEFAULT 0, joined_at TEXT NOT NULL,
+      PRIMARY KEY (shop_id, player_id)
+    );
+    CREATE TABLE IF NOT EXISTS resource_groups (
+      shop_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      default_pricing_config_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(shop_id, id)
     );
   `);
 
@@ -357,6 +376,37 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     } finally { sqlite.close(); }
   });
 
+  it("names the live activity's events as the bill names them", async () => {
+    const { db, sqlite, env } = createTestContext();
+    const { shopId } = await setupShopFixture(db, sqlite);
+    const start = new Date("2026-10-15T06:00:00.000Z");
+    const at = (minutes: number) => +start + minutes * 60_000;
+    // Two-minute units of 2.00 with a two-minute grace, the period capped at 4.00.
+    sqlite.run(`UPDATE pricing_configs SET provider_json=json_set(provider_json,
+      '$.rules[0].pricing.unitMinutes',2,'$.rules[0].pricing.unitPrice',200,
+      '$.rules[0].pricing.roundGraceMinutes',2,'$.rules[0].pricing.priceCap',400) WHERE shop_id=? AND kind='time.priority'`, [shopId]);
+    sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES (?,'events','Player','active',?)", [shopId, start.toISOString()]);
+    sqlite.run("INSERT INTO sessions(shop_id,id,player_id,started_at,status,payment_status,pricing_config_ids_json) VALUES (?,'events-visit','events',?,'active','unpaid','[]')", [shopId, start.toISOString()]);
+    try {
+      const entered = await activityBill(env, shopId, "events", start);
+      expect(entered?.bill.previousEvent).toEqual({ atUnix: at(0) / 1000, label: "开始计费" });
+      expect(entered?.bill.nextEvent).toEqual({ atUnix: at(2) / 1000, label: "下次计费" });
+
+      // The second unit, charged at 4 minutes, fills the cap; the third would have been charged at 6.
+      const filling = await activityBill(env, shopId, "events", new Date(at(5)));
+      expect(filling?.bill.amountCents).toBe(400);
+      expect(filling?.bill.previousEvent).toEqual({ atUnix: at(4) / 1000, label: "计费" });
+      expect(filling?.bill.nextEvent).toEqual({ atUnix: at(6) / 1000, label: "已封顶" });
+      expect(filling?.nextBill?.amountCents).toBe(400);
+
+      // The bill dates the fill at the unit it stopped; the plan is capped until its period ends.
+      const capped = await activityBill(env, shopId, "events", new Date(at(7)));
+      expect(capped?.bill.previousEvent).toEqual({ atUnix: at(4) / 1000, label: "已封顶" });
+      expect(capped?.bill.nextEvent).toEqual({ atUnix: Date.parse("2026-10-16T00:00:00.000Z") / 1000, label: "封顶结束" });
+      expect(Number(capped?.bill.remainingToCapCents)).toBe(0);
+    } finally { sqlite.close(); }
+  });
+
   for (const checkout of ["player", "staff", "override", "recharge", "bulk", "cashier"] as const) {
     it(`pushes the final App Clip bill promptly after ${checkout} checkout`, async () => {
       const { db, sqlite, env } = createTestContext();
@@ -400,7 +450,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       };
       // Start through the QR-confirmed native API, then register its per-activity token.
       sqlite.run("INSERT INTO machines(shop_id,id,public_id,name,kind,enabled) VALUES (?,'entry','entry','Entry','machine',1)", [shopId]);
-      const { ticket } = await mintMachineTicket(env.SESSION_SECRET, publicId, "entry");
+      const { ticket } = await mintResourceTicket(env.SESSION_SECRET, publicId, "entry");
       const started = await post("player/session/start", { ticket, consent: true, operationId: crypto.randomUUID() });
       const sessionId = started.session.id as string;
       sqlite.run("UPDATE sessions SET started_at=? WHERE shop_id=? AND id=?", [new Date(Date.now() - 90 * 60_000).toISOString(), shopId, sessionId]);
@@ -913,7 +963,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     // The real player entry requires a QR-derived, shop-scoped machine ticket
     // and affirmative acknowledgement of the billing terms.
     sqlite.run("INSERT INTO machines(shop_id,id,public_id,name,kind,enabled) VALUES (?, 'entry-machine', 'entry-machine', 'Entry Machine', 'machine', 1)", [shopId]);
-    const ticket = (await mintMachineTicket(env.SESSION_SECRET, publicId, "entry-machine")).ticket;
+    const ticket = (await mintResourceTicket(env.SESSION_SECRET, publicId, "entry-machine")).ticket;
     // 1. Player session start
     const startRes = await app.fetch(
       new Request(`https://prism.test/api/v1/shops/${publicId}/player/session/start`, {
@@ -1401,6 +1451,21 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       const playerId = registeredBody.player.id;
       expect(registeredBody.player.displayName).toBe("Koishi Guest");
 
+      const [entryPlanId] = JSON.parse((sqlite.query(
+        "SELECT entry_pricing_ids_json AS ids FROM shop_billing_settings WHERE shop_id=?",
+      ).get(shopId) as { ids: string }).ids) as string[];
+      // The table bills its own plan. It is published before the visit starts,
+      // so it belongs to the release the visit is pinned to.
+      sqlite.run(
+        `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
+         SELECT shop_id,'mahjong-table-a',kind,'麻将 A 桌',enabled,status,provider_json,created_at,updated_at
+         FROM pricing_configs WHERE shop_id=? AND id=?`,
+        [shopId, entryPlanId!],
+      );
+
+      // The bot becomes a resource on first use; the shared fixture predates
+      // encrypted machine fields.
+      sqlite.run("ALTER TABLE machines ADD COLUMN hinata_url_encrypted TEXT");
       const entry = await post("/players/by-identity/session/start", {
         identity, label: "音游区间", entry: true,
       });
@@ -1408,17 +1473,29 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       const entryBody = await entry.json() as { session: { id: string; playerId: string } };
       expect(entryBody.session.playerId).toBe(playerId);
 
-      const table = await post("/players/by-identity/session/start", {
-        identity, label: "麻将 A 桌", entry: false,
-        // Even overlapping admission pricing must not hijack the table session.
-        pricingConfigIds: JSON.parse((sqlite.query(
-          "SELECT entry_pricing_ids_json AS ids FROM shop_billing_settings WHERE shop_id=?",
-        ).get(shopId) as { ids: string }).ids),
+      // A bot from before platform mahjong starts a table by naming its plan:
+      // that plan starts as a session of its own, beside the visit.
+      const named = await post("/players/by-identity/session/start", {
+        identity, label: "麻将 A 桌", entry: false, pricingConfigIds: ["mahjong-table-a"],
       });
-      expect(table.status).toBe(200);
-      const tableBody = await table.json() as { session: { id: string; playerId: string } };
+      expect(named.status).toBe(200);
+      const tableBody = await named.json() as { session: { id: string; playerId: string }; created: boolean };
+      expect(tableBody.created).toBe(true);
       expect(tableBody.session.playerId).toBe(playerId);
       expect(tableBody.session.id).not.toBe(entryBody.session.id);
+
+      // A plan bills a player once: a login on a bot whose own plan is the table's
+      // reuses that session instead of charging the plan a second time.
+      sqlite.run(
+        `UPDATE machines SET pricing_config_override_id='mahjong-table-a'
+         WHERE shop_id=? AND id IN (SELECT device_id FROM device_capabilities WHERE shop_id=? AND capability='bot')`,
+        [shopId, shopId],
+      );
+      const again = await post("/players/by-identity/session/start", { identity });
+      expect(again.status).toBe(200);
+      const againBody = await again.json() as { session: { id: string }; created: boolean };
+      expect(againBody.session.id).toBe(tableBody.session.id);
+      expect(againBody.created).toBe(false);
 
       const active = await app.fetch(new Request(prefix + "/sessions/active", { headers }), env);
       expect(active.status).toBe(200);

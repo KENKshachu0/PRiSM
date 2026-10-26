@@ -1,14 +1,18 @@
 import { createD1Repositories } from "@prism/adapter-d1";
+import { billEventLabel, billEvents, previewBillTimeline } from "@prism/application";
 import {
   addCents,
   canStartPriorityTimePricingSession,
+  chargeUnitChargedAt,
   compareCents,
+  isPositiveCents,
   maxCents,
   nextTimePricingEvent,
-  previousBillingEvent,
+  settleTimeCapWindows,
   subCents,
   ZERO_CENTS,
   type Cents,
+  type ChargeItem,
   type PricingConfig,
 } from "@prism/core";
 import { ensureD1UtcPricing } from "../utc-pricing.js";
@@ -53,15 +57,23 @@ export async function activityBill(
   playerId: string,
   now = new Date(),
 ): Promise<ActivitySnapshot | null> {
-  const snapshot = await calculateActivityBill(env, shopId, playerId, now);
+  const current = await calculateActivityBill(env, shopId, playerId, now);
+  const snapshot = current?.snapshot ?? null;
   const boundary = snapshot?.nextCheckAt;
-  if (!snapshot || snapshot.endedAtUnix !== null || !boundary || boundary <= now.getTime()
+  if (!current || !snapshot || snapshot.endedAtUnix !== null || !boundary || boundary <= now.getTime()
     || boundary > now.getTime() + 8 * 3600_000) return snapshot;
   // Forecast exactly one known boundary with the same engine, never a client rate.
   try {
     const next = await calculateActivityBill(env, shopId, playerId, new Date(boundary));
-    return { ...snapshot, ...(next && next.endedAtUnix === null
-      && next.startedAtUnix === snapshot.startedAtUnix ? { nextBill: next.bill } : {}) };
+    if (!next || next.snapshot.endedAtUnix !== null || next.snapshot.startedAtUnix !== snapshot.startedAtUnix) return snapshot;
+    // What the bill will newly say by then names the next event, such as a cap filling instead of a
+    // charge. A cap fills at the unit it stopped, which began before it was counted.
+    const known = new Set(current.events.map(event => `${event.at.toISOString()} ${event.label}`));
+    const arriving = next.events.filter(event => event.at.getTime() <= boundary && !known.has(`${event.at.toISOString()} ${event.label}`));
+    const nextEvent = snapshot.bill.nextEvent && arriving.length
+      ? { ...snapshot.bill.nextEvent, label: billEventLabel([snapshot.bill.nextEvent.label, ...arriving.map(event => event.label)])! }
+      : snapshot.bill.nextEvent;
+    return { ...snapshot, bill: { ...snapshot.bill, nextEvent }, nextBill: next.snapshot.bill };
   } catch {
     // A forecast must not make the current bill or checkout unavailable.
     console.warn("Live bill forecast unavailable");
@@ -69,12 +81,18 @@ export async function activityBill(
   }
 }
 
+/**
+ * The bill as the live activity shows it, at `now`: the amount, and the events
+ * either side of now as the bill's timeline has them (a charge, a rule change, a
+ * cap filling or ending, the start or end). A plan counts as capped while the
+ * bill draws it capped, which is what was actually charged after every cap.
+ */
 async function calculateActivityBill(
   env: Pick<Env, "DB">,
   shopId: string,
   playerId: string,
   now: Date,
-) {
+): Promise<{ snapshot: ActivitySnapshot; events: { at: Date; label: string }[] } | null> {
   await ensureD1UtcPricing(env.DB, now);
   const repos = createD1Repositories({
     db: env.DB,
@@ -134,14 +152,24 @@ async function calculateActivityBill(
     shop,
     now: () => now,
   }).playerCheckoutCommands.previewCheckout({ playerId });
+  const timeline = previewBillTimeline(preview);
+  const events = billEvents(timeline);
+  // Each plan a full cap keeps from charging, until when.
+  const cappedUntil = new Map<string, number>();
+  for (const event of timeline.events) for (const entry of event.entries) {
+    if (entry.kind !== "full" || !entry.until || Date.parse(event.at) > now.getTime()) continue;
+    const until = Date.parse(entry.until);
+    if (until <= now.getTime()) continue;
+    for (const trackId of entry.trackIds ?? []) cappedUntil.set(trackId, Math.max(cappedUntil.get(trackId) ?? 0, until));
+  }
+
   const releases = new Map<
     string,
     { configs: PricingConfig[]; timeZone: string }
   >();
   const labels = new Set<string>();
   const candidates: { at: number; label: string }[] = [];
-  const ruleBoundaries: Date[] = [];
-  const capHeadrooms: Cents[] = [];
+  const tracks: string[] = [];
   const billableNow: boolean[] = [];
 
   for (const session of active) {
@@ -165,127 +193,61 @@ async function calculateActivityBill(
     for (const config of release.configs.filter(
       (config) => config.enabled && config.status !== "archived",
     )) {
-      if (
-        config.kind !== "time.cap" &&
-        session.pricingConfigIds?.length &&
-        !session.pricingConfigIds.includes(config.id)
-      ) {
-        continue;
-      }
+      if (config.kind === "time.cap") continue;
+      if (session.pricingConfigIds?.length && !session.pricingConfigIds.includes(config.id)) continue;
       if (config.kind === "charge.fixed") {
         labels.add(config.name);
         continue;
       }
-      if (
-        config.kind === "time.cap" &&
-        !config.provider.includedPricingConfigIds.some((id) =>
-          session.pricingConfigIds?.includes(id),
-        )
-      ) {
-        continue;
-      }
-      const segment = preview.chargeItems
-        .filter(
-          (item) =>
-            item.sessionId === session.id &&
-            item.pricingExplanation?.pricingConfigId === config.id,
-        )
-        .at(-1);
-      const globallyCapped = preview.globalCapWindows.some(
-        (window) =>
-          window.windowStartedAt <= now &&
-          window.windowEndedAt > now &&
-          window.paidBefore + window.currentAmount >= window.priceCap &&
-          window.contributions.some(
-            (item) =>
-              item.sessionId === session.id &&
-              item.pricingConfigId === config.id,
-          ),
-      );
-      if (config.kind === "time.cap") {
-        for (const window of preview.globalCapWindows ?? []) {
-          const inForce =
-            window.windowStartedAt <= now && window.windowEndedAt > now;
-          const involves = window.contributions.some(
-            (item) =>
-              item.sessionId === session.id &&
-              (session.pricingConfigIds ?? []).includes(item.pricingConfigId),
-          );
-          if (inForce && involves) {
-            capHeadrooms.push(
-              subCents(
-                window.priceCap,
-                addCents(window.paidBefore, window.currentAmount),
-              ),
-            );
-          }
-        }
-      }
+      const trackId = `${session.id}:${config.id}`;
+      tracks.push(trackId);
+      const capped = cappedUntil.get(trackId);
+      if (capped !== undefined) candidates.push({ at: capped, label: "封顶结束" });
+      const provider = { ...config.provider, timeZone: config.provider.timeZone ?? release.timeZone };
       if (config.kind === "time.priority") {
-        const priority = config as Extract<
-          PricingConfig,
-          { kind: "time.priority" }
-        >;
-        billableNow.push(
-          canStartPriorityTimePricingSession({
-            config: {
-              ...priority.provider,
-              timeZone: priority.provider.timeZone ?? release.timeZone,
-            },
-            at: now,
-          }),
-        );
+        billableNow.push(canStartPriorityTimePricingSession({
+          config: provider as Extract<PricingConfig, { kind: "time.priority" }>["provider"],
+          at: now,
+        }));
       }
-      const next = nextTimePricingEvent({
-        config: {
-          ...config.provider,
-          timeZone: config.provider.timeZone ?? release.timeZone,
-        },
-        session,
-        now,
-        intervalCapReached:
-          segment?.pricingExplanation?.intervalCapReached || globallyCapped,
-        intervalStartedAt: globallyCapped
-          ? undefined
-          : segment?.period?.startedAt,
-      });
-      ruleBoundaries.push(next.intervalStartedAt);
-      if (config.kind !== "time.cap" && next.ruleLabel) {
-        labels.add(`${config.name}（${next.ruleLabel}）`);
-      }
-      if (next.chargeAt) {
-        candidates.push({ at: next.chargeAt.getTime(), label: "下次计费" });
-      }
+      const next = nextTimePricingEvent({ config: provider, session, now, intervalCapReached: capped !== undefined });
+      if (next.ruleLabel) labels.add(`${config.name}（${next.ruleLabel}）`);
+      if (next.chargeAt) candidates.push({ at: next.chargeAt.getTime(), label: "下次计费" });
       if (next.ruleAt) {
-        candidates.push({ at: next.ruleAt.getTime(), label: "规则切换" });
+        // Named as the bill will name it: the same rule's next window, another rule, or no rule.
+        const after = nextTimePricingEvent({ config: provider, session, now: next.ruleAt }).ruleLabel;
+        candidates.push({
+          at: next.ruleAt.getTime(),
+          label: after === null ? "结束计费" : after === next.ruleLabel ? "新的一天" : "切换计费规则",
+        });
       }
     }
   }
 
-  const nextCheckAt = candidates.reduce(
-    (min, candidate) => Math.min(min, candidate.at),
-    Infinity,
-  );
-  let nextEvent: ActivityNextEvent | null = null;
-  if (candidates.length) {
-    const earliest = candidates.reduce((a, b) => (b.at < a.at ? b : a));
-    const earliestLabels = new Set(
-      candidates
-        .filter((candidate) => candidate.at === earliest.at)
-        .map((candidate) => candidate.label),
-    );
-    nextEvent = {
-      atUnix: earliest.at / 1000,
-      label: earliestLabels.size > 1 ? "计费与规则切换" : earliest.label,
-    };
-  }
+  const nextCheckAt = candidates.reduce((min, candidate) => Math.min(min, candidate.at), Infinity);
+  const nextEvent: ActivityNextEvent | null = candidates.length
+    ? {
+        atUnix: nextCheckAt / 1000,
+        label: billEventLabel(candidates.filter((candidate) => candidate.at === nextCheckAt).map((candidate) => candidate.label))!,
+      }
+    : null;
 
+  // Nothing more is charged once every plan is capped; otherwise the tightest cap
+  // across plans still counting a plan that charges, by what it has counted.
   let remainingToCapCents: Cents | undefined;
-  if (capHeadrooms.length) {
-    const tightest = capHeadrooms.reduce((min, value) =>
-      compareCents(value, min) < 0 ? value : min,
-    );
-    remainingToCapCents = maxCents(tightest, ZERO_CENTS);
+  const charging = tracks.filter((track) => !cappedUntil.has(track));
+  if (tracks.length && !charging.length) remainingToCapCents = ZERO_CENTS;
+  else {
+    const headrooms = preview.globalCapWindows
+      .filter((window) => window.windowStartedAt <= now && window.windowEndedAt > now
+        && window.contributions.some((item) => charging.includes(`${item.sessionId}:${item.pricingConfigId}`)))
+      .map((window) => subCents(window.priceCap, addCents(window.paidBefore, window.amountApplied)));
+    if (headrooms.length) {
+      remainingToCapCents = maxCents(
+        headrooms.reduce((min, value) => (compareCents(value, min) < 0 ? value : min)),
+        ZERO_CENTS,
+      );
+    }
   }
   const billable =
     active.length === 0
@@ -294,15 +256,34 @@ async function calculateActivityBill(
       ? true
       : billableNow.some((value) => value);
 
-  const names = [...labels];
-  const previous = previousBillingEvent({
-    now,
-    sessions: unpaid,
-    chargeItems: preview.chargeItems,
-    globalCapWindows: preview.globalCapWindows,
-    ruleBoundaries,
-  });
+  // The last event so far: one of the bill's, or a unit being charged.
+  const sessions = new Map(unpaid.map((session) => [session.id, session]));
+  const items = preview.sessionPreviews.flatMap((entry) =>
+    entry.chargeItems.map((item): ChargeItem => (item.sessionId ? item : { ...item, sessionId: entry.sessionId })));
+  const previousAt: { at: number; label: string }[] = events
+    .filter((event) => event.at <= now)
+    .map((event) => ({ at: event.at.getTime(), label: event.label }));
+  const chargedAt = new Map<ChargeItem, Date[] | null>();
+  for (const unit of settleTimeCapWindows(preview.globalCapWindows, items).units) {
+    if (!isPositiveCents(unit.charged)) continue;
+    if (!chargedAt.has(unit.item)) {
+      const session = sessions.get(unit.item.sessionId ?? "");
+      const plan = unit.item.pricingExplanation?.pricingConfigId;
+      // The device being used waives the grace of the plan's first charge, as the quote does.
+      const waived = Boolean(session?.metadata?.deviceOperated || session?.metadata?.hasDeviceActivity)
+        && !items.some((prior) => prior.sessionId === unit.item.sessionId && prior.pricingExplanation?.pricingConfigId === plan
+          && prior.period && unit.item.period && prior.period.startedAt < unit.item.period.startedAt && isPositiveCents(prior.amount));
+      chargedAt.set(unit.item, chargeUnitChargedAt(unit.item, waived));
+    }
+    const at = chargedAt.get(unit.item)?.[unit.index];
+    if (at && at <= now) previousAt.push({ at: at.getTime(), label: "计费" });
+  }
+  const latest = previousAt.reduce((max, event) => Math.max(max, event.at), -Infinity);
+  const previousEvent: ActivityNextEvent | null = Number.isFinite(latest)
+    ? { atUnix: latest / 1000, label: billEventLabel(previousAt.filter((event) => event.at === latest).map((event) => event.label))! }
+    : null;
 
+  const names = [...labels];
   const bill: ActivityBill = {
     amountCents: preview.settlementPreview.total,
     planLabel: (
@@ -310,24 +291,25 @@ async function calculateActivityBill(
       (names.length > 2 ? ` 等 ${names.length} 项` : "")
     ).slice(0, 160),
     nextEvent,
-    previousEvent: previous
-      ? { atUnix: previous.at.getTime() / 1000, label: previous.label }
-      : null,
+    previousEvent,
     asOfUnix: now.getTime() / 1000,
     ...(remainingToCapCents !== undefined ? { remainingToCapCents } : {}),
     ...(billable !== undefined ? { billable } : {}),
   };
 
   return {
-    bill,
-    nextCheckAt: Number.isFinite(nextCheckAt) ? nextCheckAt : null,
-    endedAtUnix: active.length
-      ? null
-      : Math.max(
-          ...unpaid.map((session) => (session.endedAt ?? now).getTime()),
-        ) / 1000,
-    startedAtUnix:
-      Math.min(...unpaid.map((session) => session.startedAt.getTime())) / 1000,
+    events,
+    snapshot: {
+      bill,
+      nextCheckAt: Number.isFinite(nextCheckAt) ? nextCheckAt : null,
+      endedAtUnix: active.length
+        ? null
+        : Math.max(
+            ...unpaid.map((session) => (session.endedAt ?? now).getTime()),
+          ) / 1000,
+      startedAtUnix:
+        Math.min(...unpaid.map((session) => session.startedAt.getTime())) / 1000,
+    },
   };
 }
 

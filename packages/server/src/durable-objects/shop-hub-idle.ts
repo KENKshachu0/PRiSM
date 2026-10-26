@@ -3,16 +3,18 @@
  * watched states, then carry the plan out through the device bus as the system.
  */
 import type { Env } from "../bindings.js";
-import { capabilities } from "../devices/capabilities.js";
-import { loadDevice } from "../devices/device.js";
+import { capabilities } from "../resources/capabilities/catalog.js";
+import { loadResource } from "../resources/resource.js";
 import {
   IDLE_SETTINGS_KEY,
   parseIdleSettings,
   planIdle,
   type IdleDevice,
   type Reminder,
-} from "../devices/idle-power.js";
-import { createRuntimeBus } from "../devices/runtime.js";
+} from "../resources/capabilities/idle-power.js";
+import { createRuntimeBus } from "../resources/capabilities/runtime.js";
+import { heldProviders } from "../resources/occupancy/providers.js";
+import { createOccupancy } from "../resources/occupancy/service.js";
 
 /** What the hub remembers between checks. */
 export type IdleMemory = {
@@ -28,11 +30,12 @@ export const emptyIdleMemory = (): IdleMemory => ({ emptySince: null, emptyHandl
 /** A reminder for the bot, with device names so it can be shown as is. */
 export type IdleNotice = Omit<Reminder, "deviceIds" | "key"> & { devices: Array<{ id: string; name: string }> };
 
-const ACTIVITY_SIGNALS = Object.entries(capabilities.hinata_io.signals)
-  .filter(([, spec]) => spec.activity)
-  .map(([name]) => name);
-/** Actions that show a person at the device. Switching it off does not. */
-const ACTIVITY_ACTIONS = Object.values(capabilities)
+/**
+ * Actions that hold a device off idling for its occupancy time: someone asked
+ * the platform to use it (switch it on, keep it, coin, swipe). Switching it off
+ * does not. Who occupies it comes from occupancy, not from here.
+ */
+const HOLD_ACTIONS = Object.values(capabilities)
   .flatMap((spec) => Object.entries(spec.actions))
   .filter(([name, spec]) => spec?.countsAsPlay && name !== "power.off")
   .map(([name]) => name);
@@ -64,20 +67,26 @@ export async function runIdleCheck(input: {
         .first<{ value_json: string }>())?.value_json ?? null,
     ),
   );
-  const anyRule = settings.shopEmpty.enabled || settings.device.defaultMinutes > 0
-    || Object.values(settings.devices).some((device) => (device.minutes ?? 0) > 0);
+  const anyRule = settings.shopEmpty.enabled || settings.device.enabled;
   if (!anyRule) return { memory: { ...emptyIdleMemory(), lastAutoOff: input.memory.lastAutoOff }, notices: [], poweredOff: [] };
 
-  const [visits, capabilityRows, stateRows, activityRows] = await Promise.all([
+  const [visits, capabilityRows, stateRows, activityRows, occupancy] = await Promise.all([
     db.prepare(
       `SELECT (SELECT COUNT(*) FROM sessions WHERE shop_id = ? AND status = 'active') AS active,
               (SELECT MAX(ended_at) FROM sessions WHERE shop_id = ? AND status = 'closed') AS last_end`,
     ).bind(shopId, shopId).first<{ active: number; last_end: string | null }>(),
     db.prepare(
-      `SELECT m.id, m.name, c.capability, c.config_json FROM machines m
+      // Where a capability holds its occupants itself (seats), they are the whole
+      // story and the occupancy minutes do not apply, also not to activity.
+      `SELECT m.id, m.name, c.capability, c.config_json,
+              CASE WHEN EXISTS (SELECT 1 FROM device_capabilities h WHERE h.shop_id = m.shop_id AND h.device_id = m.id
+                                  AND h.capability IN (SELECT value FROM json_each(?)))
+                   THEN 0 ELSE m.occupancy_minutes END AS occupancy_minutes
+       FROM machines m
        JOIN device_capabilities c ON c.shop_id = m.shop_id AND c.device_id = m.id
        WHERE m.shop_id = ? AND m.enabled = 1 AND c.capability IN ('power', 'climate')`,
-    ).bind(shopId).all<{ id: string; name: string; capability: "power" | "climate"; config_json: string }>(),
+    ).bind(JSON.stringify(heldProviders.map((provider) => provider.capability)), shopId)
+      .all<{ id: string; name: string; occupancy_minutes: number; capability: "power" | "climate"; config_json: string }>(),
     db.prepare(
       `SELECT device_id, capability, key, value_json, changed_at FROM device_state
        WHERE shop_id = ? AND ((capability = 'power' AND key IN ('power', 'idle')) OR (capability = 'climate' AND key = 'climate'))`,
@@ -85,20 +94,20 @@ export async function runIdleCheck(input: {
     db.prepare(
       `SELECT device_id, MAX(occurred_at) AS at FROM device_events
        WHERE shop_id = ? AND occurred_at >= ?
-         AND ((kind = 'signal' AND name IN (SELECT value FROM json_each(?)))
-           OR (kind = 'request' AND name IN (SELECT value FROM json_each(?)) AND (player_id IS NOT NULL OR staff_id IS NOT NULL)))
+         AND kind = 'request' AND name IN (SELECT value FROM json_each(?)) AND (player_id IS NOT NULL OR staff_id IS NOT NULL)
        GROUP BY device_id`,
-    ).bind(shopId, new Date(now - LOOKBACK_MS).toISOString(), JSON.stringify(ACTIVITY_SIGNALS), JSON.stringify(ACTIVITY_ACTIONS))
+    ).bind(shopId, new Date(now - LOOKBACK_MS).toISOString(), JSON.stringify(HOLD_ACTIONS))
       .all<{ device_id: string; at: string }>(),
+    createOccupancy({ db, shopId, now: () => new Date(now) }).current(),
   ]);
 
   const devices = new Map<string, IdleDevice>();
-  const device = (id: string, name: string) => {
+  const device = (id: string, name: string, minutes: number) => {
     let entry = devices.get(id);
     if (!entry) {
       entry = {
-        id, name, hasPower: false, hasClimate: false, power: null, climate: null,
-        lastActivity: null, poweredOnAt: null, idle: false, lastAutoOff: input.memory.lastAutoOff[id] ?? null,
+        id, name, minutes, hasPower: false, hasClimate: false, power: null, climate: null,
+        lastActivity: null, busyUntil: null, poweredOnAt: null, idle: false, lastAutoOff: input.memory.lastAutoOff[id] ?? null,
       };
       devices.set(id, entry);
     }
@@ -108,7 +117,7 @@ export async function runIdleCheck(input: {
   // they are unknown, and the idle rules switch off without knowing.
   const watchedCapabilities = new Set<string>();
   for (const row of capabilityRows.results) {
-    const entry = device(row.id, row.name);
+    const entry = device(row.id, row.name, row.occupancy_minutes);
     const connection = (parse(row.config_json) as { connectionId?: unknown } | null)?.connectionId;
     if (typeof connection === "string" && input.eventConnections.has(connection)) watchedCapabilities.add(`${row.id}:${row.capability}`);
     if (row.capability === "power") entry.hasPower = true;
@@ -129,6 +138,14 @@ export async function runIdleCheck(input: {
   for (const row of activityRows.results) {
     const entry = devices.get(row.device_id);
     if (entry) entry.lastActivity = Date.parse(row.at);
+  }
+  for (const resource of occupancy) {
+    const entry = devices.get(resource.resourceId);
+    if (!entry || !resource.occupants.length) continue;
+    entry.busyUntil = resource.occupants.some((occupant) => occupant.expiresAt === null)
+      ? Infinity
+      : Math.max(...resource.occupants.map((occupant) => occupant.expiresAt!.getTime()));
+    entry.lastActivity = Math.max(entry.lastActivity ?? 0, ...resource.occupants.map((occupant) => occupant.lastSeenAt.getTime()));
   }
 
   const lastEnd = visits?.last_end ? Date.parse(visits.last_end) : null;
@@ -154,7 +171,7 @@ export async function runIdleCheck(input: {
     wakeAt: plan.nextWake,
   };
   const act = async (id: string, action: "power.off" | "climate.off") => {
-    const target = await loadDevice(db, shopId, id);
+    const target = await loadResource(db, shopId, id);
     if (!target) return false;
     try {
       return (await bus.perform({ device: target, action, actor: { type: "system" } })).operation.status === "succeeded";

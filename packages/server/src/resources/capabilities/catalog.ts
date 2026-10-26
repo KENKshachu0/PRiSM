@@ -16,7 +16,7 @@
  */
 import { z } from "zod";
 
-export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong";
+export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong" | "bot";
 
 /** What a player or staff member asks a device to do. Names are the public action names. */
 export type ActionName =
@@ -37,8 +37,8 @@ export type ActionSpec = {
   countsAsPlay: boolean;
   /** Only staff may request this from the player QR page. */
   staffOnly?: boolean;
-  /** A player must be inside a billed entry to request this. */
-  requiresEntry?: boolean;
+  /** In a shop that bills, the resource's plan must be billing for the player. */
+  requiresBilling?: boolean;
   /** A device signal with this name marks the operation as confirmed. */
   confirmedBy?: string;
   /** Do not persist the action's result payload (e.g. a temporary door code). */
@@ -98,8 +98,8 @@ export type HinataConfig = z.infer<typeof hinataConfig>;
 const doorConfig = z.object({ lockId: z.number().int().positive() });
 export type DoorConfig = z.infer<typeof doorConfig>;
 
+/** A mahjong table's size is the resource's capacity, not part of this config. */
 const mahjongConfig = z.object({
-  capacity: z.number().int().min(2).max(8),
   pricingConfigIds: z.array(z.string().min(1)).max(20).default([]),
 });
 export type MahjongConfig = z.infer<typeof mahjongConfig>;
@@ -111,11 +111,11 @@ export const power: CapabilitySpec<HaEntityConfig> = {
   config: haEntityConfig,
   secrets: ["binding"],
   actions: {
-    "power.on": { countsAsPlay: true, requiresEntry: true },
-    "power.off": { countsAsPlay: true, requiresEntry: true, staffOnly: true },
+    "power.on": { countsAsPlay: true, requiresBilling: true },
+    "power.off": { countsAsPlay: true, requiresBilling: true, staffOnly: true },
     // "I am still here": an entered player keeps a running device from being
     // switched off as idle. It never switches anything on.
-    "power.keep": { countsAsPlay: true, requiresEntry: true },
+    "power.keep": { countsAsPlay: true, requiresBilling: true },
   },
   signals: {},
   // Power can be switched outside the platform. A watcher's events keep it
@@ -124,7 +124,7 @@ export const power: CapabilitySpec<HaEntityConfig> = {
   available: (_action, config, secrets) => haBound(config, secrets),
 };
 
-const climateAction: ActionSpec = { countsAsPlay: false, requiresEntry: true };
+const climateAction: ActionSpec = { countsAsPlay: false, requiresBilling: true };
 
 /**
  * A Home Assistant `climate.*` entity, such as an air conditioner. Kept apart
@@ -157,8 +157,8 @@ export const hinataIo: CapabilitySpec<HinataConfig> = {
   config: hinataConfig,
   secrets: ["url", "password"],
   actions: {
-    "aime.scan": { countsAsPlay: true, requiresEntry: true, confirmedBy: "card.consumed" },
-    coin: { countsAsPlay: true, requiresEntry: true },
+    "aime.scan": { countsAsPlay: true, requiresBilling: true, confirmedBy: "card.consumed" },
+    coin: { countsAsPlay: true, requiresBilling: true },
   },
   signals: {
     "card.state": { activity: true, store: true },
@@ -208,7 +208,48 @@ export const mahjong: CapabilitySpec<MahjongConfig> = {
   available: () => false,
 };
 
-export const capabilities = { power, climate, hinata_io: hinataIo, door, mahjong } as const;
+/**
+ * A shop bot (Koishi): what it offers players and staff, set by the shop on its
+ * resource and delivered to the bot, so its own configuration is only how to
+ * connect. Everything the platform already knows (staff, currency, tables,
+ * doors) is derived, never configured here.
+ */
+const botConfig = z.object({
+  /** The integration token the bot connects with. */
+  tokenId: z.string().min(1),
+  /** `readonly`: players may only bind, look up and redeem through the bot. */
+  playerCommands: z.enum(["all", "readonly"]).default("all"),
+  readOnlyNotice: z.string().max(200).default("请扫描店内二维码或碰 NFC，在网页或 App Clip 里入场、结账和操作设备。"),
+  /** Staff (by their bound platform identity) may act for other players. */
+  staffCommands: z.boolean().default(true),
+  /** Only staff may switch machines off through the bot. */
+  powerOffStaffOnly: z.boolean().default(false),
+  /** The door `开门` opens; a resource with the door capability. */
+  doorResourceId: z.string().min(1).nullable().default(null),
+  /** Staff receive checkout receipts privately. */
+  receiptsToStaff: z.boolean().default(false),
+  /** Channels told when the shop goes idle, and how many minutes ahead. */
+  idleChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  idleReminderMinutes: z.number().int().min(0).max(120).default(5),
+  /** Whether the bot may be given Home Assistant connections to watch. */
+  watchHomeAssistant: z.boolean().default(true),
+});
+export type BotConfig = z.infer<typeof botConfig>;
+
+export const bot: CapabilitySpec<BotConfig> = {
+  id: "bot",
+  legacyExecutor: "machine_ws",
+  legacyTargetKind: "facility",
+  config: botConfig,
+  secrets: [],
+  // A bot is a party that asks for actions, not a device that performs them.
+  actions: {},
+  signals: {},
+  state: {},
+  available: () => false,
+};
+
+export const capabilities = { power, climate, hinata_io: hinataIo, door, mahjong, bot } as const;
 
 export function capabilitySpec(id: string): CapabilitySpec<unknown> | null {
   return (capabilities as Record<string, CapabilitySpec<unknown>>)[id] ?? null;

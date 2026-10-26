@@ -18,11 +18,13 @@ import {
   type DeviceEventActor,
   type DeviceEventRepository,
   type PlayerIdentityRepository,
+  type Session,
   type SessionRepository,
 } from "@prism/core";
-import type { Env } from "../bindings.js";
-import { actionSpec, capabilityForAction, isActionName, type ActionName } from "./capabilities.js";
-import { can, loadDevices, matchesRef, type Device } from "./device.js";
+import type { Env } from "../../bindings.js";
+import { actionSpec, capabilityForAction, isActionName, type ActionName } from "./catalog.js";
+import { can, loadResources, matchesRef, type Resource } from "../resource.js";
+import { createCardStore } from "../cards.js";
 import { createRuntimeBus } from "./runtime.js";
 
 export type DeviceActionDependencies = {
@@ -30,6 +32,11 @@ export type DeviceActionDependencies = {
   env: Env;
   shopId: string;
   sessions: SessionRepository;
+  /**
+   * In a shop that bills, the running session of a resource's plan for a
+   * player, or null. A player may only use a resource whose plan is running.
+   */
+  resourcePlanSession?(input: { resourceId: string; playerId: string }): Promise<Session | null>;
   deviceEvents: DeviceEventRepository;
   playerIdentities: PlayerIdentityRepository;
   coinCooldownMs: () => Promise<number>;
@@ -44,14 +51,14 @@ function actorOf(input: RequestDeviceActionInput): DeviceEventActor {
     : { type: "staff", staffId: input.actor.staffId };
 }
 
-type Target = { device: Device; action: ActionName };
+type Target = { device: Resource; action: ActionName };
 
 /**
  * Find the devices a reference names. `all` is only valid for power, and
  * switches air conditioners along with machine power: turning a whole shop
  * off should leave nothing running.
  */
-function resolveTargets(devices: Device[], input: RequestDeviceActionInput, action: ActionName): Target[] {
+function resolveTargets(devices: Resource[], input: RequestDeviceActionInput, action: ActionName): Target[] {
   const target = input.target as { kind: string; ref?: string; id?: string };
   if (target.ref?.trim().toLowerCase() === "all") {
     if (action !== "power.on" && action !== "power.off") {
@@ -78,22 +85,20 @@ function resolveTargets(devices: Device[], input: RequestDeviceActionInput, acti
   return [{ device, action }];
 }
 
-async function scanAccessCode(
-  identities: PlayerIdentityRepository,
-  playerId: string,
-  payload: Record<string, unknown> | undefined,
-): Promise<string> {
-  const provider =
-    typeof payload?.provider === "string" && payload.provider.trim() ? payload.provider.trim().toLowerCase() : "aime";
-  const requested = typeof payload?.subject === "string" ? payload.subject.trim() : "";
-  const identity = (await identities.listByPlayerId(playerId)).find(
-    (candidate) =>
-      candidate.provider.toLowerCase() === provider && (!requested || candidate.subject === requested),
-  );
-  if (!identity) {
+/**
+ * The card to swipe for a player: the one named when it is theirs at this
+ * shop, otherwise the one they used last, decrypted for the machine only.
+ */
+async function scanAccessCode(deps: DeviceActionDependencies, playerId: string, payload: Record<string, unknown> | undefined): Promise<string> {
+  const cards = createCardStore(deps.db, deps.shopId, deps.env.URL_ENCRYPTION_KEY);
+  const named = typeof payload?.subject === "string" ? payload.subject.trim() : "";
+  const accessCode = named
+    ? (await cards.playerOf(named)) === playerId ? named : null
+    : await cards.latestOf(playerId);
+  if (!accessCode) {
     throw new PrismDomainError("Scan identity is not bound to the player.", "SCAN_IDENTITY_NOT_BOUND_TO_PLAYER");
   }
-  return identity.subject;
+  return accessCode;
 }
 
 export function createDeviceActionService(deps: DeviceActionDependencies): DeviceActionService {
@@ -107,14 +112,16 @@ export function createDeviceActionService(deps: DeviceActionDependencies): Devic
       const actor = actorOf(input);
       const playerId = actor.type === "player" ? actor.playerId : null;
 
-      const devices = await loadDevices(deps.db, deps.shopId, deps.env.URL_ENCRYPTION_KEY);
+      const devices = await loadResources(deps.db, deps.shopId, deps.env.URL_ENCRYPTION_KEY);
       const targets = resolveTargets(devices, input, action);
 
-      if (playerId && spec.requiresEntry) {
-        const active = await deps.sessions.findActiveByPlayerId(playerId);
-        if (!active.some((session) => session.status === "active")) {
+      if (playerId && spec.requiresBilling) {
+        const running = deps.resourcePlanSession
+          ? (await Promise.all(targets.map((target) => deps.resourcePlanSession!({ resourceId: target.device.id, playerId })))).every(Boolean)
+          : (await deps.sessions.findActiveByPlayerId(playerId)).some((session) => session.status === "active");
+        if (!running) {
           throw new PrismDomainError(
-            "Player device command requires an active session.",
+            "Player device command requires the device's pricing plan to be running.",
             "DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION",
           );
         }
@@ -136,10 +143,10 @@ export function createDeviceActionService(deps: DeviceActionDependencies): Devic
         }
       }
 
-      // The card number is read from the player's bound identity at the last
-      // moment and handed to the runner only; it is never stored.
+      // The player's card is decrypted at the last moment and handed to the
+      // runner only; it is never stored.
       const accessCode = action === "aime.scan" && playerId
-        ? await scanAccessCode(deps.playerIdentities, playerId, input.payload)
+        ? await scanAccessCode(deps, playerId, input.payload)
         : action === "aime.scan" && typeof input.payload?.subject === "string"
           ? input.payload.subject
           : null;

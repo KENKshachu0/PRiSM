@@ -5,7 +5,7 @@ import type { D1BoundStatementLike, D1DatabaseLike, SqlValue } from "@prism/adap
 import type { AppBindings, Env } from "../src/bindings.js";
 import { merchantHaRouter } from "../src/routes/platform/merchant-ha.js";
 import { errorResponse } from "../src/http-errors.js";
-import { DEFAULT_WATCHERS, MAX_WATCHERS, readWatcherLimit } from "../src/devices/ha-watchers.js";
+import { DEFAULT_WATCHERS, MAX_WATCHERS, readWatcherLimit } from "../src/resources/capabilities/ha-watchers.js";
 
 class SqliteD1 implements D1DatabaseLike {
   constructor(private readonly sqlite: Database) {}
