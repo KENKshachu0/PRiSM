@@ -81,9 +81,7 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
   }
 
   return (
-    <section className="grid gap-4 rounded-xl border border-ink/15 bg-panel p-4 sm:p-6" aria-label={t("计费模拟器")}>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
-      <div className="grid gap-4">
+    <section className="grid gap-4" aria-label={t("计费模拟器")}>
       <div className="grid gap-1">
         <h3 className="text-lg font-semibold">{t("计费模拟器")}</h3>
         <p className="text-sm text-ink/60">
@@ -96,6 +94,8 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
           {t("自动参与计算的跨方案封顶")}：{caps.map(cap => cap.name).join("、")}
         </p>}
       </div>
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="grid gap-4 rounded-xl border border-ink/10 bg-panel p-4">
       <form className="grid gap-4" onSubmit={simulate}>
         {sessions.map((session, index) => (
           <fieldset key={session.id} className="grid gap-3 rounded-xl border border-ink/10 p-4">
@@ -140,7 +140,7 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
         {error && <p role="alert" className="text-sm text-coral">{error}</p>}
       </form>
       </div>
-      <div className="grid min-w-0 gap-4 lg:sticky lg:top-0" aria-live="polite">
+      <section className="grid min-w-0 gap-4 rounded-xl border border-ink/10 bg-panel p-4" aria-live="polite" aria-label={t("模拟账单时间轴")}>
       {!result && (
         <p className="rounded-xl border border-dashed border-ink/20 px-4 py-10 text-center text-sm text-ink/50">
           {t("填写左侧的 Session，生成模拟账单。")}
@@ -155,7 +155,7 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
         <BillTotal preview={{ settlementPreview: { total: result.total }, timeline: result.timeline, chargeItems: [], adjustments: [] }} />
         <BillTimeline preview={{ settlementPreview: { total: result.total }, timeline: result.timeline, chargeItems: [], adjustments: [] }} timeZone={zone} />
       </div>}
-      </div>
+      </section>
       </div>
     </section>
   );
