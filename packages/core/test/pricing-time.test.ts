@@ -142,9 +142,11 @@ describe("time pricing explanations", () => {
         currentAmount: moneyFixture(100),
         priceCap: moneyFixture(79),
         amountApplied: moneyFixture(79),
+        // s1 came first and is charged in full; the cap holds back the later s2.
+        heldBack: moneyFixture(21),
         contributions: [
           { sessionId: "s1", pricingConfigId: "pricing-base", amount: moneyFixture(50) },
-          { sessionId: "s2", pricingConfigId: "pricing-base", amount: moneyFixture(50) },
+          { sessionId: "s2", pricingConfigId: "pricing-base", amount: moneyFixture(29) },
         ],
       }),
     ]);

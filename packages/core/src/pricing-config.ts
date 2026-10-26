@@ -6,6 +6,17 @@ import type { PricingProvider } from "./settlement";
 
 export type PricingConfigKind = "time.priority" | "time.cap" | "charge.fixed";
 
+/**
+ * How this plan runs alongside others: which plans must also be active, and
+ * which may never be active at the same time. Stored with the immutable pricing
+ * version; only `time.priority` plans may carry references (see
+ * `pricing-relations.ts`).
+ */
+export type PricingConfigRelations = {
+  requires: string[];
+  conflicts: string[];
+};
+
 export type TimePriorityPricingConfig = {
   id: string;
   kind: "time.priority";
@@ -13,6 +24,7 @@ export type TimePriorityPricingConfig = {
   enabled: boolean;
   status?: PricingConfigStatus;
   provider: PriorityTimePricingProviderConfig;
+  relations?: PricingConfigRelations;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -155,12 +167,6 @@ export function validatePricingConfig(config: PricingConfig): void {
       }
       return;
     case "time.cap":
-      if (config.provider.includedPricingConfigIds.length === 0) {
-        throw new PrismDomainError(
-          "Enabled global cap pricing config requires at least one included pricing config.",
-          "TIME_CAP_REQUIRES_INCLUDED_PRICING_CONFIG",
-        );
-      }
       if (!hasActiveTimeRule(config.provider.rules)) {
         throw new PrismDomainError(
           "Enabled global cap pricing config requires at least one active cap rule.",

@@ -138,6 +138,9 @@ export type PriorityTimePricingTimelineSegment = {
   endLabel: string;
   startedAt?: string;
   endedAt?: string;
+  /** The rule's window this piece belongs to; a window can run past either end of the day. */
+  windowStartedAt?: string;
+  windowEndedAt?: string;
   pricing?: UnitPricingConfig;
   priceCap?: number;
   isClosed?: true;
@@ -176,8 +179,17 @@ export type TimeCapPricingWindow = {
   windowEndedAt: Date;
   priceCap: Cents;
   paidBefore: Cents;
+  /** What the charges in the window come to before any cap across plans. */
   currentAmount: Cents;
+  /** What they come to after every cap across plans: what the window counts. */
   amountApplied: Cents;
+  /**
+   * What this cap takes off the bill's quotes: its share of what all caps across
+   * plans took off, by what it stopped when it was full. A unit is held back once,
+   * by the cap whose allowance ran out first.
+   */
+  heldBack?: Cents;
+  /** Each session's plan in the window: what it is charged there after every cap. */
   contributions: Array<{ sessionId: string; pricingConfigId: string; amount: Cents }>;
 };
 
@@ -288,9 +300,9 @@ export function createPriorityTimePricingProvider(config: PriorityTimePricingPro
             },
             ruleTimeRange: rule.timeRange ?? null,
             intervalCap: rule.pricing.priceCap,
-            intervalCapReached: compareCents(
+            intervalCapReached: periodCapOf(rule.pricing.priceCap) !== null && compareCents(
               addCents(paidBefore, amount),
-              centsOf(rule.pricing.priceCap),
+              periodCapOf(rule.pricing.priceCap)!,
             ) >= 0,
           },
         });
@@ -344,25 +356,7 @@ export function applyTimeCapPricing(input: {
   config: TimeCapPricingProviderConfig;
   chargeItems: readonly ChargeItem[];
 }): SettlementAdjustment[] {
-  return explainTimeCapPricing(input)
-    .map((window) => ({
-      window,
-      adjustmentAmount: subCents(window.amountApplied, window.currentAmount),
-    }))
-    .filter(({ window, adjustmentAmount }) => adjustmentAmount !== 0 || isPositiveCents(window.amountApplied))
-    .map(({ window, adjustmentAmount }) => ({
-      id: `time-cap:${window.capConfigId}:${window.capRuleId}:${window.windowStartedAt.toISOString()}`,
-      source: `time.cap:${window.capConfigId}:${window.capRuleId}`,
-      label: window.ruleLabel,
-      amount: adjustmentAmount,
-      pricingCapHistory: {
-        capConfigId: window.capConfigId,
-        capRuleId: window.capRuleId,
-        capAnchorAt: window.windowStartedAt,
-        includedPricingConfigIds: [...input.config.includedPricingConfigIds],
-        amount: maxCents(ZERO_CENTS, window.amountApplied),
-      },
-    }));
+  return settleTimeCaps({ configs: [input.config], chargeItems: input.chargeItems }).adjustments;
 }
 
 export function explainTimeCapPricing(input: {
@@ -370,97 +364,312 @@ export function explainTimeCapPricing(input: {
   chargeItems: readonly ChargeItem[];
   paidHistory?: Record<string, Cents>;
 }): TimeCapPricingWindow[] {
-  const rules = activeRules(input.config.rules).sort((a, b) => b.priority - a.priority);
-  const timeZone = input.config.timeZone ?? "UTC";
-  const capConfigId = input.config.pricingConfigId ?? input.config.id;
-  const included = new Set(input.config.includedPricingConfigIds);
-  const buckets = new Map<string, {
-    rule: TimeCapPricingRule;
-    capAnchorAt: Date;
-    amount: Cents;
-    contributions: Map<string, { sessionId: string; pricingConfigId: string; amount: Cents }>;
-  }>();
+  return settleTimeCaps({ configs: [input.config], chargeItems: input.chargeItems, paidHistory: input.paidHistory }).windows;
+}
 
-  for (const item of input.chargeItems) {
-    const pricingConfigId = item.pricingHistory?.pricingConfigId;
-    if (!pricingConfigId || !included.has(pricingConfigId) || !item.period) continue;
-    const startedAt = new Date(item.period.startedAt);
-    const endedAt = new Date(item.period.endedAt);
-    const totalMs = endedAt.getTime() - startedAt.getTime();
-    if (totalMs <= 0) continue;
+/**
+ * One unit of a charge as the caps see it: when it began, its own price
+ * (`nominal`), what its charge's quote put on it (`price`, with the period cap
+ * counted on list prices), what it is charged after every cap, and the cap that
+ * stopped it from being charged in full: `"period"` for its rule's period cap,
+ * else the key of the cap window across plans.
+ */
+export type TimeCapUnit = { item: ChargeItem; index: number; at: Date; nominal: Cents; price: Cents; charged: Cents; heldBy: string | null };
 
-    const segments: Array<{
-      rule: TimeCapPricingRule;
-      capAnchorAt: Date;
-      key: string;
-      weight: number;
-    }> = [];
-    let cursor = startedAt;
-    while (cursor < endedAt) {
-      const rule = findActiveRule(cursor, rules, timeZone);
-      if (!rule) {
-        cursor = findNextAnyRuleActivationAfter(cursor, endedAt, rules, timeZone);
-        continue;
+export type TimeCapSettlement = {
+  windows: TimeCapPricingWindow[];
+  /** One per window that held something back or counted something, for settlement and history. */
+  adjustments: SettlementAdjustment[];
+  units: TimeCapUnit[];
+};
+
+type CapWindowSpec = Omit<TimeCapPricingWindow, "currentAmount" | "amountApplied" | "heldBack" | "contributions"> & {
+  includedPricingConfigIds: readonly string[];
+};
+type KeyedUnit = { item: ChargeItem; index: number; at: Date; nominal: Cents; price: Cents; keys: string[] };
+
+const capPlanOf = (item: ChargeItem) => item.pricingHistory?.pricingConfigId;
+
+/**
+ * Every cap over the same charges, together: each rule's period cap and every
+ * cap across plans. The charges are cut into units (a charge without units into
+ * pieces at the windows' edges), and the units are charged in the order they
+ * began: each up to the smallest of its own price, what is left of its period
+ * cap, and what is left in the cap windows it falls in. Every cap counts what
+ * was actually charged, so a unit a cap across plans let off does not use up the
+ * period cap. Once a cap is full, the units after it are free. A charge below
+ * zero is never held back; it adds to the allowance of the windows it is in.
+ *
+ * With only one cap of either kind this charges what that cap always has.
+ */
+export function settleTimeCaps(input: {
+  configs: readonly TimeCapPricingProviderConfig[];
+  chargeItems: readonly ChargeItem[];
+  /** Overrides each config's own history. */
+  paidHistory?: Record<string, Cents>;
+}): TimeCapSettlement {
+  const specs = new Map<string, CapWindowSpec>();
+  // Per item, per config, the windows it overlaps in time.
+  const segments = new Map<ChargeItem, Array<{ key: string; from: number; to: number }[]>>();
+  input.configs.forEach((config, configIndex) => {
+    const rules = activeRules(config.rules).sort((a, b) => b.priority - a.priority);
+    const timeZone = config.timeZone ?? "UTC";
+    const capConfigId = config.pricingConfigId ?? config.id;
+    const included = new Set(config.includedPricingConfigIds);
+    const history = input.paidHistory ?? config.paidHistory ?? {};
+    for (const item of input.chargeItems) {
+      const plan = capPlanOf(item);
+      const perConfig = segments.get(item) ?? input.configs.map(() => []);
+      segments.set(item, perConfig);
+      if (!plan || !included.has(plan) || !item.period) continue;
+      let cursor = new Date(item.period.startedAt);
+      const endedAt = new Date(item.period.endedAt);
+      while (cursor < endedAt) {
+        const rule = findActiveRule(cursor, rules, timeZone);
+        if (!rule) {
+          cursor = findNextAnyRuleActivationAfter(cursor, endedAt, rules, timeZone);
+          continue;
+        }
+        const nextBoundary = findNextPriorityBoundary(cursor, endedAt, rule, rules, timeZone);
+        const capAnchorAt = getRuleAnchor(cursor, rule, timeZone);
+        const capRuleId = rule.historyRuleId ?? rule.id;
+        const key = buildTimeCapHistoryKey(capConfigId, capRuleId, capAnchorAt);
+        if (!specs.has(key)) {
+          specs.set(key, {
+            key, capName: config.name, capConfigId, capRuleId, ruleLabel: rule.label,
+            windowStartedAt: capAnchorAt, windowEndedAt: getRuleNaturalEnd(capAnchorAt, rule, timeZone),
+            priceCap: centsOf(rule.priceCap), paidBefore: history[key] ?? ZERO_CENTS,
+            includedPricingConfigIds: config.includedPricingConfigIds,
+          });
+        }
+        perConfig[configIndex]!.push({ key, from: cursor.getTime(), to: nextBoundary.getTime() });
+        cursor = nextBoundary;
       }
-      const nextBoundary = findNextPriorityBoundary(cursor, endedAt, rule, rules, timeZone);
-      const overlapMs = nextBoundary.getTime() - cursor.getTime();
-      const capAnchorAt = getRuleAnchor(cursor, rule, timeZone);
-      const key = buildTimeCapHistoryKey(capConfigId, rule.historyRuleId ?? rule.id, capAnchorAt);
-      segments.push({ rule, capAnchorAt, key, weight: overlapMs });
-      cursor = nextBoundary;
     }
+  });
+  const units = input.chargeItems.flatMap((item) => {
+    const perConfig = segments.get(item) ?? [];
+    const cuts = perConfig.flat().flatMap((segment) => [segment.from, segment.to]);
+    return capUnitsOf(item, cuts).map(({ at, nominal, price }, index) => ({
+      item, index, at, nominal, price,
+      keys: perConfig.flatMap((list) => list.filter((segment) => at.getTime() >= segment.from && at.getTime() < segment.to).map((segment) => segment.key)),
+    }));
+  });
+  return settleUnits([...specs.values()], units);
+}
 
-    const weights = segments.map((segment) => segment.weight);
-    // Retain the portion outside cap windows; it must not be discounted.
-    weights.push(totalMs - weights.reduce((sum, weight) => sum + weight, 0));
-    const proratedAmounts = allocate(item.amount, weights);
-    segments.forEach((segment, index) => {
-      const proratedAmount = proratedAmounts[index] ?? ZERO_CENTS;
-      const { rule, capAnchorAt, key } = segment;
-      const bucket = buckets.get(key) ?? {
-        rule,
-        capAnchorAt,
-        amount: ZERO_CENTS,
-        contributions: new Map(),
-      };
-      bucket.amount = addCents(bucket.amount, proratedAmount);
-      if (item.sessionId) {
-        const contributionKey = JSON.stringify([item.sessionId, pricingConfigId]);
-        const contribution = bucket.contributions.get(contributionKey) ?? {
-          sessionId: item.sessionId,
-          pricingConfigId,
-          amount: ZERO_CENTS,
-        };
-        contribution.amount = addCents(contribution.amount, proratedAmount);
-        bucket.contributions.set(contributionKey, contribution);
+/**
+ * The same settlement replayed over windows already settled (a bill, a live
+ * projection): a unit falls in a window when its session's plan is in the
+ * window and it began inside it.
+ */
+export function settleTimeCapWindows(
+  windows: readonly TimeCapPricingWindow[],
+  chargeItems: readonly ChargeItem[],
+): TimeCapSettlement {
+  const specs: CapWindowSpec[] = windows.map((window) => ({
+    key: window.key, capName: window.capName, capConfigId: window.capConfigId, capRuleId: window.capRuleId,
+    ruleLabel: window.ruleLabel, windowStartedAt: window.windowStartedAt, windowEndedAt: window.windowEndedAt,
+    priceCap: window.priceCap, paidBefore: window.paidBefore,
+    includedPricingConfigIds: [...new Set(window.contributions.map((contribution) => contribution.pricingConfigId))],
+  }));
+  const holds = (window: TimeCapPricingWindow, item: ChargeItem) =>
+    window.contributions.some((c) => c.sessionId === item.sessionId && c.pricingConfigId === capPlanOf(item));
+  const units = chargeItems.flatMap((item) => {
+    const own = windows.filter((window) => holds(window, item));
+    const cuts = own.flatMap((window) => [window.windowStartedAt.getTime(), window.windowEndedAt.getTime()]);
+    return capUnitsOf(item, cuts).map(({ at, nominal, price }, index) => ({
+      item, index, at, nominal, price,
+      keys: own.filter((window) => at >= window.windowStartedAt && at < window.windowEndedAt).map((window) => window.key),
+    }));
+  });
+  return settleUnits(specs, units);
+}
+
+/**
+ * A charge as units: its time units at their own price, with what its quote put
+ * on each (in order, until the quote's amount, which has the period cap in it);
+ * a charge without units is cut by time at the given edges instead.
+ */
+function capUnitsOf(item: ChargeItem, cuts: readonly number[]): Array<{ at: Date; nominal: Cents; price: Cents }> {
+  if (!item.period) return [];
+  const from = new Date(item.period.startedAt).getTime();
+  const to = new Date(item.period.endedAt).getTime();
+  if (to <= from) return [];
+  const starts = chargeUnitStarts(item);
+  if (starts?.length) {
+    const nominal = centsOf(item.pricingExplanation!.pricing!.unitPrice);
+    if (!isPositiveCents(nominal) || compareCents(mulDivRound(nominal, starts.length, 1, "trunc"), item.amount) < 0) {
+      const prices = allocate(item.amount, starts.map(() => 1));
+      return starts.map((at, i) => ({ at, nominal: prices[i]!, price: prices[i]! }));
+    }
+    let left = item.amount;
+    return starts.map((at) => {
+      const price = maxCents(ZERO_CENTS, minCents(nominal, left));
+      left = subCents(left, price);
+      return { at, nominal, price };
+    });
+  }
+  const edges = [from, ...[...new Set(cuts.filter((at) => at > from && at < to))].sort((a, b) => a - b), to];
+  const prices = allocate(item.amount, edges.slice(0, -1).map((edge, i) => edges[i + 1]! - edge));
+  return edges.slice(0, -1).map((edge, i) => ({ at: new Date(edge), nominal: prices[i]!, price: prices[i]! }));
+}
+
+/**
+ * A charge's period cap: its rule window, as its history is keyed, within its
+ * session, and what is left of the cap in that window before this bill. Null
+ * when the period is uncapped.
+ */
+function periodCapOfItem(item: ChargeItem): { key: string; allowance: Cents } | null {
+  const explanation = item.pricingExplanation;
+  const history = item.pricingHistory;
+  if (!explanation?.pricing || !history || !(explanation.intervalCap > 0)) return null;
+  return {
+    key: JSON.stringify([item.sessionId ?? "", history.pricingConfigId, history.providerId, history.ruleId, history.ruleAnchorAt.toISOString()]),
+    allowance: maxCents(ZERO_CENTS, subCents(centsOf(explanation.intervalCap), centsOf(explanation.paidBefore ?? 0))),
+  };
+}
+
+function settleUnits(specs: readonly CapWindowSpec[], units: readonly KeyedUnit[]): TimeCapSettlement {
+  const order = new Map(specs.map((spec, index) => [spec.key, index]));
+  const state = new Map(specs.map((spec) => [spec.key, {
+    // A window already over its cap takes nothing more, but still nets out a discount.
+    allowance: maxCents(ZERO_CENTS, subCents(spec.priceCap, spec.paidBefore)),
+    current: ZERO_CENTS, applied: ZERO_CENTS, held: ZERO_CENTS,
+    contributions: new Map<string, { sessionId: string; pricingConfigId: string; amount: Cents }>(),
+  }]));
+  for (const unit of units) {
+    if (compareCents(unit.price, ZERO_CENTS) >= 0) continue;
+    for (const key of unit.keys) state.get(key)!.allowance = subCents(state.get(key)!.allowance, unit.price);
+  }
+  // Each period cap, from the earliest charge in its window: later charges' quotes already counted the earlier ones.
+  const periods = new Map<string, Cents>();
+  for (const unit of [...units].sort((a, b) => (a.item.period?.startedAt.getTime() ?? 0) - (b.item.period?.startedAt.getTime() ?? 0))) {
+    const period = periodCapOfItem(unit.item);
+    if (period && !periods.has(period.key)) periods.set(period.key, period.allowance);
+  }
+  // In the order the units began; units beginning together in a fixed order, so the input order never matters.
+  const ordered = [...units].sort((a, b) =>
+    a.at.getTime() - b.at.getTime()
+    || (a.item.sessionId ?? "").localeCompare(b.item.sessionId ?? "")
+    || (capPlanOf(a.item) ?? "").localeCompare(capPlanOf(b.item) ?? "")
+    || (a.item.period?.startedAt.getTime() ?? 0) - (b.item.period?.startedAt.getTime() ?? 0)
+    || a.index - b.index);
+  const settled = new Map<KeyedUnit, { charged: Cents; heldBy: string | null }>();
+  for (const unit of ordered) {
+    const keys = [...unit.keys].sort((a, b) => order.get(a)! - order.get(b)!);
+    const period = isPositiveCents(unit.nominal) ? periodCapOfItem(unit.item) : null;
+    const periodLeft = period ? periods.get(period.key)! : null;
+    // What its rule lets it charge, then what the windows it is in still allow.
+    const limit = periodLeft == null ? unit.nominal : minCents(unit.nominal, periodLeft);
+    let amount = isPositiveCents(unit.nominal) ? limit : unit.price;
+    let binding: string | null = null;
+    if (isPositiveCents(unit.nominal)) {
+      for (const key of keys) {
+        const allowance = state.get(key)!.allowance;
+        if (compareCents(allowance, amount) < 0) {
+          amount = maxCents(ZERO_CENTS, allowance);
+          binding = key;
+        }
       }
-      buckets.set(key, bucket);
-    });
+    }
+    const heldBy = isPositiveCents(unit.nominal) && compareCents(amount, unit.nominal) < 0 ? binding ?? "period" : null;
+    settled.set(unit, { charged: amount, heldBy });
+    if (period) periods.set(period.key, subCents(periodLeft!, amount));
+    if (binding) state.get(binding)!.held = addCents(state.get(binding)!.held, subCents(limit, amount));
+    for (const key of keys) {
+      const window = state.get(key)!;
+      window.current = addCents(window.current, unit.price);
+      window.applied = addCents(window.applied, amount);
+      if (isPositiveCents(unit.nominal)) window.allowance = subCents(window.allowance, amount);
+      if (!unit.item.sessionId) continue;
+      const plan = capPlanOf(unit.item)!;
+      const contributionKey = JSON.stringify([unit.item.sessionId, plan]);
+      const contribution = window.contributions.get(contributionKey)
+        ?? { sessionId: unit.item.sessionId, pricingConfigId: plan, amount: ZERO_CENTS };
+      contribution.amount = addCents(contribution.amount, amount);
+      window.contributions.set(contributionKey, contribution);
+    }
   }
-
-  const windows: TimeCapPricingWindow[] = [];
-  const currentPaidHistory = { ...(input.paidHistory ?? input.config.paidHistory) };
-  for (const [key, bucket] of buckets) {
-    const paidBefore = currentPaidHistory[key] ?? ZERO_CENTS;
-    const target = calculateCapWindowTarget(bucket.amount, centsOf(bucket.rule.priceCap), paidBefore);
-    currentPaidHistory[key] = addCents(paidBefore, maxCents(ZERO_CENTS, target));
-    windows.push({
-      key,
-      capName: input.config.name,
-      capConfigId,
-      capRuleId: bucket.rule.historyRuleId ?? bucket.rule.id,
-      ruleLabel: bucket.rule.label,
-      windowStartedAt: bucket.capAnchorAt,
-      windowEndedAt: getRuleNaturalEnd(bucket.capAnchorAt, bucket.rule, timeZone),
-      priceCap: centsOf(bucket.rule.priceCap),
-      paidBefore,
-      currentAmount: bucket.amount,
-      amountApplied: target,
-      contributions: [...bucket.contributions.values()],
-    });
+  // What the caps across plans take off the quotes, split over the windows that bound units. A
+  // unit one of them let off leaves its period cap room for a later unit, so this can be less
+  // than what they stopped at the moment they were full.
+  let price = ZERO_CENTS, charged = ZERO_CENTS;
+  for (const unit of units) {
+    price = addCents(price, unit.price);
+    charged = addCents(charged, settled.get(unit)!.charged);
   }
+  const takenOff = subCents(price, charged);
+  const weights = specs.map((spec) => state.get(spec.key)!.held as number);
+  const shares = isPositiveCents(takenOff) && weights.some((weight) => weight > 0)
+    ? allocate(takenOff, weights)
+    : specs.map(() => ZERO_CENTS);
+  const windows: TimeCapPricingWindow[] = specs.map(({ includedPricingConfigIds: _included, ...spec }, index) => {
+    const window = state.get(spec.key)!;
+    return {
+      ...spec,
+      currentAmount: window.current,
+      amountApplied: window.applied,
+      heldBack: shares[index]!,
+      contributions: [...window.contributions.values()]
+        .sort((a, b) => a.sessionId.localeCompare(b.sessionId) || a.pricingConfigId.localeCompare(b.pricingConfigId)),
+    };
+  });
+  const adjustments = windows.flatMap((window, index) => {
+    const amount = subCents(ZERO_CENTS, window.heldBack ?? ZERO_CENTS);
+    if (amount === 0 && !isPositiveCents(window.amountApplied)) return [];
+    return [{
+      id: `time-cap:${window.capConfigId}:${window.capRuleId}:${window.windowStartedAt.toISOString()}`,
+      source: `time.cap:${window.capConfigId}:${window.capRuleId}`,
+      label: window.ruleLabel,
+      amount,
+      pricingCapHistory: {
+        capConfigId: window.capConfigId,
+        capRuleId: window.capRuleId,
+        capAnchorAt: window.windowStartedAt,
+        includedPricingConfigIds: [...specs[index]!.includedPricingConfigIds],
+        amount: maxCents(ZERO_CENTS, window.amountApplied),
+      },
+    }];
+  });
+  return {
+    windows,
+    adjustments,
+    units: ordered.map((unit) => ({ item: unit.item, index: unit.index, at: unit.at, nominal: unit.nominal, price: unit.price, ...settled.get(unit)! })),
+  };
+}
 
-  return windows;
+/**
+ * When each charged unit of a time charge starts: one every unit from the
+ * start of its period, as many as it charged. Null for a charge not made of units.
+ */
+export function chargeUnitStarts(item: Pick<ChargeItem, "period" | "pricingExplanation">): Date[] | null {
+  const explanation = item.pricingExplanation;
+  if (!explanation?.pricing || explanation.units == null || !item.period) return null;
+  const start = new Date(item.period.startedAt).getTime();
+  const end = new Date(item.period.endedAt).getTime();
+  const step = explanation.pricing.unitMinutes * 60_000;
+  const starts: Date[] = [];
+  for (let unit = 0; unit < explanation.units; unit += 1) {
+    const at = start + unit * step;
+    // A charge cut short (a live projection) has only the units begun before its end.
+    if (unit > 0 && at >= end) break;
+    starts.push(new Date(at));
+  }
+  return starts;
+}
+
+/**
+ * When each unit of `chargeUnitStarts` is charged, as quote() counts units: once
+ * it has run as long as the grace (a whole minute at least, the unit at most).
+ * With the grace waived (the device was used) the first unit is charged at once.
+ */
+export function chargeUnitChargedAt(item: Pick<ChargeItem, "period" | "pricingExplanation">, graceWaived: boolean): Date[] | null {
+  const starts = chargeUnitStarts(item);
+  const pricing = item.pricingExplanation?.pricing;
+  if (!starts || !pricing) return null;
+  const after = Math.min(Math.max(pricing.roundGraceMinutes, 1), pricing.unitMinutes) * 60_000;
+  return starts.map((at, index) => new Date(at.getTime() + (graceWaived && index === 0 ? 0 : after)));
 }
 
 export function collectPriorityTimePricingHistoryLookupKeys(input: {
@@ -499,6 +708,53 @@ export function collectPriorityTimePricingHistoryLookupKeys(input: {
   }
 
   return [...keys.values()];
+}
+
+/** The capped period a plan is in at `at`: its rule, its cap and the key spending in it is recorded under. Null outside every period. */
+export function priorityTimePricingWindowAt(input: {
+  config: PriorityTimePricingProviderConfig;
+  at: Date;
+}): { lookup: PriorityTimePricingHistoryLookupKey; ruleId: string; ruleLabel: string; priceCap: number; endsAt: Date } | null {
+  const rules = activeRules(input.config.rules).sort((a, b) => b.priority - a.priority);
+  const timeZone = input.config.timeZone ?? "UTC";
+  const rule = findActiveRule(input.at, rules, timeZone);
+  if (!rule) return null;
+  const pricingConfigId = input.config.pricingConfigId ?? input.config.id;
+  const ruleAnchorAt = getRuleAnchor(input.at, rule, timeZone);
+  return {
+    lookup: {
+      pricingConfigId,
+      providerId: input.config.id,
+      ruleId: rule.historyRuleId ?? rule.id,
+      ruleAnchorAt,
+      key: buildRuleHistoryKey(pricingConfigId, input.config.id, input.at, rule, timeZone),
+    },
+    ruleId: rule.id,
+    ruleLabel: rule.label,
+    priceCap: rule.pricing.priceCap,
+    endsAt: getRuleNaturalEnd(input.at, rule, timeZone),
+  };
+}
+
+/** The window of a cross-plan cap in force at `at`, with the key its spending is recorded under. Null outside every window. */
+export function timeCapPricingWindowAt(input: {
+  config: TimeCapPricingProviderConfig;
+  at: Date;
+}): { lookup: TimeCapPricingHistoryLookupKey; ruleId: string; ruleLabel: string; priceCap: number; endsAt: Date } | null {
+  const rules = activeRules(input.config.rules).sort((a, b) => b.priority - a.priority);
+  const timeZone = input.config.timeZone ?? "UTC";
+  const rule = findActiveRule(input.at, rules, timeZone);
+  if (!rule) return null;
+  const capConfigId = input.config.pricingConfigId ?? input.config.id;
+  const capAnchorAt = getRuleAnchor(input.at, rule, timeZone);
+  const capRuleId = rule.historyRuleId ?? rule.id;
+  return {
+    lookup: { capConfigId, capRuleId, capAnchorAt, key: buildTimeCapHistoryKey(capConfigId, capRuleId, capAnchorAt) },
+    ruleId: rule.id,
+    ruleLabel: rule.label,
+    priceCap: rule.priceCap,
+    endsAt: getRuleNaturalEnd(input.at, rule, timeZone),
+  };
 }
 
 export function canStartPriorityTimePricingSession(input: {
@@ -575,6 +831,8 @@ function buildTimeRuleTimeline<T extends TimeRuleLike>(input: {
         endLabel: formatMinuteLabel(endMinute),
         startedAt: cursor.toISOString(),
         endedAt: nextBoundary.toISOString(),
+        windowStartedAt: getRuleAnchor(cursor, rule, timeZone).toISOString(),
+        windowEndedAt: getRuleNaturalEnd(cursor, rule, timeZone).toISOString(),
         ...input.segmentValue(rule),
       });
     } else {
@@ -607,10 +865,9 @@ function activeRules<T extends TimeRuleLike>(rules: readonly T[]): T[] {
   return rules.filter((rule) => (rule.status ?? "active") === "active");
 }
 
-function calculateCapWindowTarget(currentAmount: Cents, priceCap: Cents, paidBefore: Cents): Cents {
-  if (compareCents(paidBefore, priceCap) >= 0) return ZERO_CENTS;
-  if (compareCents(currentAmount, ZERO_CENTS) <= 0) return currentAmount;
-  return minCents(currentAmount, maxCents(ZERO_CENTS, subCents(priceCap, paidBefore)));
+/** A period cap of 0 leaves the period uncapped, as the editor has always shown it ("不限"). */
+function periodCapOf(priceCap: number): Cents | null {
+  return priceCap > 0 ? centsOf(priceCap) : null;
 }
 
 function calculateUnitPrice(
@@ -632,9 +889,10 @@ function calculateUnitPriceWithHistory(
   if (durationMinutes <= 0 && !invalidateFirstGrace) return ZERO_CENTS;
 
   const raw = calculateRawUnitPrice(durationMinutes, config, invalidateFirstGrace, true);
-  if (!isPositiveCents(raw)) return raw;
+  const cap = periodCapOf(config.priceCap);
+  if (!isPositiveCents(raw) || cap === null) return raw;
 
-  const effectiveTotal = minCents(addCents(paidBefore, raw), centsOf(config.priceCap));
+  const effectiveTotal = minCents(addCents(paidBefore, raw), cap);
   return maxCents(ZERO_CENTS, subCents(effectiveTotal, paidBefore));
 }
 
@@ -647,7 +905,8 @@ function calculateRawUnitPrice(
   const units = calculateUnits(durationMinutes, config, invalidateFirstGrace);
   const unitPrice = centsOf(config.unitPrice);
   const raw = mulDivRound(unitPrice, units, 1, "trunc");
-  return ignoreCap ? raw : minCents(raw, centsOf(config.priceCap));
+  const cap = periodCapOf(config.priceCap);
+  return ignoreCap || cap === null ? raw : minCents(raw, cap);
 }
 
 function calculateUnits(durationMinutes: number, config: UnitPricingConfig, invalidateFirstGrace?: boolean): number {
@@ -712,121 +971,6 @@ export function nextTimePricingEvent(input: {
     }
   }
   return { ruleLabel: rule?.label ?? null, ruleAt, chargeAt, intervalStartedAt: cursor };
-}
-
-/** Resolve a historical pricing event from the same quote and cap rules used
- * by the live alarm. Snapshot refreshes are deliberately not event candidates.
- * Current interval boundaries also include periods without an active rule. */
-export function previousBillingEvent(input: {
-  now: Date;
-  sessions: readonly Session[];
-  chargeItems: readonly ChargeItem[];
-  globalCapWindows: readonly TimeCapPricingWindow[];
-  ruleBoundaries: readonly Date[];
-}): { at: Date; label: string } | null {
-  const state: { event: { at: Date; label: string } | null } = { event: null };
-  const record = (at: Date, label: string) => {
-    if (at > input.now || !Number.isFinite(at.getTime())) return;
-    if (!state.event || at > state.event.at) state.event = { at, label };
-    else if (at.getTime() === state.event.at.getTime() &&
-      new Set([label, state.event.label]).has("计费") && new Set([label, state.event.label]).has("规则切换")) {
-      state.event.label = "计费与规则切换";
-    }
-  };
-  for (const session of input.sessions) {
-    record(session.startedAt, "入场");
-    if (session.endedAt) record(session.endedAt, "结束计费");
-  }
-  if (!state.event) return null;
-  const startedAt = state.event.at;
-  for (const at of input.ruleBoundaries) {
-    if (at > startedAt) record(at, "规则切换");
-  }
-  const boundary = state.event.at;
-  if (boundary.getTime() === input.now.getTime()) return state.event;
-
-  // Grace invalidation is consumed by the first positive segment, exactly as
-  // in createPriorityTimePricingProvider.quote(). Completed segments before
-  // the latest structural event are constant throughout this search window.
-  const sessions = new Map(input.sessions.map(session => [session.id, session]));
-  const charges = input.chargeItems.map(item => {
-    const session = item.sessionId ? sessions.get(item.sessionId) : undefined;
-    const explanation = item.pricingExplanation;
-    const operated = Boolean(session?.metadata?.deviceOperated || session?.metadata?.hasDeviceActivity);
-    const priorPositive = input.chargeItems.some(prior => prior.sessionId === item.sessionId &&
-      prior.pricingExplanation?.pricingConfigId === explanation?.pricingConfigId &&
-      prior.period && item.period && prior.period.startedAt < item.period.startedAt && isPositiveCents(prior.amount));
-    const amountAt = (at: Date) => {
-      if (!explanation?.pricing || !item.period || item.period.endedAt <= at) return item.amount;
-      const minutes = Math.max(0, Math.floor((at.getTime() - item.period.startedAt.getTime()) / 60_000));
-      return calculateUnitPriceWithHistory(minutes, explanation.pricing,
-        centsOf(explanation.paidBefore ?? 0), operated && !priorPositive);
-    };
-    return { item, amountAt };
-  });
-  const projectedAt = (at: Date) => charges.flatMap(({ item, amountAt }) => {
-    if (item.period && item.period.startedAt > at) return [];
-    if (!item.period || item.period.endedAt <= at) return [item];
-    return [{ ...item, amount: amountAt(at), period: { ...item.period, endedAt: at } }];
-  });
-
-  // A global cap can be shared by staggered sessions and several plans. Replay
-  // its actual proration instead of dividing the cap by a single unit price.
-  const cutoffs = input.globalCapWindows.filter(window =>
-    window.windowStartedAt <= input.now && window.windowEndedAt > input.now &&
-    compareCents(addCents(window.paidBefore, window.currentAmount), window.priceCap) >= 0,
-  ).map(window => {
-    const config: TimeCapPricingProviderConfig = {
-      id: window.capConfigId,
-      includedPricingConfigIds: [...new Set(window.contributions.map(item => item.pricingConfigId))],
-      paidHistory: { [window.key]: window.paidBefore },
-      rules: [{ id: window.capRuleId, label: window.ruleLabel, priority: 1,
-        dateTimeRange: { start: window.windowStartedAt, end: window.windowEndedAt },
-        priceCap: yuanOf(window.priceCap) }],
-    };
-    const cappedAt = (at: Date) => {
-      const projected = explainTimeCapPricing({ config, chargeItems: projectedAt(at) })
-        .find(candidate => candidate.key === window.key);
-      return compareCents(addCents(window.paidBefore, projected?.currentAmount ?? ZERO_CENTS), window.priceCap) >= 0;
-    };
-    let low = boundary.getTime(), high = input.now.getTime();
-    if (cappedAt(boundary)) return { window, at: boundary };
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2);
-      if (cappedAt(new Date(middle))) high = middle;
-      else low = middle + 1;
-    }
-    const at = new Date(low);
-    return { window, at };
-  });
-
-  for (const cutoff of cutoffs) {
-    // A looser overlapping cap must not advance a timeline whose contributors
-    // were already stopped by an earlier cap.
-    const affectsUncappedCharge = cutoff.window.contributions.some(contribution =>
-      !cutoffs.some(other => other.at < cutoff.at && other.window.contributions.some(candidate =>
-        candidate.sessionId === contribution.sessionId && candidate.pricingConfigId === contribution.pricingConfigId)));
-    if (affectsUncappedCharge && cutoff.at > boundary) record(cutoff.at, "计费");
-  }
-
-  for (const { item, amountAt } of charges) {
-    if (!item.period || !item.pricingExplanation?.pricing || item.period.endedAt < boundary) continue;
-    const applicable = cutoffs.filter(({ window }) => window.contributions.some(contribution =>
-      contribution.sessionId === item.sessionId && contribution.pricingConfigId === item.pricingExplanation?.pricingConfigId));
-    const until = new Date(Math.min(input.now.getTime(), item.period.endedAt.getTime(),
-      ...applicable.map(cutoff => cutoff.at.getTime())));
-    let low = 0, high = Math.max(0, Math.floor((until.getTime() - item.period.startedAt.getTime()) / 60_000));
-    const target = amountAt(until);
-    if (!isPositiveCents(target)) continue;
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2);
-      if (compareCents(amountAt(new Date(item.period.startedAt.getTime() + middle * 60_000)), target) >= 0) high = middle;
-      else low = middle + 1;
-    }
-    const at = new Date(item.period.startedAt.getTime() + low * 60_000);
-    if (at >= boundary && at <= until) record(at, "计费");
-  }
-  return state.event;
 }
 
 function findActiveRule<T extends TimeRuleLike>(
@@ -1105,7 +1249,9 @@ function mergeAdjacentTimelineSegments(
   const merged: PriorityTimePricingTimelineSegment[] = [];
   for (const segment of segments) {
     const previous = merged.at(-1);
-    if (previous && previous.ruleId === segment.ruleId && previous.endMinute === segment.startMinute) {
+    // A rule that starts a new window where the last one ended (a cap resetting at 06:00) stays two pieces.
+    if (previous && previous.ruleId === segment.ruleId && previous.endMinute === segment.startMinute
+      && previous.windowStartedAt === segment.windowStartedAt) {
       previous.endMinute = segment.endMinute;
       previous.endLabel = segment.endLabel;
       previous.endedAt = segment.endedAt;

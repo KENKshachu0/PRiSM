@@ -2,6 +2,9 @@ import { type Cents, yuanOf, centsOf as moneyFixture, centsOfInteger as integerF
 import { describe, expect, it } from "bun:test";
 import {
   applyTimeCapPricing,
+  explainTimeCapPricing,
+  settleTimeCaps,
+  buildTimeCapPricingTimeline,
   buildPriorityTimePricingTimeline,
   createPriorityTimePricingProvider,
   createTimePricingProvider,
@@ -1546,6 +1549,8 @@ describe("createPriorityTimePricingProvider", () => {
         endLabel: "24:00",
         startedAt: "2026-06-06T15:00:00.000Z",
         endedAt: "2026-06-07T15:00:00.000Z",
+        windowStartedAt: "2026-06-06T15:00:00.000Z",
+        windowEndedAt: "2026-06-07T15:00:00.000Z",
         pricing: {
           unitMinutes: 30,
           unitPrice: 5,
@@ -1608,5 +1613,149 @@ describe("createPriorityTimePricingProvider", () => {
         endLabel: "24:00",
       },
     ]);
+  });
+});
+
+describe("a period cap of 0", () => {
+  it("leaves the period uncapped instead of making it free", async () => {
+    const quote = async (priceCap: number, paidBefore?: Cents) => {
+      const provider = createPriorityTimePricingProvider({
+        id: "mahjong",
+        timeZone: "UTC",
+        ...(paidBefore === undefined ? {} : { paidHistory: { "mahjong@mahjong@all-day@2026-06-07T00:00:00.000Z": paidBefore } }),
+        rules: [{ id: "all-day", label: "全天", priority: 0, timeRange: { start: "00:00", end: "00:00" },
+          pricing: { unitMinutes: 60, unitPrice: 10, roundGraceMinutes: 15, priceCap } }],
+      });
+      const items = await provider.quote({
+        session: { id: "s", playerId: "p", startedAt: new Date("2026-06-07T10:00:00.000Z"), endedAt: new Date("2026-06-07T13:00:00.000Z"), status: "closed" },
+        assetHoldings: [],
+        now: new Date("2026-06-07T13:00:00.000Z"),
+      });
+      return items.map((item) => ({ amount: yuanOf(item.amount), reached: item.pricingExplanation?.intervalCapReached }));
+    };
+    expect(await quote(0)).toEqual([{ amount: 30, reached: false }]);
+    expect(await quote(0, integerFixture(10_000))).toEqual([{ amount: 30, reached: false }]);
+    expect(await quote(25)).toEqual([{ amount: 25, reached: true }]);
+  });
+});
+
+describe("a day timeline", () => {
+  it("keeps a cap that resets at 06:00 as two windows, and a 22:00–10:00 period as its two parts", () => {
+    const cap = buildTimeCapPricingTimeline({
+      localDate: "2026-06-07",
+      config: { id: "daily", timeZone: "UTC", includedPricingConfigIds: ["p"],
+        rules: [{ id: "day", label: "每日", priority: 0, timeRange: { start: "06:00", end: "06:00" }, priceCap: 60 }] },
+    });
+    expect(cap.segments.map((s) => [s.startLabel, s.endLabel, s.windowStartedAt, s.windowEndedAt])).toEqual([
+      ["00:00", "06:00", "2026-06-06T06:00:00.000Z", "2026-06-07T06:00:00.000Z"],
+      ["06:00", "24:00", "2026-06-07T06:00:00.000Z", "2026-06-08T06:00:00.000Z"],
+    ]);
+
+    const night = buildTimeCapPricingTimeline({
+      localDate: "2026-06-07",
+      config: { id: "night", timeZone: "UTC", includedPricingConfigIds: ["p"],
+        rules: [{ id: "night", label: "夜间", priority: 0, timeRange: { start: "22:00", end: "10:00" }, priceCap: 30 }] },
+    });
+    expect(night.segments.map((s) => [s.ruleId, s.startLabel, s.endLabel, s.windowStartedAt ?? null])).toEqual([
+      ["night", "00:00", "10:00", "2026-06-06T22:00:00.000Z"],
+      ["__closed__", "10:00", "22:00", null],
+      ["night", "22:00", "24:00", "2026-06-07T22:00:00.000Z"],
+    ]);
+  });
+});
+
+describe("a cap across plans", () => {
+  it("counts each unit in the window it begins in, not the charge's time split", async () => {
+    const provider = createPriorityTimePricingProvider({
+      id: "rhythm", pricingConfigId: "rhythm", timeZone: "UTC",
+      rules: [{ id: "all", label: "全天", priority: 0, timeRange: { start: "00:00", end: "00:00" }, pricing: { unitMinutes: 60, unitPrice: 3, roundGraceMinutes: 5, priceCap: 0 } }],
+    });
+    // 00:00–12:18: 12 whole hours and 18 minutes past the grace, 13 units, 39.00.
+    const items = await provider.quote({
+      session: { id: "s", playerId: "p", startedAt: new Date("2026-06-07T00:00:00.000Z"), status: "active" },
+      assetHoldings: [], now: new Date("2026-06-07T12:18:00.000Z"),
+    });
+    const windows = explainTimeCapPricing({
+      chargeItems: items,
+      config: { id: "split", includedPricingConfigIds: ["rhythm"], timeZone: "UTC", rules: [
+        { id: "night", label: "夜间", priority: 0, timeRange: { start: "22:00", end: "10:00" }, priceCap: 1000 },
+        { id: "day", label: "日间", priority: 0, timeRange: { start: "10:00", end: "22:00" }, priceCap: 1000 },
+      ] },
+    });
+    // Units begun 00:00–09:00 are the night's 10; 10:00, 11:00 and 12:00 the day's 3.
+    expect(windows.map((w) => [w.ruleLabel, yuanOf(w.currentAmount)])).toEqual([["夜间", 30], ["日间", 9]]);
+  });
+});
+
+describe("several caps across plans", () => {
+  const hourly = (id: string, unitPrice: number) => createPriorityTimePricingProvider({
+    id, pricingConfigId: id, timeZone: "UTC",
+    rules: [{ id: "all", label: "全天", priority: 0, timeRange: { start: "00:00", end: "00:00" }, pricing: { unitMinutes: 60, unitPrice, roundGraceMinutes: 0, priceCap: 0 } }],
+  });
+  const quote = async (id: string, unitPrice: number, from: string, to: string) =>
+    (await hourly(id, unitPrice).quote({
+      session: { id: `s-${id}`, playerId: "p", startedAt: new Date(`2026-06-07T${from}:00.000Z`), status: "active" },
+      assetHoldings: [], now: new Date(`2026-06-07T${to}:00.000Z`),
+    })).map((item) => ({ ...item, sessionId: `s-${id}` }));
+  const cap = (id: string, start: string, end: string, priceCap: number, plans = ["play"]) =>
+    ({ id, includedPricingConfigIds: plans, timeZone: "UTC", rules: [{ id: "w", label: id, priority: 0, timeRange: { start, end }, priceCap }] });
+
+  it("holds each unit back once, by the cap whose allowance ran out", async () => {
+    // 10 an hour from 00:00 to 12:00: 120 before any cap.
+    const items = await quote("play", 10, "00:00", "12:00");
+    const night = cap("night", "22:00", "06:00", 30);
+    const daily = cap("daily", "00:00", "00:00", 70);
+    const { windows, adjustments } = settleTimeCaps({ configs: [night, daily], chargeItems: items });
+    // 00–03 charged 30 and the night is full; 03–06 free; from 06 the daily has 40 left: 06–10.
+    const held = adjustments.reduce((sum, a) => sum + a.amount, 0);
+    expect(yuanOf(-held as Cents)).toBe(50);
+    expect(windows.map((w) => [w.capConfigId, yuanOf(w.amountApplied), yuanOf(w.heldBack!)])).toEqual([
+      ["night", 30, 30],
+      ["daily", 70, 20],
+    ]);
+    // Each cap alone holds back 30 and 50; adding them up, as before, charged 40 instead of 70.
+    const alone = [night, daily].map((config) => applyTimeCapPricing({ config, chargeItems: items }).reduce((s, a) => s + a.amount, 0));
+    expect(alone).toEqual([integerFixture(-3000), integerFixture(-5000)]);
+  });
+
+  it("with one cap, charges each window what it always has", async () => {
+    const items = [...await quote("play", 10, "00:00", "05:00"), ...await quote("rest", 4, "01:00", "05:00")];
+    for (const [paid, priceCap] of [[0, 35], [20, 35], [50, 35], [0, 500]] as const) {
+      const config = { ...cap("one", "00:00", "00:00", priceCap, ["play", "rest"]), paidHistory: { "one@w@2026-06-07T00:00:00.000Z": integerFixture(paid * 100) } };
+      const [window] = explainTimeCapPricing({ config, chargeItems: items });
+      const current = 50 + 16;
+      expect(yuanOf(window!.amountApplied)).toBe(paid >= priceCap ? 0 : Math.min(current, priceCap - paid));
+    }
+  });
+
+  it("nets a discount in the window before holding anything back", async () => {
+    const items = [...await quote("play", 10, "00:00", "04:00"), ...await quote("off", -5, "00:00", "04:00")];
+    const [window] = explainTimeCapPricing({ config: cap("one", "00:00", "00:00", 25, ["play", "off"]), chargeItems: items });
+    // 40 - 20 = 20 is under the cap: nothing is held back.
+    expect([yuanOf(window!.currentAmount), yuanOf(window!.amountApplied), yuanOf(window!.heldBack!)]).toEqual([20, 20, 0]);
+  });
+});
+
+describe("a period cap with a cap across plans", () => {
+  it("counts only what was charged, so a unit the cap across plans let off leaves room in the period cap", async () => {
+    const provider = createPriorityTimePricingProvider({
+      id: "base", pricingConfigId: "base", timeZone: "UTC",
+      rules: [{ id: "all", label: "全天", priority: 0, timeRange: { start: "00:00", end: "00:00" }, pricing: { unitMinutes: 60, unitPrice: 12, roundGraceMinutes: 5, priceCap: 60 } }],
+    });
+    const items = (await provider.quote({
+      session: { id: "s", playerId: "p", startedAt: new Date("2026-06-07T14:20:00.000Z"), status: "active" },
+      assetHoldings: [], now: new Date("2026-06-07T22:20:00.000Z"),
+    })).map((item) => ({ ...item, sessionId: "s" }));
+    // The quote counts the period cap on list prices: 8 units, 96, capped to 60.
+    expect(items.reduce((sum, item) => sum + item.amount, 0)).toBe(integerFixture(6000));
+    const { units, adjustments } = settleTimeCaps({
+      configs: [{ id: "afternoon", includedPricingConfigIds: ["base"], timeZone: "UTC", rules: [{ id: "w", label: "下午", priority: 0, timeRange: { start: "14:00", end: "18:00" }, priceCap: 20 }] }],
+      chargeItems: items,
+    });
+    // 14:20–17:20 inside the 20 cap: 12, 8, 0, 0. After it the period cap has 40 left: 12, 12, 12, 4.
+    expect(units.map((u) => yuanOf(u.charged))).toEqual([12, 8, 0, 0, 12, 12, 12, 4]);
+    expect(units.map((u) => u.heldBy)).toEqual([null, "afternoon@w@2026-06-07T14:00:00.000Z", "afternoon@w@2026-06-07T14:00:00.000Z", "afternoon@w@2026-06-07T14:00:00.000Z", null, null, null, "period"]);
+    // Charged 60 in all, as the quote did: nothing is taken off the bill.
+    expect(adjustments.reduce((sum, a) => sum + a.amount, 0)).toBe(0);
   });
 });

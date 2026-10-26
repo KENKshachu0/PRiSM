@@ -16,8 +16,31 @@ describe("startSession", () => {
       startedAt: new Date("2026-06-07T10:00:00.000Z"),
       status: "active",
       pricingConfigIds: ["config-1"],
+      pricingConfigId: "config-1",
       paymentStatus: "unpaid",
     });
+  });
+
+  it("refuses a session that would bill several plans at once", () => {
+    expect(() =>
+      startSession({
+        playerId: "player-1",
+        now: new Date("2026-06-07T10:00:00.000Z"),
+        id: "session-1",
+        pricingConfigIds: ["config-1", "config-2"],
+      }),
+    ).toThrow(expect.objectContaining({ code: "PRICING_CONFIG_SINGLE_PLAN_REQUIRED" }));
+  });
+
+  it("gives an unpriced placeholder session no lifecycle plan", () => {
+    const result = startSession({
+      playerId: "player-1",
+      now: new Date("2026-06-07T10:00:00.000Z"),
+      id: "session-1",
+      pricingConfigIds: ["default"],
+    });
+    expect(result.pricingConfigIds).toEqual(["default"]);
+    expect(result.pricingConfigId).toBeUndefined();
   });
 
   it("rejects starting a session without pricingConfigIds", () => {
