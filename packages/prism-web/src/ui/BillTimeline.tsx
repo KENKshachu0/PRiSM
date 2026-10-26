@@ -13,7 +13,6 @@ export type BillPreview = {
 
 type Track = Timeline["tracks"][number];
 
-const neutral = "rgb(var(--color-ink) / .35)";
 const dotted: CSSProperties = { background: "none", width: 0, borderLeft: "3px dotted currentColor" };
 const cappedAt = (track: Track, at: number) => (track.capped ?? []).some((span) => at >= Date.parse(span.startedAt) && at < Date.parse(span.endedAt));
 
@@ -30,45 +29,17 @@ export function BillTotal({ preview }: { preview: BillPreview }) {
 }
 
 /**
- * The key to a bill, shown under its total wherever the bill is. Where a cap
- * kept any track from charging, a key to the rails: a solid line charges, a
- * dotted one is capped. Otherwise what the total is made of as one bar, each
- * plan's share in its colour.
+ * The key to a bill, shown under its total wherever the bill is: a solid rail
+ * charges, a dotted one is capped. Only a bill with a dotted rail needs it.
  */
 export function BillLegend({ timeline }: { timeline?: Timeline }) {
   const { t } = useI18n();
   const anyCapped = (timeline?.tracks ?? []).some((track) => (track.capped ?? []).length > 0);
-  const colorOf = (name: string) => {
-    const track = timeline?.tracks.find((candidate) => candidate.name === name);
-    return track ? planColor(track.color) : neutral;
-  };
-  const parts = (timeline?.totals ?? []).filter((item) => item.amount > 0);
-  if (anyCapped) {
-    return (
-      <div className="mt-3 flex gap-5 text-xs text-ink/60" aria-label={t("图例")}>
-        <span className="inline-flex items-center gap-2"><i aria-hidden="true" className="h-3 w-[3px] rounded-full bg-ink/60" />{t("计费")}</span>
-        <span className="inline-flex items-center gap-2"><i aria-hidden="true" className="h-3 border-l-[3px] border-dotted border-ink/60" />{t("封顶中")}</span>
-      </div>
-    );
-  }
-  // One part is the whole: the bar only says something when there are two.
-  if (parts.length < 2) return null;
+  if (!anyCapped) return null;
   return (
-    <div className="mt-3 grid gap-2">
-      <div className="flex h-2 gap-0.5" aria-hidden="true">
-        {parts.map((item) => (
-          <span key={item.name} className="min-w-0 rounded-full" style={{ flex: `${item.amount} 1 0`, background: colorOf(item.name) }} />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink/60">
-        {parts.map((item) => (
-          <span key={item.name} className="inline-flex items-center gap-1.5 tabular-nums">
-            <span className="size-2 rounded-full" style={{ background: colorOf(item.name) }} aria-hidden="true" />
-            {item.name}
-            <b className="font-medium text-ink">{item.amount.toFixed(2)}</b>
-          </span>
-        ))}
-      </div>
+    <div className="mt-3 flex gap-5 text-xs text-ink/60" aria-label={t("图例")}>
+      <span className="inline-flex items-center gap-2"><i aria-hidden="true" className="h-3 w-[3px] rounded-full bg-ink/60" />{t("计费")}</span>
+      <span className="inline-flex items-center gap-2"><i aria-hidden="true" className="h-3 border-l-[3px] border-dotted border-ink/60" />{t("封顶中")}</span>
     </div>
   );
 }
