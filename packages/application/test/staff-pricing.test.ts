@@ -423,6 +423,32 @@ describe("createStaffPricingService", () => {
     });
   });
 
+  it("refuses a cap period that carries a unit price, with a reason a shopkeeper can read", async () => {
+    const pricingConfigs = new MemoryPricingConfigRepository();
+    const service = createStaffPricingService({
+      pricingConfigs,
+      id: () => "cap-config",
+      now: () => new Date("2026-06-07T10:00:00.000Z"),
+    });
+    // The shape the editor used to send when switching a new rule to a cap.
+    await expect(service.createPricingConfig({
+      kind: "time.cap",
+      name: "消费封顶",
+      enabled: true,
+      provider: {
+        id: "cap.global",
+        rules: [{
+          id: "day", label: "全天", priority: 0,
+          timeRange: { start: "00:00", end: "00:00" }, priceCap: 10,
+          pricing: { unitMinutes: 60, unitPrice: 10, roundGraceMinutes: 0, priceCap: 0 },
+        }],
+      } as never,
+    })).rejects.toMatchObject({
+      code: "INVALID_TIME_CAP_PROVIDER",
+      message: "封顶规则的每个时段只需要封顶金额，不能带单价。",
+    });
+  });
+
   it("rejects updating a time priority config with a global cap provider shape", async () => {
     const pricingConfigs = new MemoryPricingConfigRepository();
     pricingConfigs.saved = [

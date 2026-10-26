@@ -35,7 +35,9 @@ export function operationToLegacyCommand(operation: DeviceOperation): DeviceComm
     "game_machine";
   delete payload.legacyExecutor;
   delete payload.legacyTargetKind;
-  if (operation.status === "failed" && operation.failure && !payload.executorFailure) {
+  // A failed action says why. So does one still pending: an unanswered request
+  // (a timeout) explains more as "设备未响应" than as a bare "稍后再试".
+  if (operation.status !== "succeeded" && operation.failure && !payload.executorFailure) {
     payload.executorFailure = { executorKind, message: operation.failure };
   }
   const status = legacyStatusOf(operation.status);

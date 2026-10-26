@@ -237,6 +237,19 @@ describe("quantizePricingProvider", () => {
     expect(provider.paidHistory).toEqual({ "rule:base": moneyFixture(12.35) });
   });
 
+  it("reads a cap by its periods, not by the plan list it no longer carries", () => {
+    // A cap across plans holds every time plan, so its provider no longer names
+    // any; its periods state only a cap amount.
+    const provider = quantizePricingProvider({
+      id: "cap.global",
+      includedPricingConfigIds: [],
+      rules: [
+        { id: "day", label: "Day", priority: 0, timeRange: { start: "00:00", end: "00:00" }, priceCap: 69.00000000000001 },
+      ],
+    });
+    expect(provider.rules[0]!.priceCap).toBe(69);
+  });
+
   it("keeps a negative unit price so a rule can subtract from the bill", () => {
     const provider = quantizePricingProvider({
       id: "time.discount",

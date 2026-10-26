@@ -193,8 +193,18 @@ function createTestEnvironment(): { db: D1DatabaseLike; sqlite: Database; env: E
     );
     CREATE TABLE IF NOT EXISTS machines (
       id TEXT PRIMARY KEY,
+      public_id TEXT,
       shop_id TEXT NOT NULL,
-      name TEXT NOT NULL, capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15
+      name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, kind TEXT NOT NULL DEFAULT 'machine',
+      aliases_json TEXT NOT NULL DEFAULT '[]', hinata_url_encrypted TEXT DEFAULT '',
+      resource_group_id TEXT, pricing_config_override_id TEXT,
+      capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15
+    );
+    CREATE TABLE IF NOT EXISTS device_capabilities (
+      shop_id TEXT NOT NULL, device_id TEXT NOT NULL, capability TEXT NOT NULL,
+      config_json TEXT NOT NULL DEFAULT '{}', secret_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT, updated_at TEXT,
+      PRIMARY KEY (shop_id, device_id, capability)
     );
     CREATE TABLE IF NOT EXISTS resource_groups (
       shop_id TEXT NOT NULL,
@@ -270,11 +280,13 @@ async function authenticatedTestUser(
 describe("Platform & System Routes", () => {
   let env: Env;
   let app: Hono<AppBindings>;
+  let sqlite: Database;
 
   beforeEach(() => {
     const ctx = createTestEnvironment();
     env = ctx.env;
     app = ctx.app;
+    sqlite = ctx.sqlite;
   });
 
   describe("System Routes: Health & Version", () => {
@@ -612,6 +624,10 @@ describe("Platform & System Routes", () => {
       expect(data.shop.timeZone).toBe("Asia/Shanghai");
       expect(data.shop.radiusMeters).toBe(100);
       expect(data.botToken).toMatch(/^prism_integration_/);
+      // The bot is a resource from the start, in the default group, so the shop
+      // sees it before it ever connects and its credential names one resource.
+      const bot = sqlite.query("SELECT m.id, m.resource_group_id AS grp FROM machines m JOIN device_capabilities c ON c.device_id=m.id AND c.capability='bot'").get() as { id: string; grp: string | null };
+      expect(bot.grp).toBeNull();
 
       // Verify owner can list the shop
       const listRes = await app.request(

@@ -70,6 +70,7 @@ const kinds = {
   "charge.fixed": "固定收费",
   "time.cap": "消费封顶",
 };
+/** A time-plan period: it has a price and the plan's cap. */
 const newRule = (): Rule => ({
   id: crypto.randomUUID(),
   label: "",
@@ -83,6 +84,21 @@ const newRule = (): Rule => ({
   },
   priceCap: 0,
 });
+
+/**
+ * A cap period: it states only how much may be charged in it. A price here
+ * would make it a time plan's period, which the server refuses.
+ */
+const newCapRule = (): Rule => ({
+  id: crypto.randomUUID(),
+  label: "",
+  priority: 0,
+  timeRange: { start: "00:00", end: "00:00" },
+  priceCap: 10,
+});
+
+/** A period of the right shape for the kind being edited. */
+const newRuleFor = (kind: Pricing["kind"]): Rule => (kind === "time.cap" ? newCapRule() : newRule());
 
 export function PricingPage() {
   const { t } = useI18n();
@@ -501,13 +517,7 @@ function PricingEditor({
                   provider:
                     kind === "charge.fixed"
                       ? { id: draft.provider.id, label: draft.name, amount: 10 }
-                      : {
-                          id: draft.provider.id,
-                          rules: [newRule()],
-                          ...(kind === "time.cap"
-                            ? { includedPricingConfigIds: [] }
-                            : {}),
-                        },
+                      : { id: draft.provider.id, rules: [newRuleFor(kind)] },
                 });
                 setOpenRule(null);
               }}
@@ -601,7 +611,7 @@ function PricingEditor({
               type="button"
               className={`${buttonQuiet} min-h-10 justify-self-start px-2 text-sm`}
               onClick={() => {
-                provider({ rules: [...rules, newRule()] });
+                provider({ rules: [...rules, newRuleFor(draft.kind)] });
                 setOpenRule(rules.length);
               }}
             >

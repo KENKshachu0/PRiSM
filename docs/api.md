@@ -353,6 +353,7 @@ Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后�
 | `POST` | `/rpc/integration/players/by-identity/history` | 按外部身份读取玩家计时记录。 |
 | `POST` | `/rpc/integration/players/by-identity/redeem` | 按外部身份为玩家兑换礼物码。 |
 | `POST` | `/rpc/integration/players/by-identity/device-actions` | 按外部身份申请设备动作，例如启机、投币或 Aime 扫卡；后端会先解析玩家并检查 active session、投币冷却等规则。 |
+| `GET` | `/rpc/integration/bot` | Bot 自己的设置、店铺编号和店铺知识（店员、货币名称、门锁、麻将桌），只经连接可达。`shop: { code, name }` 让插件不必自己配置店铺编号。`settings` 是 Bot 资源上的店家设置。 |
 | `GET` | `/rpc/integration/roster` | 同 `staff/roster`；Bot 的 `list` 使用它。 |
 | `GET` | `/rpc/integration/sessions/active` | 机器人列出在场所有活跃 session，含玩家对外身份（聊天平台等）以便从聊天平台拉取昵称。每条 session 带 `pricingConfigId` 与 `planName`。 |
 | `GET` | `/rpc/integration/device-states` | 机器人列出当前所有设备上报的电源/状态，供 `/show` 一类查询。`deviceStates[].state` 是普通字符串（如 `on`、`off`），不得再包装为 JSON 字符串。 |

@@ -692,7 +692,46 @@ export const tenantMiddleware: MiddlewareHandler<AppBindings> = async (
     jsonError(400, "缺少店铺代码", "SHOP_CODE_REQUIRED");
   }
 
-  const shopRow = await c.env.DB.prepare(
+  const shopRow = await loadTenantShop(c, shopCode);
+
+  if (!shopRow) {
+    jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
+  }
+
+  await setTenantFromShop(c, shopRow);
+  await next();
+};
+
+/**
+ * The same tenant context, resolved from a shop row a route already found: a
+ * bot credential names its shop without a shop code in the path.
+ */
+export async function setTenantFromShop(
+  c: Context<AppBindings>,
+  shopRow: TenantShop,
+): Promise<void> {
+  const enabled = +(!!(
+    shopRow.checkin_geo ||
+    shopRow.checkout_geo ||
+    shopRow.machine_geo
+  ));
+  const shop: TenantShop = {
+    ...shopRow,
+    checkin_geo: enabled,
+    checkout_geo: enabled,
+    machine_geo: enabled,
+  };
+  c.set("shop", shop);
+  c.set("responseTimeZone", shop.time_zone);
+  c.set("deps", getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY, c.env));
+}
+
+/** The shop row every tenant request reads, by code or ID. */
+export async function loadTenantShop(
+  c: Context<AppBindings>,
+  shopCode: string,
+): Promise<TenantShop | null> {
+  return c.env.DB.prepare(
     `SELECT s.id, s.public_id, s.name, s.latitude, s.longitude, s.radius_meters,
       COALESCE(b.billing_enabled, 0) AS billing_enabled,
       COALESCE(b.auto_register, 0) AS auto_register,
@@ -711,31 +750,7 @@ export const tenantMiddleware: MiddlewareHandler<AppBindings> = async (
   )
     .bind(shopCode, shopCode)
     .first<TenantShop>();
-
-  if (!shopRow) {
-    jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
-  }
-
-  const enabled = +(!!(
-    shopRow.checkin_geo ||
-    shopRow.checkout_geo ||
-    shopRow.machine_geo
-  ));
-  const shop: TenantShop = {
-    ...shopRow,
-    checkin_geo: enabled,
-    checkout_geo: enabled,
-    machine_geo: enabled,
-  };
-
-  c.set("shop", shop);
-  c.set("responseTimeZone", shop.time_zone);
-
-  const deps = getOrCreateShopDependencies(c.env.DB, shop, c.env.URL_ENCRYPTION_KEY, c.env);
-  c.set("deps", deps);
-
-  await next();
-};
+}
 
 export function getShop(c: Context<AppBindings>): TenantShop {
   const shop = c.get("shop");

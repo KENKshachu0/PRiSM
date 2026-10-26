@@ -227,7 +227,7 @@ async function createPricingConfigForKind(
         !("rules" in provider) ||
         provider.rules.some((rule) => "pricing" in rule || !("priceCap" in rule))
       ) {
-        throw new PrismDomainError("Global cap pricing requires cap rules.", "INVALID_TIME_CAP_PROVIDER");
+        throw new PrismDomainError("封顶规则的每个时段只需要封顶金额，不能带单价。", "INVALID_TIME_CAP_PROVIDER");
       }
       // A cap across plans holds every time plan; it no longer names any.
       return {

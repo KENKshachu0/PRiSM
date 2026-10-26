@@ -155,16 +155,22 @@ describe("bot connection route", () => {
       forwarded.push(request);
       return new WorkersResponse(null, { status: 101, webSocket: socket });
     } }) };
-    const connect = (token: string) => createApp().fetch(new Request("https://prism.test/api/v1/shops/shop-code/integration/ws", {
+    // One fixed path, like a device's `/io/ws`: the credential names the shop.
+    const connect = (token: string) => createApp().fetch(new Request("https://prism.test/integration/ws", {
       headers: { Upgrade: "websocket", authorization: `Bearer ${token}`, origin: "https://prism.test" },
     }), env);
     expect((await connect("wrong")).status).toBe(403);
+    expect((await connect("")).status).toBe(403);
+    // Rejected before the hub: a bad credential learns nothing about the shop.
     expect(forwarded).toHaveLength(0);
     // No middleware may rebuild the handshake, or the Bot sees a 500.
     try {
       const handshake = await connect(TOKEN);
       expect(handshake.status).toBe(101);
       expect((handshake as InstanceType<typeof WorkersResponse>).webSocket).toBe(socket);
+      // The hub is told which shop the credential belongs to.
+      expect(forwarded.at(-1)?.headers.get("x-prism-hub-shop")).toBe("shop");
+      expect(forwarded.at(-1)?.headers.get("x-prism-hub-shop-code")).toBe("shop-code");
     } finally {
       globalThis.Response = BunResponse;
     }
