@@ -270,10 +270,22 @@ shopsRouter.post("/", async (c) => {
   }
   if (setup) {
     if (botToken) {
+      const tokenId = crypto.randomUUID();
+      // The bot is a resource from the start, in the default group, so the shop
+      // sees it before it ever connects and its credential has one resource.
+      const botId = crypto.randomUUID();
       statements.push(
         c.env.DB.prepare(
           "INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES (?,?,'Bot','integration','prism_integration',?,'active',?)",
-        ).bind(shopId, crypto.randomUUID(), await sha256Hex(botToken), now),
+        ).bind(shopId, tokenId, await sha256Hex(botToken), now),
+        c.env.DB.prepare(
+          `INSERT INTO machines(id,public_id,shop_id,name,enabled,kind,aliases_json,hinata_url_encrypted)
+           VALUES (?,?,?,'Bot',1,'machine','[]','')`,
+        ).bind(botId, randomToken(12), shopId),
+        c.env.DB.prepare(
+          `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+           VALUES (?,?,'bot',?,'{}',?,?)`,
+        ).bind(shopId, botId, JSON.stringify({ tokenId }), now, now),
       );
     }
   }

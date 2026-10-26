@@ -159,6 +159,8 @@ export type Resource = {
   relayE2ee?: boolean | null;
   /** A shop bot's settings; null for a resource that is not a bot. Its token is only shown when issued. */
   bot?: BotSettings | null;
+  /** Whether the bot has an active credential, as a device has a relay token. */
+  hasBotToken?: boolean;
   /** The group whose default plan this resource bills; "default" for the shop's default group. */
   resourceGroupId?: string;
   /** A plan of its own that replaces the group's; null to follow the group. */
@@ -175,7 +177,6 @@ export type BotSettings = {
   receiptsToStaff: boolean;
   idleChannelIds: string[];
   idleReminderMinutes: number;
-  watchHomeAssistant: boolean;
 };
 
 /** A set of resources that bill the same default plan. The default group is the shop's own. */

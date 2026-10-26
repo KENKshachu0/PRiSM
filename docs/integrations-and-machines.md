@@ -16,7 +16,7 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 
 **Token 要求：**
 
-- 在「资源」页添加一个带「店铺 Bot」能力的资源，保存时签发 Bot 接入凭据（只显示一次，连同店铺编号和 API 地址）；之后在这个资源的「店铺 Bot」一项里查看店铺编号和 API 地址，或重新签发凭据。设置里不再有「Bot 与接入」分组。
+- 在「资源」页添加一个带「店铺 Bot」能力的资源，保存时签发 Bot 接入凭据（只显示一次，连同 API 地址；凭据自己指明店铺，界面上不再显示店铺编号）。「店铺 Bot」一项里显示凭据是否已签发，按钮与 HINATA IO 直连的「签发/轮换设备令牌」同一套：签发或轮换只换凭据，不新建 Bot 资源，旧凭据立即失效。设置里不再有「Bot 与接入」分组。
 - 请求 Header 使用 `Authorization: Bearer <integration-token>`。
 - 不需要 `X-PRiSM-Player-Id`。
 
@@ -55,21 +55,21 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 
 ### Bot 是一种资源：设置由服务端下发
 
-每个机器人对应一个带 `bot` 能力的资源，在商户工作台「资源」页添加和编辑（见[资源与资源组](resources.md)）。添加时签发它的接入凭据（只显示一次），删除资源、关闭 Bot 能力或「重新签发」都会吊销旧凭据，旧连接随之断开。在「设置 → 集成」里单独创建的凭据，会在机器人第一次请求 `GET integration/bot` 时自动生成对应的 Bot 资源。Bot 资源不能被玩家扫码。
+每个机器人对应一个带 `bot` 能力的资源，在商户工作台「资源」页添加和编辑（见[资源与资源组](resources.md)）。添加时签发它的接入凭据（只显示一次），删除资源、关闭 Bot 能力或「重新签发」都会吊销旧凭据，旧连接随之断开。凭据与 Bot 资源一一对应：新建店铺时勾选「创建 Bot 接入凭据」会同时建好它的 Bot 资源（默认资源组）；迁移会把旧版遗留的接入凭据一并迁成 Bot 资源（`0043_legacy_bot_resources.sql`），正在运行的 Bot 不会因此断线。Bot 资源不能被玩家扫码。
 
-插件本地只需要连接信息：API 地址、店铺编号和接入凭据。其余都由 `GET integration/bot` 下发：
+插件本地只需要 API 地址和接入凭据：凭据自己指明店铺，插件启动时先读 `GET /api/v1/integration/bot`（地址里没有店铺编号）拿到店铺编号，再连该店的 WebSocket。旧配置里的店铺编号仍被接受，但不再需要。其余都由 `GET integration/bot` 下发：
 
 | 字段 | 来源 |
 | --- | --- |
 | `bot` | 资源 ID 与名称（名称也用于 Home Assistant 监听名单） |
-| `settings` | 在 Bot 资源上设置：玩家命令全部/只读及提示、店员命令、关机仅限店员、结账回执发给店员、闲置提醒的群与提前分钟数、是否监听 Home Assistant |
+| `settings` | 在 Bot 资源上设置：玩家命令全部/只读及提示、店员命令、关机仅限店员、结账回执发给店员、闲置提醒的群与提前分钟数 |
 | `staff` | 自动推导：店铺负责人和在职员工的账号绑定的平台身份 `{provider, subject}` |
 | `currencyName` | 自动推导：店铺余额资产的名称 |
 | `door` | 资源上选择的门锁；没选时若店里只有一个门锁就用它 |
 | `mahjongTables` | 自动推导：带麻将能力的资源，含名称、别名和开桌人数（即资源的容量） |
 | `billingEnabled` | 店铺是否启用计费 |
 
-机器人连上 WebSocket 后先读取这份配置，再发送 hello（名称、是否监听 Home Assistant、闲置提醒提前量都取自配置）。商家保存任何资源、员工通过机器人绑定平台身份后，Hub 会向所有在线机器人推送 `{"type":"config.changed"}`，机器人重新读取并再发一次 hello；不再允许监听时，它正在监听的 Home Assistant 会交给下一个监听者。Bot 资源被停用时该接口返回 `403 BOT_DISABLED`。
+机器人连上 WebSocket 后先读取这份配置，再发送 hello（名称和闲置提醒提前量取自配置）。**监听 Home Assistant 不是店家的开关**：能连上 Home Assistant 的 Bot 一律在 hello 里声明，由平台按店铺的监听名额自己挑谁在听、听哪些连接；换人、断线、停用都由平台调度，店家不用管。商家保存任何资源、员工通过机器人绑定平台身份后，Hub 会向所有在线机器人推送 `{"type":"config.changed"}`，机器人重新读取并再发一次 hello；不再允许监听时，它正在监听的 Home Assistant 会交给下一个监听者。Bot 资源被停用时该接口返回 `403 BOT_DISABLED`。
 
 Bot 和其他资源一样属于一个资源组，也可以设置专属方案（资源编辑页的「计费」一节）。玩家通过它 `/login`、`/入场` 时，开始的就是这个 Bot 的方案，规则与扫码一样：专属方案优先，否则用所属资源组的方案。没有改过的 Bot 在默认资源组，开始店铺默认计费方案。一家店可以有多个 Bot，例如麻将群的 Bot 放在麻将区，入场就开始麻将区的方案。Bot 所在资源组的方案只决定入场；Bot 替玩家操作其他资源时，检查的仍是目标资源的方案。
 
@@ -308,7 +308,7 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 - **谁能被选**：`CLIENT_HELLO` 的 `body.features` 含 `ha.watch` 的机台。`MachineRelay` 收到这样的 hello 就告诉 Hub 自己上线（`relayOnline`），最后一个这样的连接断开时告诉 Hub 下线（`relayOffline`）。网关把通道名放在 `x-prism-relay-channel` 头里交给 `MachineRelay`，Hub 用它回头找到这台机台。
 - **选谁**：名额是这家店的监听器数量（默认 2，平台管理员可改，见下）。**Bot 优先于机台**：一个 Bot 在线就占一个名额，两个 Bot 就占满，机台只补空位；同类里在线最久的优先；刚失败过的（连不上 HA、没能下发、租约过期）5 分钟内排在后面，不论是 Bot 还是机台，所以一个连不上 HA 的 Bot 不会把名额一直占着。两个监听者同时报同一个事件，谁先到谁生效，另一份按下面的去重丢弃，不分高低。第二个名额的作用是**不让状态断流**：一个掉线时另一个仍在报，模式不会闪回无状态，空出来的位置由下一个在线的候选补上。令牌只在监听者的内存里。
 - **让位没有空窗**：Bot 上线或名额调小，会让原来在监听的机台被「挤出去」。被挤的监听者要等**留下的监听者对每条已宣布为事件驱动的连接都交付了完整状态**才收到 `HA_UNWATCH`；在那之前它继续报，每一份新的全量状态到达时 Hub 再判断一次。所以只有一个名额时，Bot 先交完全量，机台才退出，连接不会闪成无状态。
-- **Bot 作为监听者**：Koishi 插件的 `hello` 带 `{ha: true, name}` 才会被考虑（旧插件不声明，永远不会被分配）。Hub 用 `bot:<连接 id>` 记它，下发 `{"type":"ha.watch","watch":{term,connections}}`（内容与机台的 `HA_WATCH` 相同）、撤销 `{"type":"ha.unwatch"}`；Bot 上报 `{"type":"ha","method":"ha.status|ha.states","params":{…}}`，字段与机台一致，所以后面的任期、租约、去重、记录对两者完全相同。Bot 的连接断开（包括出错）立即让位给下一个候选；部署会让连接静默丢失，每次重新分配时都会对照仍在线的 Bot 连接清理，不等租约。Bot 重连是一个新连接、新 id，要重新 hello 才再被分配。令牌会发到 Bot 所在的机器，只给店家自己运维的 Bot 开（插件 `watchHomeAssistant`）。
+- **Bot 作为监听者**：Koishi 插件的 `hello` 带 `{ha: true, name}` 才会被考虑（旧插件不声明，永远不会被分配）。Hub 用 `bot:<连接 id>` 记它，下发 `{"type":"ha.watch","watch":{term,connections}}`（内容与机台的 `HA_WATCH` 相同）、撤销 `{"type":"ha.unwatch"}`；Bot 上报 `{"type":"ha","method":"ha.status|ha.states","params":{…}}`，字段与机台一致，所以后面的任期、租约、去重、记录对两者完全相同。Bot 的连接断开（包括出错）立即让位给下一个候选；部署会让连接静默丢失，每次重新分配时都会对照仍在线的 Bot 连接清理，不等租约。Bot 重连是一个新连接、新 id，要重新 hello 才再被分配。监听名额由平台分配，店家不设开关；Bot 只要能连上 Home Assistant 就会被考虑。
 - **下发**：`{"action":"HA_WATCH","body":{"term":3,"connections":[{"id":"ha_…","urls":["http://ha.local:8123","https://ha.example"],"token":"<只读令牌>","entities":["switch.a","climate.b"]}]}}`。`urls` 按顺序尝试，店内地址（HA 的 `internal_url`）在前，所有监听器收到的是同一个列表，平台不区分它在哪、是什么：HA 可能托管在别处，监听器也可能在店外，哪个地址通就用哪个。监听器侧每个地址有 10 秒连接超时，上次连上的排在最前，一轮全部失败才上报断开（见固件 `docs/remote-protocol.md`）；真实环境实测内部地址不可达时 10.2 秒变成实时（没有超时时是 75.2 秒）。每次下发用新的任期号。换人时给原来那台发 `{"action":"HA_UNWATCH","body":{}}`。只有已经签好只读账号、且有设备用到的连接会下发；一条都没有就不选人。
 - **上报**（JSON-RPC 通知，无 `id`）：`ha.status {term, connection, connected, error?}`，订阅建立或断开时、以及每 30 秒一次作为心跳；`ha.states {term, connection, full, states:[{entity_id, state, last_changed, last_updated, attributes}]}`，第一次是全量，之后只报变化；时间是 HA 压缩状态里的 Unix 秒（也接受 ISO 文本），`attributes` 只带平台用到的空调属性。任何上报都给租约续期 90 秒；`term` 不是该监听者当前的任期，一律丢弃，所以交接时新旧两个任期短暂同时上报也无害。
 - **去重与乱序**：两台监听者看到同一个事件，只记一次。Hub 按每个实体最近一次已应用的 `last_updated`（旧固件没有这个字段时退回 `last_changed`）判断：不比已应用的新就丢弃，所以一台晚到的旧事件不会把状态改回去。`last_updated` 要单独带，因为空调的温度、风速变化不会动 `last_changed`。设备事件的去重另有 SQL 保证：状态值没变就既不写事件也不写状态。两份报告同一时刻到达时 Hub 一份一份处理（`haReport` 排队），第二份要等第一份存完才判断，否则两份都会认为事件是新的、各推送一次。

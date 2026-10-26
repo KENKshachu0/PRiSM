@@ -30,8 +30,9 @@ export async function findBotByToken(db: D1DatabaseLike, shopId: string, tokenId
 }
 
 /**
- * The bot resource of a token, created on first use for a token issued before
- * bots were resources, so every connected bot shows up on the resources page.
+ * The bot resource of a token. A credential issued before bots were resources
+ * gets one the first time it connects, so every connected bot shows up on the
+ * resources page. Rotation never comes here: it keeps the resource it rotates.
  */
 export async function ensureBotResource(
   db: D1DatabaseLike,

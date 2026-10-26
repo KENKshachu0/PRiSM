@@ -4,7 +4,7 @@ import type { AppBindings, TenantShop } from "../../bindings.js";
 import { sha256Hex } from "../../crypto.js";
 import { jsonError } from "../../http.js";
 import { confirmPlatformBinding } from "./binding.js";
-import { getShop, getShopDeps } from "../../middleware/tenant.js";
+import { getShop, getShopDeps, loadTenantShop, setTenantFromShop } from "../../middleware/tenant.js";
 import { botConfigView, ensureBotResource } from "../../resources/bot.js";
 import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 import { loadResources, matchesRef } from "../../resources/resource.js";
@@ -57,7 +57,43 @@ export async function requireIntegrationAuth(
   await integrationToken(c, shop);
 }
 
+/**
+ * The shop a bot credential belongs to, without a shop code in the address:
+ * the credential names one shop, and only that shop's integration routes.
+ */
+export async function shopOfIntegrationToken(c: Context<AppBindings>) {
+  const auth = c.req.header("authorization");
+  const token = auth?.match(/^Bearer (.+)$/i)?.[1];
+  if (!token) jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
+  const row = await c.env.DB.prepare(
+    `SELECT s.public_id FROM api_tokens t JOIN shops s ON s.id = t.shop_id
+     WHERE t.token_hash = ? AND t.role = 'integration' AND t.status = 'active'`,
+  ).bind(await sha256Hex(token)).first<{ public_id: string }>();
+  if (!row) jsonError(403, "店铺 Bot 凭据无效", "FORBIDDEN");
+  return row.public_id;
+}
+
 export const integrationRouter = new Hono<AppBindings>();
+
+/**
+ * What a bot needs before it knows the shop: read by credential alone, so the
+ * plugin is configured with an address and a token, not a shop code.
+ */
+export const integrationBootstrapRouter = new Hono<AppBindings>();
+
+integrationBootstrapRouter.get("/bot", async (c) => {
+  const publicId = await shopOfIntegrationToken(c);
+  const shopRow = await loadTenantShop(c, publicId);
+  if (!shopRow) jsonError(404, "没有找到这个店铺", "SHOP_NOT_FOUND");
+  await setTenantFromShop(c, shopRow);
+  const shop = getShop(c);
+  const bot = await ensureBotResource(c.env.DB, shop.id, await integrationToken(c, shop));
+  if (!bot.enabled) jsonError(403, "这个 Bot 已停用", "BOT_DISABLED");
+  return c.json({
+    ...(await botConfigView(c.env.DB, shop.id, bot)),
+    shop: { code: shop.public_id, name: shop.name },
+  });
+});
 
 /**
  * Every Bot route passes here. Binding a platform identity does not need

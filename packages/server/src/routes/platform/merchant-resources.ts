@@ -131,6 +131,8 @@ async function presentResource(c: C, device: Resource, shopPublicId: string, can
       const { tokenId: _token, ...settings } = config;
       return settings;
     })(),
+    // Whether the bot has a live credential, told like a device's relay token.
+    hasBotToken: !!device.capabilities.get("bot")?.config.tokenId,
     coinKey,
     coinEnabled: coinKey > 0,
     coinAfterSwipe: !!hinata?.coinAfterSwipe,
@@ -417,7 +419,6 @@ const machineInput=z.object({
     receiptsToStaff:z.boolean().optional(),
     idleChannelIds:z.array(z.string().trim().min(1).max(80)).max(20).optional(),
     idleReminderMinutes:z.number().int().min(0).max(120).optional(),
-    watchHomeAssistant:z.boolean().optional(),
   }).strict().nullable().optional(),
   rotateBotToken:z.boolean().optional(),
   // Billing: the group whose default plan the resource bills (null or

@@ -232,7 +232,7 @@ export function ResourceEditor({
     : "";
 
   if (botToken) {
-    const snippet = `baseUrl: ${window.location.origin}\nshopCode: ${shopCode}\nintegrationToken: ${botToken}`;
+    const snippet = `baseUrl: ${window.location.origin}\nintegrationToken: ${botToken}`;
     return (
       <div className="grid gap-5">
         <div className="grid gap-1">
@@ -248,7 +248,7 @@ export function ResourceEditor({
           </div>
           <pre className="overflow-x-auto whitespace-pre rounded-lg bg-ink/5 p-3 text-xs">{snippet}</pre>
           <p className="text-xs leading-relaxed text-ink/60">
-            {t("插件只需要这三项。其余设置都在这里修改，保存后会自动推送给 Bot。")}
+            {t("插件只需要这两项：接入凭据自己知道是哪个店铺。其余设置都在这里修改，保存后会自动推送给 Bot。")}
           </p>
         </div>
         <button
@@ -757,10 +757,7 @@ export function ResourceEditor({
       {pane === "bot" && caps.bot && (
         <CapabilityPane title="店铺 Bot" problem={incomplete("bot")} remove={() => remove("bot")}>
           <div className="grid gap-4">
-            <div className="grid gap-3 rounded-lg bg-ink/[0.03] p-3 sm:grid-cols-2">
-              <CopyField label="店铺编号" value={shopCode} />
-              <CopyField label="API 地址" value={window.location.origin} />
-            </div>
+            <BotTokenPanel live={live} hasBotToken={!!live?.hasBotToken} />
             <fieldset className="grid gap-2">
               <legend className="mb-1 text-sm font-medium">{t("玩家命令")}</legend>
               {(["all", "readonly"] as const).map((mode) => (
@@ -791,7 +788,6 @@ export function ResourceEditor({
                 ["staffCommands", "店员代为操作"],
                 ["powerOffStaffOnly", "仅店员可关机"],
                 ["receiptsToStaff", "结账回执发给店员"],
-                ["watchHomeAssistant", "监听 Home Assistant"],
               ] as const).map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={bot[key]} onChange={(e) => changeBot({ [key]: e.target.checked })} />
@@ -878,7 +874,6 @@ const defaultBotSettings: BotSettings = {
   receiptsToStaff: false,
   idleChannelIds: [],
   idleReminderMinutes: 5,
-  watchHomeAssistant: true,
 };
 
 const capabilityList = ["power", "climate", "hinata_io", "door", "mahjong", "bot"] as const satisfies readonly CapabilityId[];
@@ -931,6 +926,45 @@ function CopyField({ label, value }: { label: string; value: string }) {
         <CopyButton value={value} label="复制" />
       </span>
       <code className="truncate rounded bg-ink/5 px-2 py-1.5 text-xs">{value}</code>
+    </div>
+  );
+}
+
+/**
+ * The bot's credential, presented and minted the way a device's direct-connect
+ * token is: one line saying whether it has one, and one button that issues or
+ * rotates it. Minting is an explicit submit (`intent=rotate-bot`), never a side
+ * effect of saving the settings.
+ */
+function BotTokenPanel({
+  live,
+  hasBotToken,
+}: {
+  live: Resource | null;
+  hasBotToken: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="grid gap-3 rounded-lg border border-ink/10 bg-ink/[0.02] p-3">
+      <p className="text-sm">
+        <span className="text-ink/60">{t("接入凭据")}：</span>
+        {hasBotToken ? (
+          <span className="text-mint">{t("已签发")}</span>
+        ) : (
+          <span className="text-ink/50">{t("未签发")}</span>
+        )}
+      </p>
+      <p className="text-xs leading-relaxed text-ink/60">
+        {t("凭据自己指明店铺，Koishi 里只需要接口地址和凭据。")}
+      </p>
+      <button type="submit" name="intent" value="rotate-bot" className={`${button} justify-self-start`}>
+        {t(hasBotToken ? "轮换 Bot 凭据" : "签发 Bot 凭据")}
+      </button>
+      {hasBotToken && (
+        <p className="text-xs leading-relaxed text-coral">
+          {t("轮换后旧凭据立即失效，需要把新凭据重新填入 Koishi。")}
+        </p>
+      )}
     </div>
   );
 }

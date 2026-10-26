@@ -355,7 +355,6 @@
   "指令已提交": "Command submitted",
   "指定日期": "Specific dates",
   "按本店入场规则开始计费。": "Start billing with this shop’s entry pricing.",
-  "接入凭据": "Integration credentials",
   "搜索玩家": "Search players",
   "撤销": "Revoke",
   "撤销凭据": "Revoke credential",
@@ -1803,5 +1802,13 @@
   "默认资源组还没有可用的默认计费方案，玩家无法开始计费。": "The default resource group has no usable default plan, so players cannot start billing.",
   "设置默认计费方案": "Set the default plan",
   "{count} 个资源启用了开门密码": "{count} resources use door codes",
-  "资源组读取失败，资源暂按默认资源组显示": "Resource groups could not be loaded; resources are shown in the default group for now"
+  "资源组读取失败，资源暂按默认资源组显示": "Resource groups could not be loaded; resources are shown in the default group for now",
+  "插件只需要这两项：接入凭据自己知道是哪个店铺。其余设置都在这里修改，保存后会自动推送给 Bot。": "The plugin needs these two: the credential names the shop. Everything else is set here and pushed to the bot when saved.",
+  "已签发": "Issued",
+  "未签发": "Not issued",
+  "凭据自己指明店铺，Koishi 里只需要接口地址和凭据。": "The credential names the shop; Koishi needs only the API address and the credential.",
+  "轮换后旧凭据立即失效，需要把新凭据重新填入 Koishi。": "Rotating voids the old credential at once; put the new one into Koishi.",
+  "签发 Bot 凭据": "Issue a bot credential",
+  "轮换 Bot 凭据": "Rotate the bot credential",
+  "接入凭据": "Credential"
 }

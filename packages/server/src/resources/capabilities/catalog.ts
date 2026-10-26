@@ -232,7 +232,6 @@ const botConfig = z.object({
   idleChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   idleReminderMinutes: z.number().int().min(0).max(120).default(5),
   /** Whether the bot may be given Home Assistant connections to watch. */
-  watchHomeAssistant: z.boolean().default(true),
 });
 export type BotConfig = z.infer<typeof botConfig>;
 
