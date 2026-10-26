@@ -15,7 +15,7 @@ const banLabels: Record<BanRecord["subjectType"], string> = {
   user: "账号",
   ip: "网络地址",
   card: "卡片",
-  machine: "设备",
+  machine: "资源",
 };
 
 export function AdminPage() {

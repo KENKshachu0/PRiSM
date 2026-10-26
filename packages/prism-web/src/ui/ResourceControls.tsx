@@ -1,5 +1,5 @@
 import { isTransientReadFailure, usePagePolling } from "./use-page-polling";
-import { idleLive, useDeviceLive, type DeviceFacts, type FactsChange, type LiveStatus } from "./use-device-live";
+import { idleLive, useResourceLive, type DeviceFacts, type FactsChange, type LiveStatus } from "./use-resource-live";
 import { billTime } from "./bill-time";
 import { PlatformBinding } from "./SessionContent";
 import { PlayerClimate, settleClimate, type ClimateState } from "./ClimateControls";
@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { Power, DoorOpen, Coins, Loader2, CheckCircle2, AlertCircle, XCircle, Info } from "lucide-react";
-import { api, invalidatePlayerReads, playerOperation, type Notice, type PublicMachine } from "../api";
+import { api, invalidatePlayerReads, playerOperation, type Notice, type PublicResource } from "../api";
 import { useI18n } from "../i18n";
 import {
   operationLocation,
@@ -20,6 +20,7 @@ import {
   type Summary,
   EntryPricing,
 } from "./BillingPages";
+import { ResourcePricing, type ResourceRules } from "./ResourcePricing";
 import { useAuth } from "./AuthContext";
 import { useInlineNotice, useNotice } from "./NoticeProvider";
 
@@ -48,8 +49,19 @@ const localNote = (body: string, level: Notice["level"] = "warning"): Notice =>
 /** How long a power-on waits for the machine to report on before the button comes back. */
 const POWER_ON_WAIT_MS = 15_000;
 
-export type DeviceState = {
+type BillingChange = { planId: string; planName: string; reason: string };
+/** What confirming this resource would do to the player's billing, or why it cannot bill. */
+export type ResourceBilling = {
+  preview?: { pricingConfigId: string; planName: string; changed: boolean; started: BillingChange[]; stopped: BillingChange[]; kept: BillingChange[]; revision: string };
+  error?: { code: string; message: string };
+  /** The plans this resource bills, shown as its pricing rules. */
+  rules?: ResourceRules;
+};
+
+export type ResourceState = {
   gate: "ready" | "binding" | "entry";
+  /** Set while `gate` is `entry` in a shop that bills. */
+  billing?: ResourceBilling | null;
   coinUsed: boolean;
   mahjong?: {capacity:number;seats:{name:string;mine:boolean;playing:boolean}[]} | null;
   /** What is known of the device's Home Assistant state; `watching` says it is current and pushed. */
@@ -57,21 +69,27 @@ export type DeviceState = {
 };
 type PowerState = "on" | "off" | "unknown";
 
-export function DeviceControls({
+export function ResourceControls({
   machine,
   ticket,
   children,
+  cardHeadingAction,
+  cardTask,
   cardBusy, onExpired,
   initialState = null,
   onCheckingPower,
 }: {
-  machine: PublicMachine;
+  machine: PublicResource;
   ticket: string;
   children: ReactNode;
+  /** Shown beside the card heading, such as adding a card at the reader. */
+  cardHeadingAction?: ReactNode;
+  /** Shown instead of the card list and the coin while the player adds a card. */
+  cardTask?: ReactNode;
   cardBusy: boolean;
   onExpired: () => void;
   /** The page state the first read of the scan already returned; the page starts from it. */
-  initialState?: DeviceState | null;
+  initialState?: ResourceState | null;
   /** Whether the machine's power is being asked for, so the page header can say so. */
   onCheckingPower?: (checking: boolean) => void;
 }) {
@@ -79,7 +97,7 @@ export function DeviceControls({
   const code = machine.shop.publicId!;
   const { setBillingActive } = useAuth();
   const hasHa = !!(machine.capabilities.power || machine.capabilities.climate);
-  const [state, setState] = useState<DeviceState | null>(initialState);
+  const [state, setState] = useState<ResourceState | null>(initialState);
   const [power, setPower] = useState<PowerState>(() => (initialState?.device.watching ? initialState.device.power ?? "unknown" : "unknown"));
   const [climateState, setClimateState] = useState<ClimateState | null>(() => (initialState?.device.watching ? initialState.device.climate : null));
   const [info, setInfo] = useState<ShopInfo | null>(null);
@@ -127,7 +145,7 @@ export function DeviceControls({
   }, []);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const current = await api<DeviceState>(
+    const current = await api<ResourceState>(
       `/api/v1/devices/session/state?ticket=${encodeURIComponent(ticket)}&includePower=0&includeClimate=0`, { signal });
     if (signal?.aborted) return;
     setState(current);
@@ -140,7 +158,7 @@ export function DeviceControls({
 
   // A watched device's state and the page's own changes (a bot confirmed the binding) are pushed;
   // the page asks for them only while nothing pushes.
-  const live = useDeviceLive(ticket, hasHa && (!!state?.device.watching || watchHint), {
+  const live = useResourceLive(ticket, hasHa && (!!state?.device.watching || watchHint), {
     onFacts: applyFacts,
     onChange: applyFacts,
     onRefresh: () => { void refresh().catch(() => undefined); },
@@ -200,7 +218,7 @@ export function DeviceControls({
   // Only the binding (until a push can tell) and the mahjong seats change without the player acting.
   !state || (state.gate === "binding" && !pushed) || !!machine.capabilities.mahjong,
   initialState !== null);
-  const previousGate = useRef<DeviceState["gate"] | undefined>(undefined);
+  const previousGate = useRef<ResourceState["gate"] | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
     if (previousGate.current !== undefined && previousGate.current !== state?.gate) invalidatePlayerReads();
@@ -319,6 +337,7 @@ export function DeviceControls({
         consent,
         openDoor: true,
         location: await operationLocation(shop.locationEnabled ?? shop.checkinGeo),
+        ...(preview ? { expectedRevision: preview.revision } : {}),
       });
       setState((current) => (current ? { ...current, gate: "ready" } : current));
       if (result.door?.temporaryPassword && result.door.expiresAt)
@@ -328,7 +347,11 @@ export function DeviceControls({
     });
   }
   const cap = machine.capabilities;
-  if (!Object.values(cap).some(Boolean)) return <p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p>;
+  const preview = state?.billing?.preview ?? null;
+  const billingError = state?.billing?.error ?? null;
+  const rules = state?.billing?.rules ?? null;
+  // A resource without hardware still has to be confirmed before it bills.
+  if (!Object.values(cap).some(Boolean) && !machine.shop.billingEnabled) return <p className="session-subtitle text-center">{t("这里没有可操作的设备")}</p>;
   const powerBlocked = cap.power && power === "off";
   const hasReadyAction = cap.door || cap.climate || powerBlocked
     || (!powerBlocked && (cap.card || (cap.coin && !machine.coinAfterSwipe)
@@ -346,8 +369,21 @@ export function DeviceControls({
         <>
           {state.gate === "entry" && info && (
             <div className="grid gap-6">
-              <h2>{t("确认入场")}</h2>
-              <EntryPricing info={info} />
+              <h2>{t(billingError ? "暂时无法使用" : "计费规则")}</h2>
+              {billingError ? (
+                <p role="alert" className="text-sm text-coral">{billingError.message}</p>
+              ) : (
+                <>
+                  {rules ? (
+                    <ResourcePricing rules={rules} changes={preview ?? undefined} />
+                  ) : (
+                    <>
+                      {preview && <BillingChanges preview={preview} />}
+                      <EntryPricing info={info} />
+                    </>
+                  )}
+                </>
+              )}
               <label className="flex items-start gap-3 text-sm leading-relaxed">
                 <input
                   className="mt-1 shrink-0"
@@ -362,7 +398,7 @@ export function DeviceControls({
               {!cap.door && (
                 <button
                   className="session-action primary"
-                  disabled={!!busy || !consent}
+                  disabled={!!busy || !consent || !!billingError}
                   onClick={() =>
                     act("entry", async () => {
                       await playerOperation(
@@ -373,13 +409,15 @@ export function DeviceControls({
                           location: await operationLocation(
                             info.shop.locationEnabled ?? info.shop.checkinGeo,
                           ),
+                          // The server refuses a confirmation of a state that has since changed.
+                          ...(preview ? { expectedRevision: preview.revision } : {}),
                         },
                       );
                     })
                   }
                 >
                   {busy === "entry" && spinner}
-                  {t("确认入场")}
+                  {t("确认")}
                 </button>
               )}
               {noteAt("entry")}
@@ -403,7 +441,7 @@ export function DeviceControls({
               <button
                 className="session-action primary"
                 disabled={
-                  !!busy || cardBusy || (state.gate === "entry" && !consent)
+                  !!busy || cardBusy || (state.gate === "entry" && (!consent || !!billingError))
                 }
                 onClick={() =>
                   state.gate === "entry" && info ? enterAndOpenDoor(info.shop) : operate("door.open")}
@@ -474,14 +512,17 @@ export function DeviceControls({
                 {cap.card && (
                   <section>
                     <div className="session-task device-card-heading">
-                      <h2>{t("选择卡片")}</h2>
+                      <h2>{t(cardTask ? "添加卡片" : "选择卡片")}</h2>
+                      {!cardTask && cardHeadingAction}
                     </div>
-                    <fieldset disabled={!!busy || cardBusy}>
-                      {children}
-                    </fieldset>
+                    {cardTask ?? (
+                      <fieldset disabled={!!busy || cardBusy}>
+                        {children}
+                      </fieldset>
+                    )}
                   </section>
                 )}
-                {cap.coin && !machine.coinAfterSwipe && (
+                {cap.coin && !machine.coinAfterSwipe && !cardTask && (
                   // The press answers on the button itself (已投币, 请稍后再投币…) for a moment.
                   <button
                     className="session-action"
@@ -502,9 +543,29 @@ export function DeviceControls({
                 )}
               </>
             ))}
-          {state.gate === "ready" && !hasReadyAction && <p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p>}
+          {state.gate === "ready" && !hasReadyAction && <p className="session-subtitle text-center">{t("这里没有可操作的设备")}</p>}
         </>
       )}
     </div>
+  );
+}
+
+/** What confirming starts, ends and keeps; a plan kept running keeps its timer. */
+function BillingChanges({ preview }: { preview: NonNullable<ResourceBilling["preview"]> }) {
+  const { t } = useI18n();
+  const rows: [string, BillingChange[]][] = [
+    [t("新增方案"), preview.started],
+    [t("结束方案"), preview.stopped],
+    [t("保留方案"), preview.kept],
+  ];
+  return (
+    <dl className="grid gap-2 text-sm">
+      {rows.filter(([, items]) => items.length).map(([label, items]) => (
+        <div className="flex flex-wrap gap-x-3" key={label}>
+          <dt className="text-ink/60">{label}</dt>
+          <dd className="font-medium">{items.map((item) => item.planName).join("、")}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }

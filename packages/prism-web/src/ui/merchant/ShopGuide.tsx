@@ -284,14 +284,14 @@ function Flow({ stages }: { stages: Stage[] }) {
 
 function PlayerJourney({ mode, identity }: { mode: OperatingMode; identity: boolean }) {
   const { t } = useI18n();
-  const scan: Stage = [Nfc, "碰 NFC 或扫码", "设备上的 NFC 标签和二维码是同一个链接。iPhone 碰一下直接打开 PRiSM Link（App Clip，免安装），其它手机用浏览器打开。"];
+  const scan: Stage = [Nfc, "碰 NFC 或扫码", "资源的 NFC 标签和二维码是同一个链接。iPhone 碰一下直接打开 PRiSM Link（App Clip，免安装），其它手机用浏览器打开。"];
   const login: Stage = [LogIn, "登录", "用 MuNET 或 Passkey 登录。"];
   const bind: Stage = [ShieldCheck, "第一次来：绑定身份", "按你写的绑定提示，把绑定码发给店铺 Bot。以后不用再绑。"];
   const stages: Stage[] =
     mode === "desk"
       ? [
           [CreditCard, "前台刷卡", "第一次来由店员登记一个昵称，之后刷卡就能认出。"],
-          [Receipt, "店员点入场", "按店铺的入场规则开始计时。"],
+          [Receipt, "店员点入场", "按默认计费方案开始计时。"],
           [Gamepad2, "游玩", "计时进行中，店员可以在「在店」页随时看账单。"],
           [Wallet, "回前台付款", "店员按屏幕金额收微信、支付宝或现金，确认收款后结账。"],
         ]
@@ -300,7 +300,7 @@ function PlayerJourney({ mode, identity }: { mode: OperatingMode; identity: bool
             scan,
             login,
             ...(identity ? [bind] : []),
-            [Receipt, "确认收费并入场", "看到当天的收费标准，确认后开始计时。"],
+            [Receipt, "确认计费规则", "看到这里今天的计费规则和封顶进度，确认后开始计时；换到别的资源时，会说明要新增、保留或结束哪些计费。"],
             [Gamepad2, "用设备", "在手机上开机、刷卡、投币、开门或上麻将桌。"],
             [Wallet, "离店结账", "一键结账，从余额扣款，计时停止。"],
           ]
@@ -316,7 +316,7 @@ function PlayerJourney({ mode, identity }: { mode: OperatingMode; identity: bool
       <Flow stages={stages} />
       {mode === "desk" && (
         <p className="text-sm leading-relaxed text-ink/60">
-          {t("带手机的玩家也可以不经过前台：扫设备上的码或碰 NFC 入场，离店时用余额自助结账。")}
+          {t("带手机的玩家也可以不经过前台：扫店内的二维码或碰 NFC 入场，离店时用余额自助结账。")}
         </p>
       )}
     </section>
@@ -331,7 +331,7 @@ function OwnerDaily({ mode }: { mode: OperatingMode }) {
           ["在店", "前台电脑用桌面版 Chrome 或 Edge 打开，连上读卡器。玩家刷卡入场，离店再刷卡收款。"],
           ["玩家", "查玩家档案、余额和绑定的身份；给预存余额的玩家充值。"],
           ["记录", "每笔结账和营业额，现场收款和余额结算分开统计。"],
-          ["设备", "看设备状态、远程开关机、查操作记录。"],
+          ["资源", "看设备状态、远程开关机、查操作记录。"],
         ]
       : mode === "self"
         ? [
@@ -339,10 +339,10 @@ function OwnerDaily({ mode }: { mode: OperatingMode }) {
             ["玩家", "玩家余额不够时在这里充值；查档案和绑定的身份。"],
             ["资产", "建充值礼物、生成兑换码，拿到群里或网店售卖。"],
             ["记录", "每笔结账和营业额。"],
-            ["设备", "看设备状态、远程开关机、查操作记录。"],
+            ["资源", "看设备状态、远程开关机、查操作记录。"],
           ]
         : [
-            ["设备", "看设备状态、远程开关机、开门、查操作记录。"],
+            ["资源", "看设备状态、远程开关机、开门、查操作记录。"],
             ["设置", "玩家身份要求、Bot、门锁账号和成员。"],
           ];
   return (
@@ -451,17 +451,17 @@ function StepCard({
     id === "pricing"
       ? {
           title: "设定收费标准",
-          why: "玩家入场时按选中的入场规则计时；规则没覆盖的时段无法入场。",
+          why: "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的默认方案，再加上它依赖的方案。",
           warn:
             status.pricingProblem === "assets"
               ? "缺少可用的余额资产，玩家无法结账。"
               : status.pricingProblem === "entry"
-                ? "还没有选中可用的入场规则，玩家无法入场。"
+                ? "默认资源组还没有可用的默认计费方案，玩家无法开始计费。"
                 : undefined,
           actions: (
             <>
               {status.pricingProblem === "assets" && go(`${base}/assets`, "恢复余额资产")}
-              {status.pricingProblem === "entry" && go(`${base}/settings?group=billing`, "选择入场规则")}
+              {status.pricingProblem === "entry" && go(`${base}/resources`, "设置默认计费方案")}
               {go(`${base}/pricing`, "查看计费规则", true)}
             </>
           ),
@@ -533,28 +533,28 @@ function StepCard({
                 }
               : id === "devices"
                 ? {
-                    title: "添加设备并配置能力",
-                    why: "设备是玩家扫码后能操作的对象：一台机台、一扇门或一张麻将桌。「能力」决定它能做什么：开关电源、刷卡投币、开门或开桌。",
+                    title: "添加资源并配置能力",
+                    why: "资源是玩家扫码使用的对象：一台机台、一扇门、一张麻将桌，或者没有硬件的二维码。「能力」决定它能做什么：开关电源、刷卡投币、开门或开桌；没有能力的资源只用来开始计费。",
                     fact: !status.devices
-                      ? "还没有设备"
+                      ? "还没有资源"
                       : status.unconfigured
-                        ? t("{count} 台设备还没有配置能力", { count: status.unconfigured })
-                        : t("已有 {count} 台设备", { count: status.devices }),
+                        ? t("{count} 个资源还没有配置能力", { count: status.unconfigured })
+                        : t("已有 {count} 个资源", { count: status.devices }),
                     actions: go(
-                      status.devices ? `${base}/devices` : `${base}/devices?add=1`,
-                      status.devices ? "打开设备页" : "添加设备",
+                      status.devices ? `${base}/resources` : `${base}/resources?add=1`,
+                      status.devices ? "打开资源页" : "添加资源",
                     ),
                   }
                 : id === "door"
                   ? {
                       title: "连接 TTLock 账号",
                       why: "开门密码由店铺的 TTLock 开放平台账号生成，没连接时开门会失败。",
-                      fact: t("{count} 台设备启用了开门密码", { count: status.doorDevices }),
+                      fact: t("{count} 个资源启用了开门密码", { count: status.doorDevices }),
                       actions: go(`${base}/settings?group=devices`, done ? "查看 TTLock 设置" : "连接 TTLock"),
                     }
                   : {
                       title: "贴好二维码或 NFC，自己试一次",
-                      why: "每台设备都有专属二维码，打印后贴在设备上；同一个链接也可以写进 NFC 标签（NDEF 网址记录），玩家碰一下就能打开。",
+                      why: "每个资源都有专属二维码，打印后贴在对应位置；同一个链接也可以写进 NFC 标签（NDEF 网址记录），玩家碰一下就能打开。",
                       points: [
                         status.mode === "desk"
                           ? "在前台刷一张卡，入场后再收一次款；再用手机扫一次码，走一遍自助流程。"
@@ -568,7 +568,7 @@ function StepCard({
                           : undefined,
                       actions: (
                         <>
-                          {go(`${base}/devices`, "打开设备二维码")}
+                          {go(`${base}/resources`, "打开资源二维码")}
                           <TrialToggle shopCode={shopCode} reload={reload} />
                         </>
                       ),
@@ -668,9 +668,14 @@ function IdentityStep({
           </button>
         )}
         {policy !== "web" && (
-          <Link className={button} to={`${base}/settings?group=integrations`}>
-            {t("接入 Bot 与绑定提示")}
-          </Link>
+          <>
+            <Link className={button} to={`${base}/resources`}>
+              {t("添加 Bot")}
+            </Link>
+            <Link className={button} to={`${base}/settings?group=players`}>
+              {t("绑定提示")}
+            </Link>
+          </>
         )}
         {saved && <span role="status" className="text-sm text-mint">{t("已保存")}</span>}
       </div>
@@ -727,9 +732,9 @@ function Optional({
     {
       icon: Bot,
       title: "接入 Bot",
-      description: "玩家在群里绑定身份、查余额和账单；插件也可以设为只读，入场和结账都在网页或 App Clip 里完成。",
+      description: "在「资源」里添加 Bot：玩家在群里绑定身份、查余额和账单；也可以设为只读，入场和结账都在网页或 App Clip 里完成。",
       state: status.botConnected ? "已连接" : status.botIssued ? "已创建凭据，未连接" : undefined,
-      to: `${base}/settings?group=integrations`,
+      to: `${base}/resources`,
     },
     ...(status.mode !== "desk"
       ? [

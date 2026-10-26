@@ -1,4 +1,4 @@
-import type { Machine } from "../../api";
+import type { Resource } from "../../api";
 
 /**
  * What a device can do, derived from the machine row once.
@@ -10,7 +10,7 @@ import type { Machine } from "../../api";
  * let the device card, the editor and the action list disagree about whether
  * coin was usable on a given machine.
  */
-export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong";
+export type CapabilityId = "power" | "climate" | "hinata_io" | "door" | "mahjong" | "bot";
 
 export const capabilityOrder: CapabilityId[] = [
   "power",
@@ -18,12 +18,13 @@ export const capabilityOrder: CapabilityId[] = [
   "hinata_io",
   "door",
   "mahjong",
+  "bot",
 ];
 
 /** The capabilities this device currently carries. */
-export function deviceCapabilities(
+export function resourceCapabilities(
   machine: Pick<
-    Machine,
+    Resource,
     | "homeAssistant"
     | "climate"
     | "ttlockLockId"
@@ -32,7 +33,7 @@ export function deviceCapabilities(
     | "relayConnection"
     | "coinEnabled"
     | "hasPassword"
-  >,
+  > & Partial<Pick<Resource, "bot">>,
 ): Record<CapabilityId, boolean> {
   return {
     power: !!machine.homeAssistant,
@@ -41,12 +42,13 @@ export function deviceCapabilities(
       !!machine.hasHinata || machine.relayConnection === "embedded",
     door: !!machine.ttlockLockId,
     mahjong: !!machine.mahjong,
+    bot: !!machine.bot,
   };
 }
 
 /** Direct-connect machines authenticate the socket, so they need no password. */
 export function isDirectConnect(
-  machine: Pick<Machine, "relayConnection">,
+  machine: Pick<Resource, "relayConnection">,
 ): boolean {
   return machine.relayConnection === "embedded";
 }
@@ -58,7 +60,7 @@ export function isDirectConnect(
  */
 export function canOperateCoin(
   machine: Pick<
-    Machine,
+    Resource,
     "hasHinata" | "relayConnection" | "coinKey" | "hasPassword"
   >,
 ): boolean {
@@ -70,7 +72,7 @@ export function canOperateCoin(
   return isDirectConnect(machine) || !!machine.hasPassword;
 }
 
-export type MachineAction = { name: string; capability: string };
+export type ResourceAction = { name: string; capability: string };
 
 /**
  * Which capability owns an action. The server states this for every action it
@@ -89,7 +91,7 @@ export function actionCapability(action: string): CapabilityId | null {
 /** Staff actions grouped by the capability that owns them. */
 export function deviceActionGroups(
   machine: Pick<
-    Machine,
+    Resource,
     | "homeAssistant"
     | "climate"
     | "ttlockLockId"
@@ -98,7 +100,7 @@ export function deviceActionGroups(
     | "relayConnection"
     | "coinKey"
     | "hasPassword"
-  > & { actions?: MachineAction[] },
+  > & { actions?: ResourceAction[] },
 ): { capability: CapabilityId; actions: string[] }[] {
   const groups = new Map<CapabilityId, string[]>();
   const add = (capability: CapabilityId | null, action: string) => {
@@ -116,7 +118,7 @@ export function deviceActionGroups(
     }
   } else {
     // Fallback for a response written before actions carried capabilities.
-    const caps = deviceCapabilities(machine);
+    const caps = resourceCapabilities(machine);
     if (caps.power) {
       add("power", "power.on");
       add("power", "power.off");
@@ -145,7 +147,7 @@ export function deviceActions(
 
 /** A device with no capability has nothing a staff member can do with it. */
 export function isUnconfigured(
-  machine: Parameters<typeof deviceCapabilities>[0],
+  machine: Parameters<typeof resourceCapabilities>[0],
 ): boolean {
-  return !Object.values(deviceCapabilities(machine)).some(Boolean);
+  return !Object.values(resourceCapabilities(machine)).some(Boolean);
 }

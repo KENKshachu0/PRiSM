@@ -3,13 +3,13 @@ import {
   canOperateCoin,
   deviceActionGroups,
   deviceActions,
-  deviceCapabilities,
+  resourceCapabilities,
   isDirectConnect,
   isUnconfigured,
-} from "./device-capabilities";
-import type { Machine } from "../../api";
+} from "./resource-capabilities";
+import type { Resource } from "../../api";
 
-const machine = (over: Partial<Machine> = {}): Machine => ({
+const machine = (over: Partial<Resource> = {}): Resource => ({
   id: "m1",
   publicId: "p1",
   shopId: "s1",
@@ -39,7 +39,7 @@ describe("device capability view", () => {
         { name: "climate.set_temperature", capability: "climate" },
       ],
     });
-    expect(deviceCapabilities(ac)).toMatchObject({ power: false, climate: true });
+    expect(resourceCapabilities(ac)).toMatchObject({ power: false, climate: true });
     expect(isUnconfigured(ac)).toBe(false);
     expect(deviceActionGroups(ac)).toEqual([
       { capability: "climate", actions: ["climate.on", "climate.set_temperature"] },
@@ -48,15 +48,16 @@ describe("device capability view", () => {
   });
 
   it("derives one capability per bound binding", () => {
-    expect(deviceCapabilities(machine())).toEqual({
+    expect(resourceCapabilities(machine())).toEqual({
       power: false,
       climate: false,
       hinata_io: false,
       door: false,
       mahjong: false,
+      bot: false,
     });
     expect(
-      deviceCapabilities(
+      resourceCapabilities(
         machine({
           homeAssistant: { url: "https://ha", entityId: "switch.a" },
           ttlockLockId: 42,
@@ -64,12 +65,12 @@ describe("device capability view", () => {
           relayConnection: "embedded",
         }),
       ),
-    ).toEqual({ power: true, climate: false, hinata_io: true, door: true, mahjong: true });
+    ).toEqual({ power: true, climate: false, hinata_io: true, door: true, mahjong: true, bot: false });
   });
 
   it("treats a direct connection as HINATA IO even without an external URL", () => {
     const direct = machine({ relayConnection: "embedded", hasHinata: false });
-    expect(deviceCapabilities(direct).hinata_io).toBe(true);
+    expect(resourceCapabilities(direct).hinata_io).toBe(true);
     expect(isDirectConnect(direct)).toBe(true);
   });
 

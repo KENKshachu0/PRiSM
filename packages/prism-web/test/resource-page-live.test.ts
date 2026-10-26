@@ -5,7 +5,7 @@ import {
   parseLiveFrame,
   type FactsChange,
   type LiveHandlers,
-} from "../src/ui/use-device-live";
+} from "../src/ui/use-resource-live";
 import { settleClimate, TEMPERATURE_SETTLE_MS, type ClimateState } from "../src/ui/ClimateControls";
 
 const cooling: ClimateState = {

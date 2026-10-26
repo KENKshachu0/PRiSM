@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
   AirVent,
@@ -14,13 +14,16 @@ import {
   QrCode,
   RefreshCw,
   Ungroup,
+  Bot,
+  Users,
 } from "lucide-react";
-import { Api, api, playerOperation, type DeviceEvent, type Machine } from "../../api";
+import { Api, api, playerOperation, type DeviceEvent, type OccupancyHistoryEntry, type Resource, type ResourceGroup, type ResourceOccupancyView } from "../../api";
 import { ClimateControls, climateModeName, climateSummary, type ClimateState } from "../ClimateControls";
 import { useI18n } from "../../i18n";
 import {
   date,
   input,
+  segment,
   Modal,
   State,
   button,
@@ -36,11 +39,12 @@ import {
   capabilityOrder,
   deviceActionGroups,
   deviceActions,
-  deviceCapabilities,
+  resourceCapabilities,
   isDirectConnect,
   type CapabilityId,
-} from "./device-capabilities";
-import { DeviceEditor } from "./DeviceEditor";
+} from "./resource-capabilities";
+import { ResourceEditor } from "./ResourceEditor";
+import { ResourceGroupEditor, useBillablePlans, useResourceGroups } from "./ResourceGroups";
 import {
   applyBoardFrame,
   hasUnwatched,
@@ -67,33 +71,38 @@ const capabilityChips: Record<
   hinata_io: { icon: CreditCard, label: "刷卡" },
   door: { icon: DoorOpen, label: "门锁" },
   mahjong: { icon: Ungroup, label: "麻将桌" },
+  bot: { icon: Bot, label: "Bot" },
 };
 
 /**
  * The device list is cached per shop so returning to the tab shows the last
  * known cards instead of a loading line. Every mount still refetches.
  */
-const machineCache = new Map<string, Machine[]>();
+const machineCache = new Map<string, Resource[]>();
 
-export function DevicesPage() {
-  const { shopId, canWrite } = useMerchant();
+export function ResourcesPage() {
+  const { shopId, shopCode, canWrite } = useMerchant();
   const { user } = useAuth();
+  const plans = useBillablePlans(shopCode);
   const { t } = useI18n();
-  const [devices, setDevices] = useState<Machine[] | null>(
+  const [devices, setDevices] = useState<Resource[] | null>(
     () => machineCache.get(shopId) ?? null,
   );
   const [error, setError] = useState("");
-  const [editing, setEditing] = useState<Machine | "new" | null>(null);
-  const [qr, setQR] = useState<Machine | null>(null);
-  const [acting, setActing] = useState<Machine | null>(null);
-  const [history, setHistory] = useState<Machine | null>(null);
+  // A resource being edited, or the group a new one is added to.
+  const [editing, setEditing] = useState<Resource | { groupId: string } | null>(null);
+  const [groupEditing, setGroupEditing] = useState<ResourceGroup | "new" | null>(null);
+  const [qr, setQR] = useState<Resource | null>(null);
+  const [acting, setActing] = useState<Resource | null>(null);
+  const [history, setHistory] = useState<Resource | null>(null);
   const [editorLocked, setEditorLocked] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+  const resourceGroups = useResourceGroups(shopId);
   const [params, setParams] = useSearchParams();
   // The setup guide links here with `?add=1` to open the editor directly.
   useEffect(() => {
     if (params.get("add") !== "1") return;
-    if (canWrite) setEditing("new");
+    if (canWrite) setEditing({ groupId: "default" });
     const next = new URLSearchParams(params);
     next.delete("add");
     setParams(next, { replace: true });
@@ -131,6 +140,24 @@ export function DevicesPage() {
     }
     setFirstRead(true);
   }, [shopId]);
+  /** Who is on each resource now; read with the states and every half minute. */
+  const [occupancy, setOccupancy] = useState<Record<string, ResourceOccupancyView>>({});
+  const readOccupancy = useCallback(async () => {
+    try {
+      const r = await api<{ resources: ResourceOccupancyView[] }>(
+        `/api/v1/merchant/machines/occupancy?shopId=${encodeURIComponent(shopId)}`,
+      );
+      setOccupancy(Object.fromEntries(r.resources.map((resource) => [resource.resourceId, resource])));
+    } catch {
+      // The cards simply show no occupancy until the next read.
+    }
+  }, [shopId]);
+  useEffect(() => {
+    setOccupancy({});
+    void readOccupancy();
+    const timer = setInterval(() => void readOccupancy(), 30_000);
+    return () => clearInterval(timer);
+  }, [readOccupancy]);
   /** What the panel read of one device, put where the board shows it. */
   const setDeviceState = useCallback(
     (id: string, next: BoardState) =>
@@ -139,7 +166,7 @@ export function DevicesPage() {
   );
   async function refresh() {
     setRefreshing(true);
-    await readStates();
+    await Promise.all([readStates(), readOccupancy()]);
     setRefreshing(false);
   }
   const load = useCallback(
@@ -154,7 +181,7 @@ export function DevicesPage() {
     load().catch((e) => setError(e.message));
   }, [load]);
   const hasStateDevices = (devices ?? []).some((device) => {
-    const caps = deviceCapabilities(device);
+    const caps = resourceCapabilities(device);
     return caps.power || caps.climate;
   });
   const allWatched = states !== null && !hasUnwatched(states);
@@ -184,23 +211,39 @@ export function DevicesPage() {
   const counts = useMemo(() => {
     const result: Record<string, number> = { all: devices?.length ?? 0 };
     for (const device of devices ?? []) {
-      const caps = deviceCapabilities(device);
+      const caps = resourceCapabilities(device);
       for (const id of capabilityOrder) if (caps[id]) result[id] = (result[id] ?? 0) + 1;
       if (!Object.values(caps).some(Boolean))
         result.unconfigured = (result.unconfigured ?? 0) + 1;
     }
     return result;
   }, [devices]);
-  const shown = devices?.filter((device) => {
+  const matches = (device: Resource) => {
     if (filter === "all") return true;
-    const caps = deviceCapabilities(device);
+    const caps = resourceCapabilities(device);
     if (filter === "unconfigured") return !Object.values(caps).some(Boolean);
     return caps[filter];
-  });
+  };
+  const planName = (id: string | null) => plans.find((plan) => plan.id === id)?.name ?? null;
+  // Every resource sits in its group; the shop's default group comes first. A resource whose
+  // group is not listed (the groups could not be read) is shown in the default group.
+  const listed = new Set((resourceGroups.groups ?? []).map((group) => group.id));
+  const groupOf = (device: Resource) => {
+    const id = device.resourceGroupId ?? "default";
+    return listed.has(id) ? id : "default";
+  };
+  const sections = (resourceGroups.groups ?? []).map((group) => ({
+    group,
+    resources: (devices ?? []).filter((device) => groupOf(device) === group.id && matches(device)),
+  }));
+  const reloadAll = () => {
+    void load();
+    void resourceGroups.reload();
+  };
   return (
     <div className="grid gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <h2 className="text-xl font-semibold">{t("店内设备")}</h2>
+        <h2 className="text-xl font-semibold">{t("店内资源")}</h2>
         <div className="flex flex-wrap items-center gap-2">
           {hasStateDevices && (
             <button
@@ -215,9 +258,9 @@ export function DevicesPage() {
             </button>
           )}
           {canWrite && (
-            <button className={primary} onClick={() => setEditing("new")}>
+            <button className={primary} onClick={() => setGroupEditing("new")}>
               <Plus size={17} />
-              {t("添加设备")}
+              {t("添加资源组")}
             </button>
           )}
         </div>
@@ -235,7 +278,7 @@ export function DevicesPage() {
       <div
         className="flex flex-wrap gap-2"
         role="group"
-        aria-label={t("设备类型")}
+        aria-label={t("资源类型")}
       >
         {(
           [
@@ -243,7 +286,7 @@ export function DevicesPage() {
             ...capabilityOrder.map((id) => [id, capabilityChips[id].label] as const),
             ["unconfigured", "未配置"],
           ] as [Filter, string][]
-        ).map(([key, label]) => (
+        ).filter(([key]) => key === "all" || counts[key]).map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -262,54 +305,79 @@ export function DevicesPage() {
           </button>
         ))}
       </div>
-      {!shown ? (
+      {resourceGroups.error && (
+        <p role="alert" className="flex flex-wrap items-center gap-3 text-sm text-coral">
+          {t("资源组读取失败，资源暂按默认资源组显示")}
+          <button type="button" className="underline" onClick={() => void resourceGroups.reload()}>{t("重试")}</button>
+        </p>
+      )}
+      {!devices || !resourceGroups.groups ? (
         <State error={error} />
-      ) : !shown.length ? (
-        <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
-          <Gamepad2 className="mx-auto mb-4 text-ink/30" size={32} />
-          <p className="font-medium">
-            {t(filter === "all" ? "还没有任何设备" : "这个分类下没有设备")}
-          </p>
-          {filter === "all" && (
-            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink/55">
-              {t("一台设备对应店里一样玩家扫码就能用的东西：一台机台、一扇门或一张麻将桌。添加后它会有专属二维码。")}
-            </p>
-          )}
-          {canWrite && (
-            <button
-              className={`${primary} mt-5`}
-              onClick={() => setEditing("new")}
-            >
-              <Plus size={16} />
-              {t("添加设备")}
-            </button>
-          )}
-        </div>
       ) : (
-        <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {shown.map((device) => (
-            <DeviceCard
-              key={device.id}
-              device={device}
-              canWrite={canWrite}
-              state={states?.[device.id] ?? null}
-              stateFailed={statesFailed && states === null}
-              // The first read of a device with no state of its own is still on its way.
-              pending={!firstRead && !!states?.[device.id] && !states[device.id]!.watching}
-              onAct={() => setActing(device)}
-              onQR={() => setQR(device)}
-              onHistory={() => setHistory(device)}
-              onEdit={() => setEditing(device)}
-            />
-          ))}
-        </div>
+        sections
+          .filter(({ resources }) => filter === "all" || resources.length > 0)
+          .map(({ group, resources }) => {
+            const plan = planName(group.defaultPricingConfigId);
+            return (
+              <section key={group.id} className="grid gap-3" aria-label={t(group.name)}>
+                <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-ink/10 pb-2">
+                  <h3 className="text-base font-semibold">{t(group.name)}</h3>
+                  {/* Groups that could not be read are not described, nor edited from a stand-in. */}
+                  {!resourceGroups.error && <span className="flex flex-wrap items-center gap-x-3 text-xs text-ink/55">
+                    <span className={plan ? "" : "text-coral"}>{plan ?? t("未设置计费方案")}</span>
+                    <span>{t("{count} 个资源", { count: group.resourceCount })}</span>
+                    {!group.enabled && <span className="text-coral">{t("已停用")}</span>}
+                  </span>}
+                  {canWrite && (
+                    <span className="ml-auto flex items-center gap-1">
+                      {!resourceGroups.error && <button type="button" className={`${buttonQuiet} min-h-9 px-2 text-xs`} onClick={() => setGroupEditing(group)}>
+                        <Pencil size={14} aria-hidden="true" />
+                        {t("编辑")}
+                      </button>}
+                      <button type="button" className={`${button} min-h-9 px-3 py-1 text-xs`} onClick={() => setEditing({ groupId: group.id })}>
+                        <Plus size={14} aria-hidden="true" />
+                        {t("添加资源")}
+                      </button>
+                    </span>
+                  )}
+                </header>
+                {resources.length ? (
+                  <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {resources.map((device) => (
+                      <ResourceCard
+                        key={device.id}
+                        device={device}
+                        canWrite={canWrite}
+                        state={states?.[device.id] ?? null}
+                        occupancy={occupancy[device.id]}
+                        stateFailed={statesFailed && states === null}
+                        // The first read of a device with no state of its own is still on its way.
+                        pending={!firstRead && !!states?.[device.id] && !states[device.id]!.watching}
+                        playerHref={(playerId) => `/merchant/${segment(shopCode)}/live?player=${segment(playerId)}`}
+                        onAct={() => setActing(device)}
+                        onQR={() => setQR(device)}
+                        onHistory={() => setHistory(device)}
+                        onEdit={() => setEditing(device)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-ink/15 px-5 py-6 text-center text-sm text-ink/50">
+                    {t(group.isDefault && !devices.length
+                      ? "一个资源对应店里一样玩家扫码就能用的东西：一台机台、一扇门、一张麻将桌，或者只是墙上的一张二维码。"
+                      : "没有资源")}
+                  </p>
+                )}
+              </section>
+            );
+          })
       )}
       {acting && (
         <Modal
           title={`${acting.name} · ${t("操作")}`}
           close={() => setActing(null)}
         >
-          <DeviceActions
+          <ResourceActions
             device={acting}
             state={states?.[acting.id] ?? null}
             onState={(next) => setDeviceState(acting.id, next)}
@@ -319,40 +387,55 @@ export function DevicesPage() {
       )}
       {history && (
         <Modal
-          title={`${history.name} · ${t("操作记录")}`}
+          title={`${history.name} · ${t("记录")}`}
           close={() => setHistory(null)}
           wide
         >
-          <DeviceHistory device={history} />
+          <ResourceRecords device={history} playerHref={(playerId) => `/merchant/${segment(shopCode)}/live?player=${segment(playerId)}`} />
         </Modal>
       )}
       {editing && (
         <Modal
-          title={editing === "new" ? "添加设备" : "编辑设备"}
+          title={"id" in editing ? "编辑资源" : "添加资源"}
           close={() => setEditing(null)}
           dismissDisabled={editorLocked}
           wide
         >
-          <DeviceEditor
-            value={editing === "new" ? undefined : editing}
+          <ResourceEditor
+            value={"id" in editing ? editing : undefined}
+            groupId={"id" in editing ? undefined : editing.groupId}
             onLockChange={setEditorLocked}
             done={() => {
               setEditing(null);
-              void load();
+              reloadAll();
+            }}
+          />
+        </Modal>
+      )}
+      {groupEditing && (
+        <Modal
+          title={groupEditing === "new" ? "添加资源组" : t(groupEditing.name)}
+          close={() => setGroupEditing(null)}
+        >
+          <ResourceGroupEditor
+            group={groupEditing === "new" ? undefined : groupEditing}
+            done={() => {
+              setGroupEditing(null);
+              reloadAll();
             }}
           />
         </Modal>
       )}
       {qr && (
-        <Modal title="设备二维码" close={() => setQR(null)}>
-          <DeviceQR device={qr} />
+        <Modal title="资源二维码" close={() => setQR(null)}>
+          <ResourceQR device={qr} />
         </Modal>
       )}
     </div>
   );
 }
 
-function DeviceQR({ device }: { device: Machine }) {
+function ResourceQR({ device }: { device: Resource }) {
   const { t } = useI18n();
   const [copied, copy] = useCopy();
   const code = useRef<HTMLDivElement>(null);
@@ -406,31 +489,37 @@ function DeviceQR({ device }: { device: Machine }) {
  * state. Secondary actions live behind an overflow menu: three equal-weight
  * buttons used to overflow the card as soon as the labels grew.
  */
-function DeviceCard({
+function ResourceCard({
   device,
   canWrite,
   state,
+  occupancy,
   stateFailed,
   pending,
+  playerHref,
   onAct,
   onQR,
   onHistory,
   onEdit,
 }: {
-  device: Machine;
+  device: Resource;
   canWrite: boolean;
   /** What the board knows of this device's power and air conditioner; null until it is read. */
   state: BoardState | null;
+  /** Who is on it now; absent for a resource nobody occupies (capacity 0). */
+  occupancy?: ResourceOccupancyView;
   stateFailed: boolean;
   /** A device with no state of its own whose first read has not come back yet. */
   pending: boolean;
+  /** Where a player's own page is: their profile and, while they bill, their bill. */
+  playerHref: (playerId: string) => string;
   onAct: () => void;
   onQR: () => void;
   onHistory: () => void;
   onEdit: () => void;
 }) {
   const { t } = useI18n();
-  const caps = deviceCapabilities(device);
+  const caps = resourceCapabilities(device);
   const enabled = !!device.enabled;
   const configured = Object.values(caps).some(Boolean);
   const actions = deviceActions(device);
@@ -454,7 +543,7 @@ function DeviceCard({
               : "bg-mint/10 text-mint"
           }`}
         >
-          {caps.door ? <DoorOpen size={22} /> : <Gamepad2 size={22} />}
+          {caps.bot ? <Bot size={22} /> : caps.door ? <DoorOpen size={22} /> : <Gamepad2 size={22} />}
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold">{device.name}</h3>
@@ -475,11 +564,6 @@ function DeviceCard({
               >
                 <Icon size={13} />
                 {t(chip.label)}
-                {id === "mahjong" && device.mahjong && (
-                  <span className="text-ink/50">
-                    {t("{count} 人", { count: device.mahjong.capacity })}
-                  </span>
-                )}
                 {id === "hinata_io" && isDirectConnect(device) && (
                   <span className="text-mint">{t("直连")}</span>
                 )}
@@ -495,6 +579,27 @@ function DeviceCard({
             <span className="inline-flex items-center rounded-md bg-ink/5 px-2 py-1 text-xs text-ink/60">
               TTLock · {device.ttlockLockId}
             </span>
+          )}
+        </div>
+      )}
+      {occupancy && (
+        <div className="mb-4 flex min-w-0 flex-wrap items-center gap-1.5 px-5 text-xs">
+          <span className="flex shrink-0 items-center gap-1 tabular-nums text-ink/60" title={t("占用")}>
+            <Users size={13} aria-hidden="true" />
+            {occupancy.occupants.length}/{occupancy.capacity}
+          </span>
+          {occupancy.occupants.length ? (
+            occupancy.occupants.map((occupant) => (
+              <Link
+                key={occupant.playerId}
+                className="focus-ring max-w-[10rem] truncate rounded-md bg-mint/10 px-2 py-1 font-medium text-mint hover:bg-mint/20"
+                to={playerHref(occupant.playerId)}
+              >
+                {occupant.displayName ?? occupant.playerId}
+              </Link>
+            ))
+          ) : (
+            <span className="text-ink/45">{t("空闲")}</span>
           )}
         </div>
       )}
@@ -564,14 +669,17 @@ function DeviceCard({
           {t("操作记录")}
           <ChevronRight size={15} className="text-ink/35" />
         </button>
-        <button
-          type="button"
-          className={`${buttonQuiet} grid size-9 shrink-0 place-items-center px-0`}
-          aria-label={`${t("设备二维码")} ${device.name}`}
-          onClick={onQR}
-        >
-          <QrCode size={16} />
-        </button>
+        {/* A bot is not something players scan. */}
+        {!device.bot && (
+          <button
+            type="button"
+            className={`${buttonQuiet} grid size-9 shrink-0 place-items-center px-0`}
+            aria-label={`${t("资源二维码")} ${device.name}`}
+            onClick={onQR}
+          >
+            <QrCode size={16} />
+          </button>
+        )}
       </footer>
     </article>
   );
@@ -701,6 +809,7 @@ const capabilityMeta: Record<
   hinata_io: { icon: CreditCard, title: "刷卡 · HINATA IO" },
   door: { icon: DoorOpen, title: "开门密码" },
   mahjong: { icon: Ungroup, title: "麻将桌" },
+  bot: { icon: Bot, title: "Bot" },
 };
 
 /**
@@ -711,13 +820,13 @@ const capabilityMeta: Record<
  * Actions are grouped by the capability that owns them, and each group shows
  * the state that decides what those actions will do.
  */
-function DeviceActions({
+function ResourceActions({
   device,
   state,
   onState,
   onChanged,
 }: {
-  device: Machine;
+  device: Resource;
   /** Power and air conditioner as the board has them: pushed for a live device, last read otherwise. */
   state: BoardState | null;
   /** Hands the board what this panel read of the device. */
@@ -725,7 +834,7 @@ function DeviceActions({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
-  const caps = deviceCapabilities(device);
+  const caps = resourceCapabilities(device);
   const groups = deviceActionGroups(device);
   const players = useResource<{ players: LivePlayer[] }>(
     caps.mahjong ? "live-players" : null,
@@ -990,7 +1099,7 @@ function DeviceActions({
       })}
       {!device.enabled && (
         <p className="text-sm text-coral">
-          {t("设备已停用，操作不可用。")}
+          {t("资源已停用，操作不可用。")}
         </p>
       )}
       {error && (
@@ -1007,8 +1116,63 @@ function DeviceActions({
   );
 }
 
+const END_REASONS: Record<NonNullable<OccupancyHistoryEntry["endReason"]>, string> = {
+  timeout: "超时",
+  replaced: "被替换",
+  left: "离开",
+  billing_ended: "计费结束",
+};
+
+/** Who was on the resource, then what the platform asked of it and what it reported. */
+function ResourceRecords({ device, playerHref }: { device: Resource; playerHref: (playerId: string) => string }) {
+  const { t } = useI18n();
+  return (
+    <div className="grid gap-6">
+      <OccupancyHistory device={device} playerHref={playerHref} />
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">{t("操作记录")}</h3>
+        <ResourceHistory device={device} />
+      </section>
+    </div>
+  );
+}
+
+/** Who was on the resource and for how long, newest first. Nothing for a resource nobody occupies. */
+function OccupancyHistory({ device, playerHref }: { device: Resource; playerHref: (playerId: string) => string }) {
+  const { t } = useI18n();
+  const [entries, setEntries] = useState<OccupancyHistoryEntry[] | null>(null);
+  useEffect(() => {
+    let current = true;
+    api<{ entries: OccupancyHistoryEntry[] }>(`/api/v1/merchant/machines/${encodeURIComponent(device.id)}/occupancy`)
+      .then((r) => current && setEntries(r.entries))
+      .catch(() => current && setEntries([]));
+    return () => {
+      current = false;
+    };
+  }, [device.id]);
+  if (!entries?.length) return null;
+  return (
+    <section className="grid gap-2">
+      <h3 className="text-sm font-semibold">{t("占用记录")}</h3>
+      <div className="divide-y divide-ink/10">
+        {entries.map((entry) => (
+          <div className="flex justify-between gap-3 py-2 text-sm" key={entry.id}>
+            <Link className="truncate underline-offset-2 hover:underline" to={playerHref(entry.playerId)}>
+              {entry.displayName ?? entry.playerId}
+            </Link>
+            <span className="shrink-0 text-ink/60 tabular-nums">
+              {date(entry.startedAt)} – {entry.endedAt ? date(entry.endedAt) : t("进行中")}
+              {entry.endReason && <span className="ml-2 text-ink/45">{t(END_REASONS[entry.endReason])}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** Read-only history: what the platform asked for and what the device reported. */
-function DeviceHistory({ device }: { device: Machine }) {
+function ResourceHistory({ device }: { device: Resource }) {
   const { t } = useI18n();
   const [events, setEvents] = useState<DeviceEvent[] | null>(null);
   const [error, setError] = useState("");

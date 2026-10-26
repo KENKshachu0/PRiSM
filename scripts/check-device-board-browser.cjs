@@ -80,6 +80,8 @@ async function openBoard(browser, { watchedIo, viewport, clock = false, silentHu
     if (p === "/api/v1/me") data = { user: { id: "owner", username: "owner", displayName: "owner", role, hasShops: true } };
     else if (p === "/api/v1/merchant/shops") data = { shops: [shop] };
     else if (p === "/api/v1/merchant/machines") data = { machines };
+    else if (p === "/api/v1/merchant/resource-groups") data = { resourceGroups: [{ id: "default", name: "默认资源组", enabled: true, isDefault: true, defaultPricingConfigId: null, resourceCount: 0 }] };
+    else if (p === "/api/v1/merchant/machines/occupancy") data = { resources: [] };
     else if (p === "/api/v1/merchant/machines/states") {
       data = { states: { ...snapshot, io: watchedIo ? snapshot.io : { ...nothing, power: "on" } } };
     }

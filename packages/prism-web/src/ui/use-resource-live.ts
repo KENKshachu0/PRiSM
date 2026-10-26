@@ -87,7 +87,7 @@ const RETRY_MS = [5000, 10_000, 20_000, 60_000];
  * device that is watched. A dropped connection is reopened with a growing wait;
  * meanwhile `dropped` tells the page its last state may be stale.
  */
-export function useDeviceLive(ticket: string, enabled: boolean, handlers: LiveHandlers): LiveStatus {
+export function useResourceLive(ticket: string, enabled: boolean, handlers: LiveHandlers): LiveStatus {
   const [status, setStatus] = useState<LiveStatus>(idleLive);
   const latest = useRef(handlers);
   latest.current = handlers;

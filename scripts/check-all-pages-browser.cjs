@@ -67,6 +67,8 @@ function mock(request, role, unknown, mutations) {
   };
   if (p === "/api/v1/merchant/shops") return { shops: [shop] };
   if (p === "/api/v1/merchant/machines") return { machines: [] };
+  if (p === "/api/v1/merchant/resource-groups") return { resourceGroups: [{ id: "default", name: "默认资源组", enabled: true, isDefault: true, defaultPricingConfigId: null, resourceCount: 0 }] };
+  if (p === "/api/v1/merchant/machines/occupancy") return { resources: [] };
   if (p === "/api/v1/merchant/device-bindings") return { bindings: [] };
   if (p === "/api/v1/merchant/ha-connections") return { connections: [] };
   if (p === "/api/v1/merchant/idle-power") return { settings: { shopEmpty: { enabled: false, minutes: 15 }, device: { defaultMinutes: 0, whileOccupied: "mark" }, devices: {} } };
@@ -129,7 +131,7 @@ const cases = [
     ["/cards", "卡片"], ["/settings", "账号"], ["/t/demo", "CI 测试店铺"],
   ]},
   { role: "viewer", pages: [
-    ["/merchant/demo/devices", "店内设备"],
+    ["/merchant/demo/devices", "店内资源"],
     ["/merchant/demo/live", "在店玩家"],
     ["/merchant/demo/players", "玩家"],
     ["/merchant/demo/pricing", "计费规则"],
@@ -137,7 +139,7 @@ const cases = [
     ["/merchant/demo/reports", "营业记录"],
   ]},
   { role: "owner", pages: [
-    ["/cards", "卡片"], ["/merchant/demo/devices", "店内设备"],
+    ["/cards", "卡片"], ["/merchant/demo/devices", "店内资源"],
     ["/merchant/demo/live", "在店玩家"], ["/merchant/demo/players", "玩家"],
     ["/merchant/demo/pricing", "计费规则"], ["/merchant/demo/assets", "资产与兑换"],
     ["/merchant/demo/reports", "营业记录"],
@@ -220,8 +222,10 @@ const cases = [
               }
             }
             if (url.endsWith("/devices")) {
-              await page.getByRole("button", { name: "门锁" }).click();
-              await page.getByRole("button", { name: "全部" }).first().click();
+              // Only capabilities some resource has get a chip; this shop has no resources.
+              const chips = page.getByRole("group", { name: "资源类型" }).getByRole("button");
+              assert.equal(await chips.count(), 1);
+              await chips.first().click();
             }
             if (url.endsWith("/assets")) {
               const nav = page.getByRole("navigation", { name: "资产分类" });
@@ -252,7 +256,7 @@ const cases = [
             }
             if (testCase.role === "owner") {
               let open;
-              if (url.endsWith("/devices")) open = "添加设备";
+              if (url.endsWith("/devices")) open = "添加资源";
               if (open) {
                 await page.getByRole("button", { name: open, exact: true }).first().click();
                 await page.getByRole("dialog").first().waitFor();

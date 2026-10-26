@@ -1,5 +1,5 @@
 import {
-  buildBillTimeline,
+  previewBillTimeline,
   type PreviewPlayerCheckoutResult,
 } from "@prism/application";
 import { yuanOf } from "@prism/core";
@@ -12,12 +12,7 @@ export function checkoutPreviewView(result: PreviewPlayerCheckoutResult) {
     amount: yuanOf(item.amount),
   });
   return {
-    timeline: buildBillTimeline({
-      at: result.settlementPreview.previewedAt,
-      sessions: result.sessionPreviews,
-      adjustments: result.adjustments,
-      globalCapWindows: result.globalCapWindows,
-    }),
+    timeline: previewBillTimeline(result),
     settlementPreview: {
       ...result.settlementPreview,
       subtotal: yuanOf(result.settlementPreview.subtotal),

@@ -2,18 +2,23 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   AirVent,
-  ChevronDown,
   CreditCard,
   DoorOpen,
+  Info,
+  Plus,
   Power,
+  Trash2,
   Ungroup,
+  Users,
   X,
   type LucideIcon,
+  Bot,
 } from "lucide-react";
-import { api, type Machine } from "../../api";
+import { Api, api, type BotSettings, type Resource } from "../../api";
 import { useI18n } from "../../i18n";
 import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant, useResource } from "./shared";
-import { deviceCapabilities, type CapabilityId } from "./device-capabilities";
+import { useBillablePlans, useResourceGroups } from "./ResourceGroups";
+import { resourceCapabilities, type CapabilityId } from "./resource-capabilities";
 import { HaEntityFields, NEW_CONNECTION, haBody, useHaConnections, type HaDraft } from "./HaEntityFields";
 import { idlePath, useIdleSettings } from "./IdlePowerSettings";
 
@@ -27,18 +32,20 @@ const POWER_DOMAINS = ["switch", "input_boolean"];
 const CLIMATE_DOMAINS = ["climate"];
 
 /**
- * Device configuration in two sections: what the device *is* (identity) and
- * what it *can do* (capabilities). Capabilities start collapsed and open one
- * at a time, so a device with four bindings is not a wall of credentials; the
- * switch turns a capability on, and turning it on opens it, because that is
- * the moment its configuration has to be filled in.
+ * Resource configuration, one section at a time: what it is, what it bills and
+ * how many it holds, then each capability it has. A capability with something
+ * left to fill in is marked in the list, so nothing half-done hides behind a
+ * collapsed card.
  */
-export function DeviceEditor({
+export function ResourceEditor({
   value,
+  groupId: initialGroupId,
   done,
   onLockChange,
 }: {
-  value?: Machine;
+  value?: Resource;
+  /** The group a new resource is added to. */
+  groupId?: string;
   done: () => void;
   /** Locks the dialog while a one-time token is on screen. */
   onLockChange: (locked: boolean) => void;
@@ -53,7 +60,7 @@ export function DeviceEditor({
     !!shopSettings.data &&
     !(lock?.clientId && lock.clientSecret && (lock.accessToken || lock.appAccount));
   const shopPath = `/merchant/${encodeURIComponent(shopCode)}`;
-  const initial = deviceCapabilities(
+  const initial = resourceCapabilities(
     value ?? {
       homeAssistant: null,
       climate: null,
@@ -66,24 +73,25 @@ export function DeviceEditor({
     },
   );
   const [caps, setCaps] = useState(initial);
-  // Every capability starts collapsed; selecting one opens it, and only one
-  // stays open at a time.
-  const [open, setOpen] = useState<CapabilityId | null>(null);
+  // One section is shown at a time: the basics, billing and occupancy, an
+  // enabled capability, or the list of capabilities still to add.
+  const [pane, setPane] = useState<"basic" | "usage" | "add" | CapabilityId>("basic");
   const [name, setName] = useState(value?.name ?? "");
   // One value per alias. The editor always renders one extra empty row, so an
   // empty array is the correct starting point for a device without aliases.
   const [aliases, setAliases] = useState<string[]>(value?.aliases ?? []);
   const [enabled, setEnabled] = useState(value ? !!value.enabled : true);
+  // Empty for a new resource: the server picks 1 for a cabinet with an IO, 0 otherwise.
+  const [resourceCapacity, setResourceCapacity] = useState(value?.capacity === undefined ? "" : String(value.capacity));
+  const [occupancyMinutes, setOccupancyMinutes] = useState(String(value?.occupancyMinutes ?? 15));
 
   const ha = useHaConnections(shopId);
   const idle = useIdleSettings(shopId);
   const ownIdle = value ? idle.settings?.devices[value.id] : undefined;
-  const [idleMinutes, setIdleMinutes] = useState("");
   const [idleExclude, setIdleExclude] = useState(false);
   useEffect(() => {
-    setIdleMinutes(ownIdle?.minutes == null ? "" : String(ownIdle.minutes));
     setIdleExclude(!!ownIdle?.exclude);
-  }, [ownIdle?.minutes, ownIdle?.exclude]);
+  }, [ownIdle?.exclude]);
   const [power, setPower] = useState<HaDraft>(() => draftOf(value?.homeAssistant));
   const [ac, setAc] = useState<HaDraft>(() => draftOf(value?.climate));
   // Once the shop's connections are known, an unset binding uses the first one,
@@ -120,20 +128,37 @@ export function DeviceEditor({
   const [lockId, setLockId] = useState(
     value?.ttlockLockId ? String(value.ttlockLockId) : "",
   );
-  const [capacity, setCapacity] = useState(
-    String(value?.mahjong?.capacity ?? 4),
-  );
   const [mahjongPricing, setMahjongPricing] = useState<string[]>(
     value?.mahjong?.pricingConfigIds ?? [],
   );
   const [pricing, setPricing] = useState<
     { id: string; name: string; enabled: boolean }[]
   >([]);
+  // Which plan scanning this resource starts: its group's, or one of its own.
+  const [groupId, setGroupId] = useState(value?.resourceGroupId ?? initialGroupId ?? "default");
+  const [overrideId, setOverrideId] = useState(value?.pricingConfigOverrideId ?? "");
+  const { groups } = useResourceGroups(shopId);
+  const billablePlans = useBillablePlans(shopCode);
+  const groupPlanName = (() => {
+    const planId = groups?.find((group) => group.id === groupId)?.defaultPricingConfigId;
+    return planId ? billablePlans.find((plan) => plan.id === planId)?.name ?? null : null;
+  })();
 
   const [issued, setIssued] = useState<{ token: string; url: string } | null>(
     null,
   );
-  const [live, setLive] = useState<Machine | null>(value ?? null);
+  const [live, setLive] = useState<Resource | null>(value ?? null);
+  const [bot, setBot] = useState<BotSettings>(() => ({ ...defaultBotSettings, ...(value?.bot ?? {}) }));
+  const changeBot = (patch: Partial<BotSettings>) => setBot((current) => ({ ...current, ...patch }));
+  // Shown once, after the bot is created or its token replaced.
+  const [botToken, setBotToken] = useState<string | null>(null);
+  const [doors, setDoors] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!caps.bot) return;
+    Api.machines(shopId)
+      .then((r) => setDoors(r.machines.filter((m) => m.ttlockLockId).map((m) => ({ id: m.id, name: m.name }))))
+      .catch(() => setDoors([]));
+  }, [caps.bot, shopId]);
   const canCoin = embedded || !!value?.hasPassword || !!password;
 
   useEffect(() => {
@@ -148,9 +173,9 @@ export function DeviceEditor({
   // A token that is on screen has not reached the machine yet, so the dialog
   // must stay open until the store confirms it wrote the value down.
   useEffect(() => {
-    onLockChange(!!issued);
+    onLockChange(!!issued || !!botToken);
     return () => onLockChange(false);
-  }, [issued, onLockChange]);
+  }, [issued, botToken, onLockChange]);
 
   /** Why a capability's own configuration is not complete yet. */
   const missingConfig = (id: CapabilityId): string | null => {
@@ -170,36 +195,75 @@ export function DeviceEditor({
     if (id === "hinata_io" && !embedded && !hinataUrl.trim())
       return t("请填写 HINATA IO 地址");
     if (id === "door" && !(Number(lockId) > 0)) return t("请填写门锁 ID");
-    if (id === "mahjong") {
-      const seats = Number(capacity);
-      if (!Number.isInteger(seats) || seats < 2 || seats > 8)
-        return t("开桌人数需要在 2 到 8 之间");
-    }
+    if (id === "mahjong" && billingEnabled && !mahjongPricing.length) return t("请选择一条麻将计费规则");
     return null;
   };
 
-  /**
-   * Turning a capability on only opens it when there is still something to
-   * fill in; a capability that is already configured is just switched on.
-   * Turning it off closes it.
-   */
-  const toggle = (id: CapabilityId, on: boolean) => {
-    setCaps((current) => ({ ...current, [id]: on }));
-    if (!on) {
-      setOpen((current) => (current === id ? null : current));
-      return;
-    }
-    if (missingConfig(id)) setOpen(id);
+  /** Adding a capability shows it, because that is when it has to be filled in. */
+  const enable = (id: CapabilityId) => {
+    if (id === "climate" && ac.connection === NEW_CONNECTION && !ac.url.trim())
+      // Usually the same Home Assistant as the power switch.
+      setAc({ ...ac, connection: power.connection, url: power.url });
+    setCaps((current) => ({ ...current, [id]: true }));
+    setPane(id);
+  };
+  const remove = (id: CapabilityId) => {
+    setCaps((current) => ({ ...current, [id]: false }));
+    setPane("basic");
   };
 
   /** Why an enabled capability still cannot be saved, if it cannot. */
   const incomplete = (id: CapabilityId): string | null =>
     caps[id] ? missingConfig(id) : null;
 
+  const seatsFrom = capabilityList.find((id) => caps[id] && capabilityMeta[id].seats) ?? null;
+  const sections: { id: typeof pane; label: string; icon: LucideIcon; problem?: boolean }[] = [
+    { id: "basic", label: "基本信息", icon: Info },
+    { id: "usage", label: billingEnabled ? "计费与占用" : "占用", icon: Users },
+    ...capabilityList.filter((id) => caps[id]).map((id) => ({
+      id, label: capabilityMeta[id].label, icon: capabilityMeta[id].icon, problem: !!incomplete(id),
+    })),
+    ...(capabilityList.some((id) => !caps[id]) ? [{ id: "add" as const, label: "添加能力", icon: Plus }] : []),
+  ];
+
   /** The INI fragment a machine needs to reach this platform directly. */
   const iniSnippet = issued
     ? `serverUrl=${issued.url}\ndeviceToken=${issued.token}`
     : "";
+
+  if (botToken) {
+    const snippet = `baseUrl: ${window.location.origin}\nshopCode: ${shopCode}\nintegrationToken: ${botToken}`;
+    return (
+      <div className="grid gap-5">
+        <div className="grid gap-1">
+          <h3 className="text-sm font-semibold">{t("Bot 令牌已签发")}</h3>
+          <p className="text-xs leading-relaxed text-ink/60">
+            {t("这是唯一一次显示，离开后无法再次查看。")}
+          </p>
+        </div>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">{t("填入 Koishi 的 PRiSM 插件")}</span>
+            <CopyButton value={snippet} label="复制配置" />
+          </div>
+          <pre className="overflow-x-auto whitespace-pre rounded-lg bg-ink/5 p-3 text-xs">{snippet}</pre>
+          <p className="text-xs leading-relaxed text-ink/60">
+            {t("插件只需要这三项。其余设置都在这里修改，保存后会自动推送给 Bot。")}
+          </p>
+        </div>
+        <button
+          type="button"
+          className={`${primary} justify-self-start`}
+          onClick={() => {
+            setBotToken(null);
+            done();
+          }}
+        >
+          {t("我已填入插件")}
+        </button>
+      </div>
+    );
+  }
 
   if (issued) {
     // The token is a one-time credential handout, not part of the form. The
@@ -256,10 +320,15 @@ export function DeviceEditor({
         // The device token is returned exactly once. Keep the editor open so
         // the store can copy it, and never re-fetch it: it is not recoverable.
         const saved = result as {
-          machine?: Machine;
+          machine?: Resource;
           relayToken?: string;
+          botToken?: string;
         } | null;
         if (saved?.machine) setLive(saved.machine);
+        if (saved?.botToken) {
+          setBotToken(saved.botToken);
+          return true;
+        }
         const token = saved?.relayToken;
         if (!token) {
           setIssued(null);
@@ -270,26 +339,19 @@ export function DeviceEditor({
       }}
       submit={async (f) => {
         const issuing = f.get("intent") === "issue";
-        if (!name.trim()) throw new Error(t("请填写设备名称"));
-        for (const id of ["power", "climate", "hinata_io", "door", "mahjong"] as const) {
+        if (!name.trim()) throw new Error(t("请填写资源名称"));
+        for (const id of capabilityList) {
           const reason = incomplete(id);
           if (reason) {
-            // Open the card so the precise message lands next to the field
-            // that needs attention; the form-level notice only points at it.
-            setOpen(id);
-            // The card may be below the fold, so bring it into view once the
-            // expansion has rendered.
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                document
-                  .querySelector(
-                    `dialog[open] [data-capability="${id}"]`,
-                  )
-                  ?.scrollIntoView({ block: "nearest" });
-              });
-            });
-            throw new Error(t("请先补全标记为「待配置」的能力。"));
+            // Show the capability so the message lands next to its fields.
+            setPane(id);
+            throw new Error(reason);
           }
+        }
+        const seats = resourceCapacity.trim() === "" ? null : Number(resourceCapacity);
+        if (caps.mahjong && seats !== null && (!Number.isInteger(seats) || seats < 2 || seats > 8)) {
+          setPane("usage");
+          throw new Error(t("麻将桌容量须为 2 到 8 人"));
         }
         // Minting is an explicit action. A plain save on a direct-connect
         // device without a credential would silently create one, so it is
@@ -300,10 +362,10 @@ export function DeviceEditor({
           !live?.hasRelayToken &&
           !issuing
         ) {
-          setOpen("hinata_io");
+          setPane("hinata_io");
           throw new Error(t("请先签发设备令牌，或改为外部中继。"));
         }
-        const saved = await api<{ machine: Machine }>(`/api/v1/merchant/machines${value ? `/${value.id}` : ""}`, {
+        const saved = await api<{ machine: Resource }>(`/api/v1/merchant/machines${value ? `/${value.id}` : ""}`, {
           method: value ? "PATCH" : "POST",
           body: JSON.stringify({
             shopId,
@@ -313,12 +375,12 @@ export function DeviceEditor({
               .filter(Boolean),
             kind: caps.door ? "door" : "machine",
             enabled,
-            mahjong: caps.mahjong
-              ? {
-                  capacity: Number(capacity),
-                  pricingConfigIds: mahjongPricing,
-                }
-              : null,
+            ...(resourceCapacity.trim() !== "" ? { capacity: Number(resourceCapacity) } : {}),
+            occupancyMinutes: Number(occupancyMinutes) || 15,
+            bot: caps.bot ? bot : null,
+            ...(caps.bot && f.get("intent") === "rotate-bot" ? { rotateBotToken: true } : {}),
+            ...(billingEnabled ? { resourceGroupId: groupId, pricingConfigOverrideId: overrideId || null } : {}),
+            mahjong: caps.mahjong ? { pricingConfigIds: mahjongPricing } : null,
             // A capability that is switched off is removed, which the server
             // expresses as `null` for the bound fields.
             relayConnection: caps.hinata_io && embedded ? "embedded" : "external",
@@ -343,21 +405,37 @@ export function DeviceEditor({
             ttlockLockId: caps.door ? Number(lockId) : null,
           }),
         });
-        // Idle settings live with the shop's rules, keyed by device.
+        // Whether it is never switched off lives with the shop's idle rules, keyed by device.
         const own = idle.settings?.devices[saved.machine.id];
-        const minutes = idleMinutes.trim() === "" ? null : Number(idleMinutes);
-        if (caps.power && ((own?.minutes ?? null) !== minutes || !!own?.exclude !== idleExclude)) {
+        if (caps.power && !!own?.exclude !== idleExclude) {
           await api(idlePath(shopId, `/devices/${encodeURIComponent(saved.machine.id)}`), {
             method: "PUT",
-            body: JSON.stringify({ minutes, exclude: idleExclude }),
+            body: JSON.stringify({ exclude: idleExclude }),
           });
         }
         return saved;
       }}
     >
-      <section className="grid gap-3">
-        <h3 className="text-sm font-semibold">{t("设备身份")}</h3>
-        <Field label="设备名称">
+      <div className="grid gap-5 sm:min-h-[26rem] sm:grid-cols-[11rem_minmax(0,1fr)]">
+        <nav aria-label={t("资源设置")} className="flex gap-1 overflow-x-auto pb-1 sm:flex-col sm:self-start">
+          {sections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              aria-current={pane === section.id ? "page" : undefined}
+              className={`focus-ring flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm ${pane === section.id ? "bg-mint/10 font-semibold text-ink" : "text-ink/60 hover:bg-ink/5 hover:text-ink"}`}
+              onClick={() => setPane(section.id)}
+            >
+              <section.icon size={16} aria-hidden="true" />
+              <span className="truncate">{t(section.label)}</span>
+              {section.problem && <span className="ml-auto size-2 shrink-0 rounded-full bg-coral" aria-label={t("待配置")} />}
+            </button>
+          ))}
+        </nav>
+        <div className="grid min-w-0 content-start gap-4">
+      {pane === "basic" && (
+        <>
+        <Field label="资源名称">
           <input
             autoFocus
             className={input}
@@ -369,9 +447,9 @@ export function DeviceEditor({
         </Field>
         <div className="grid gap-2">
           <div>
-            <span className="text-sm font-medium">{t("设备别名")}</span>
+            <span className="text-sm font-medium">{t("资源别名")}</span>
             <p className="mt-1 text-xs text-ink/50">
-              {t("玩家和 Bot 可以用任意一个别名找到这台设备。")}
+              {t("玩家和 Bot 可以用任意一个别名找到这个资源。")}
             </p>
           </div>
           {/* The list always ends in an empty row: typing in it appends the
@@ -384,7 +462,7 @@ export function DeviceEditor({
                 <input
                   className={input}
                   value={alias}
-                  aria-label={`${t("设备别名")} ${index + 1}`}
+                  aria-label={`${t("资源别名")} ${index + 1}`}
                   maxLength={80}
                   autoComplete="off"
                   onChange={(e) => {
@@ -424,30 +502,74 @@ export function DeviceEditor({
           })}
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-          />
-          {t("启用设备（停用后玩家扫码无法使用）")}
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          {t("启用")}
         </label>
-      </section>
-
-      <section className="grid gap-3">
-        <h3 className="text-sm font-semibold">{t("设备能力")}</h3>
-
-        <CapabilityCard
-          id="power"
-          icon={Power}
-          title="电源控制"
-          description="通过 Home Assistant 读取并开关机台电源。"
-          summary={power.entityId.trim()}
-          on={caps.power}
-          open={open === "power"}
-          toggle={(on) => toggle("power", on)}
-          select={() => setOpen(open === "power" ? null : "power")}
-          problem={incomplete("power")}
-        >
+        </>
+      )}
+      {pane === "usage" && (
+        <>
+          {billingEnabled && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="所属资源组">
+                <select className={input} value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+                  {(groups ?? [{ id: "default", name: "默认资源组" }]).map((group) => (
+                    <option key={group.id} value={group.id}>{t(group.name)}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="计费方案覆盖">
+                <select className={input} value={overrideId} onChange={(e) => setOverrideId(e.target.value)}>
+                  <option value="">
+                    {groupPlanName ? t("跟随资源组（{plan}）", { plan: groupPlanName }) : t("跟随资源组（未设置）")}
+                  </option>
+                  {billablePlans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>{plan.name}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          )}
+          {!caps.bot && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="容量" unit="人">
+                <input
+                  className={input}
+                  type="number"
+                  min={caps.mahjong ? 2 : 0}
+                  max={caps.mahjong ? 8 : 16}
+                  placeholder={t("按能力自动")}
+                  value={resourceCapacity}
+                  onChange={(e) => setResourceCapacity(e.target.value)}
+                />
+              </Field>
+              {seatsFrom ? (
+                <div className="grid gap-2">
+                  <span className="text-sm font-medium">{t("占用时长")}</span>
+                  <p className="rounded-lg bg-ink/[0.04] px-3 py-2.5 text-sm text-ink/60">{t("不适用")}</p>
+                </div>
+              ) : (
+                <Field label="占用时长" unit="分钟">
+                  <input
+                    className={input}
+                    type="number"
+                    min="1"
+                    max="1440"
+                    required
+                    value={occupancyMinutes}
+                    onChange={(e) => setOccupancyMinutes(e.target.value)}
+                  />
+                </Field>
+              )}
+            </div>
+          )}
+          {!caps.bot && seatsFrom && (
+            <Hint>{t("{capability}按座位判断占用：入座开始，下桌结束；占用时长不适用。", { capability: t(capabilityMeta[seatsFrom].label) })}</Hint>
+          )}
+        </>
+      )}
+      {pane === "power" && caps.power && (
+        <CapabilityPane title="电源控制" problem={incomplete("power")} remove={() => remove("power")}>
           <HaEntityFields
             shopId={shopId}
             connections={ha.connections ?? []}
@@ -459,43 +581,14 @@ export function DeviceEditor({
             tokenOptional={!!value?.homeAssistant}
             reload={ha.reload}
           />
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <Field label="设备闲置判定时长覆盖" unit="分钟">
-              <input
-                className={input}
-                type="number"
-                min="0"
-                max="1440"
-                disabled={idleExclude}
-                placeholder={t("店铺默认（{minutes}）", { minutes: idle.settings?.device.defaultMinutes ?? 0 })}
-                value={idleMinutes}
-                onChange={(e) => setIdleMinutes(e.target.value)}
-              />
-            </Field>
-            <label className="flex items-center gap-2 self-end pb-3 text-sm">
-              <input type="checkbox" checked={idleExclude} onChange={(e) => setIdleExclude(e.target.checked)} />
-              {t("从不自动关机")}
-            </label>
-          </div>
-        </CapabilityCard>
-
-        <CapabilityCard
-          id="climate"
-          icon={AirVent}
-          title="空调"
-          description="通过 Home Assistant 控制空调：开关、模式、温度和风速。"
-          summary={ac.entityId.trim()}
-          on={caps.climate}
-          open={open === "climate"}
-          toggle={(on) => {
-            // Usually the same Home Assistant as the power switch.
-            if (on && ac.connection === NEW_CONNECTION && !ac.url.trim())
-              setAc({ ...ac, connection: power.connection, url: power.url });
-            toggle("climate", on);
-          }}
-          select={() => setOpen(open === "climate" ? null : "climate")}
-          problem={incomplete("climate")}
-        >
+          <label className="mt-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={idleExclude} onChange={(e) => setIdleExclude(e.target.checked)} />
+            {t("从不自动关机")}
+          </label>
+        </CapabilityPane>
+      )}
+      {pane === "climate" && caps.climate && (
+        <CapabilityPane title="空调" problem={incomplete("climate")} remove={() => remove("climate")}>
           <div className="grid gap-3">
             <HaEntityFields
               shopId={shopId}
@@ -513,29 +606,10 @@ export function DeviceEditor({
             )}
             <Hint>{t("可选的模式、风速和温度范围以空调实体自己上报的为准。")}</Hint>
           </div>
-        </CapabilityCard>
-
-        <CapabilityCard
-          id="hinata_io"
-          icon={CreditCard}
-          title="刷卡 · HINATA IO"
-          description="玩家刷卡启动机台、投币，或由机台直连本平台。"
-          summary={
-            caps.hinata_io
-              ? [
-                  t(embedded ? "直连本平台" : "外部中继"),
-                  coinKey ? `${t("投币")} ${coinKey}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
-              : ""
-          }
-          on={caps.hinata_io}
-          open={open === "hinata_io"}
-          toggle={(on) => toggle("hinata_io", on)}
-          select={() => setOpen(open === "hinata_io" ? null : "hinata_io")}
-          problem={incomplete("hinata_io")}
-        >
+        </CapabilityPane>
+      )}
+      {pane === "hinata_io" && caps.hinata_io && (
+        <CapabilityPane title="刷卡 · HINATA IO" problem={incomplete("hinata_io")} remove={() => remove("hinata_io")}>
           <div className="grid gap-4">
             <Segmented
               label={t("连接方式")}
@@ -608,20 +682,10 @@ export function DeviceEditor({
               </Hint>
             </div>
           </div>
-        </CapabilityCard>
-
-        <CapabilityCard
-          id="door"
-          icon={DoorOpen}
-          title="开门密码"
-          description="通过 TTLock 生成一次性开门密码。"
-          summary={lockId ? `TTLock · ${lockId}` : ""}
-          on={caps.door}
-          open={open === "door"}
-          toggle={(on) => toggle("door", on)}
-          select={() => setOpen(open === "door" ? null : "door")}
-          problem={incomplete("door")}
-        >
+        </CapabilityPane>
+      )}
+      {pane === "door" && caps.door && (
+        <CapabilityPane title="开门密码" problem={incomplete("door")} remove={() => remove("door")}>
           <div className="grid gap-3">
             <Field label="TTLock 门锁 ID">
               <input
@@ -645,46 +709,14 @@ export function DeviceEditor({
               <Hint>{t("TTLock 账号在「设置 → 位置与设备」中连接。")}</Hint>
             )}
           </div>
-        </CapabilityCard>
-
-        <CapabilityCard
-          id="mahjong"
-          icon={Ungroup}
-          title="麻将桌"
-          description="按座位开桌计时，与计费规则联动。"
-          summary={
-            caps.mahjong
-              ? [
-                  t("{count} 人", { count: capacity || "—" }),
-                  mahjongPricing.length
-                    ? t("{count} 条计费规则", {
-                        count: mahjongPricing.length,
-                      })
-                    : t("未选择计费规则"),
-                ].join(" · ")
-              : ""
-          }
-          on={caps.mahjong}
-          open={open === "mahjong"}
-          toggle={(on) => toggle("mahjong", on)}
-          select={() => setOpen(open === "mahjong" ? null : "mahjong")}
-          problem={incomplete("mahjong")}
-        >
+        </CapabilityPane>
+      )}
+      {pane === "mahjong" && caps.mahjong && (
+        <CapabilityPane title="麻将桌" problem={incomplete("mahjong")} remove={() => remove("mahjong")}>
           <div className="grid gap-3">
-            <Field label="开桌人数">
-              <input
-                className={`${input} sm:max-w-[8rem]`}
-                type="number"
-                min="2"
-                max="8"
-                required
-                value={capacity}
-                onChange={(e) => setCapacity(e.target.value)}
-              />
-            </Field>
             <fieldset className="grid gap-2">
               <legend className="mb-1 text-sm font-medium">
-                {t("麻将计费规则")}
+                {t("对局方案")}
               </legend>
               {pricing.filter((r) => r.enabled).length === 0 ? (
                 <p className="text-sm text-ink/55">
@@ -708,143 +740,197 @@ export function DeviceEditor({
                         key={r.id}
                       >
                         <input
-                          type="checkbox"
-                          checked={mahjongPricing.includes(r.id)}
-                          onChange={(e) =>
-                            setMahjongPricing(
-                              e.target.checked
-                                ? [...mahjongPricing, r.id]
-                                : mahjongPricing.filter((id) => id !== r.id),
-                            )
-                          }
+                          type="radio"
+                          name="mahjong-pricing"
+                          checked={mahjongPricing[0] === r.id}
+                          onChange={() => setMahjongPricing([r.id])}
                         />
                         {r.name}
                       </label>
                     ))}
                 </div>
               )}
-              {billingEnabled && !mahjongPricing.length && (
-                <p className="text-xs text-coral">
-                  {t("请至少选择一条麻将计费规则。")}
-                </p>
-              )}
             </fieldset>
           </div>
-        </CapabilityCard>
-      </section>
+        </CapabilityPane>
+      )}
+      {pane === "bot" && caps.bot && (
+        <CapabilityPane title="店铺 Bot" problem={incomplete("bot")} remove={() => remove("bot")}>
+          <div className="grid gap-4">
+            <div className="grid gap-3 rounded-lg bg-ink/[0.03] p-3 sm:grid-cols-2">
+              <CopyField label="店铺编号" value={shopCode} />
+              <CopyField label="API 地址" value={window.location.origin} />
+            </div>
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium">{t("玩家命令")}</legend>
+              {(["all", "readonly"] as const).map((mode) => (
+                <label key={mode} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="bot-player-commands"
+                    checked={bot.playerCommands === mode}
+                    onChange={() => changeBot({ playerCommands: mode })}
+                  />
+                  {t(mode === "all" ? "全部命令" : "只读")}
+                </label>
+              ))}
+              <p className="text-xs text-ink/55">{t("只读时，玩家在 Bot 里只能绑定身份、查余额和账单、兑换。")}</p>
+              {bot.playerCommands === "readonly" && (
+                <Field label="只读提示">
+                  <input
+                    className={input}
+                    maxLength={200}
+                    value={bot.readOnlyNotice}
+                    onChange={(e) => changeBot({ readOnlyNotice: e.target.value })}
+                  />
+                </Field>
+              )}
+            </fieldset>
+            <div className="grid gap-2">
+              {([
+                ["staffCommands", "店员代为操作"],
+                ["powerOffStaffOnly", "仅店员可关机"],
+                ["receiptsToStaff", "结账回执发给店员"],
+                ["watchHomeAssistant", "监听 Home Assistant"],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={bot[key]} onChange={(e) => changeBot({ [key]: e.target.checked })} />
+                  {t(label)}
+                </label>
+              ))}
+            </div>
+            <Field label="默认门锁">
+              <select
+                className={input}
+                value={bot.doorResourceId ?? ""}
+                onChange={(e) => changeBot({ doorResourceId: e.target.value || null })}
+              >
+                <option value="">{t(doors.length === 1 ? "自动" : "未设置")}</option>
+                {doors.map((door) => (
+                  <option key={door.id} value={door.id}>{door.name}</option>
+                ))}
+              </select>
+            </Field>
+            <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
+              <div className="grid gap-1">
+                <Field label="闲置提醒群">
+                  <textarea
+                    className={`${input} min-h-20`}
+                    value={bot.idleChannelIds.join("\n")}
+                    onChange={(e) => changeBot({ idleChannelIds: e.target.value.split("\n").map((line) => line.trim()).filter(Boolean) })}
+                  />
+                </Field>
+                <p className="text-xs text-ink/55">{t("每行一个群号。")}</p>
+              </div>
+              <Field label="提醒提前量" unit="分钟">
+                <input
+                  className={input}
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={bot.idleReminderMinutes}
+                  onChange={(e) => changeBot({ idleReminderMinutes: Number(e.target.value) || 0 })}
+                />
+              </Field>
+            </div>
+            {value?.bot && (
+              <button type="submit" name="intent" value="rotate-bot" className={`${button} justify-self-start`}>
+                {t("重新签发 Bot 令牌")}
+              </button>
+            )}
+          </div>
+        </CapabilityPane>
+      )}
+      {pane === "add" && (
+        <ul className="grid gap-2">
+          {capabilityList.filter((id) => !caps[id]).map((id) => {
+            const item = capabilityMeta[id];
+            return (
+              <li key={id} className="flex items-center gap-3 rounded-xl border border-ink/10 p-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-ink/5 text-ink/50">
+                  <item.icon size={18} aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{t(item.label)}</span>
+                  <span className="block text-xs text-ink/55">{t(item.description)}</span>
+                </span>
+                <button type="button" className={`${button} min-h-9 px-3 py-1 text-xs`} onClick={() => enable(id)}>
+                  <Plus size={14} aria-hidden="true" />
+                  {t("添加")}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+        </div>
+      </div>
     </ActionForm>
   );
 }
 
-/**
- * One capability: a header that opens it, a switch that enables it, and a body
- * that stays mounted but hidden while collapsed (so values survive collapse).
- * A capability that is on but not yet valid shows the reason in its header,
- * which is what makes a collapsed, half-filled card discoverable.
- */
-function CapabilityCard({
-  id,
-  icon: Icon,
+const defaultBotSettings: BotSettings = {
+  playerCommands: "all",
+  readOnlyNotice: "请扫描店内二维码或碰 NFC，在网页或 App Clip 里入场、结账和操作设备。",
+  staffCommands: true,
+  powerOffStaffOnly: false,
+  doorResourceId: null,
+  receiptsToStaff: false,
+  idleChannelIds: [],
+  idleReminderMinutes: 5,
+  watchHomeAssistant: true,
+};
+
+const capabilityList = ["power", "climate", "hinata_io", "door", "mahjong", "bot"] as const satisfies readonly CapabilityId[];
+
+/** `seats`: the capability holds its occupants itself, so the occupancy time does not apply. */
+const capabilityMeta: Record<CapabilityId, { icon: LucideIcon; label: string; description: string; seats?: true }> = {
+  power: { icon: Power, label: "电源控制", description: "通过 Home Assistant 读取并开关电源。" },
+  climate: { icon: AirVent, label: "空调", description: "通过 Home Assistant 控制空调。" },
+  hinata_io: { icon: CreditCard, label: "刷卡 · HINATA IO", description: "刷卡、投币，记录谁在玩。" },
+  door: { icon: DoorOpen, label: "开门密码", description: "通过 TTLock 生成一次性开门密码。" },
+  mahjong: { icon: Ungroup, label: "麻将桌", description: "按座位开桌计费。", seats: true },
+  bot: { icon: Bot, label: "店铺 Bot", description: "Koishi 等聊天机器人。" },
+};
+
+/** One enabled capability: its settings, why it cannot be saved yet, and removing it. */
+function CapabilityPane({
   title,
-  description,
-  summary,
-  on,
-  open,
-  toggle,
-  select,
   problem,
+  remove,
   children,
 }: {
-  id: CapabilityId;
-  icon: LucideIcon;
   title: string;
-  description: string;
-  summary: string;
-  on: boolean;
-  open: boolean;
-  toggle: (on: boolean) => void;
-  select: () => void;
   problem: string | null;
+  remove: () => void;
   children: ReactNode;
 }) {
   const { t } = useI18n();
   return (
-    <div
-      data-capability={id}
-      className={`rounded-xl border transition-colors ${
-        open
-          ? "border-mint/40 bg-mint/[0.03]"
-          : on
-            ? "border-ink/15 bg-panel"
-            : "border-ink/10 bg-panel"
-      }`}
-    >
-      <div className="flex items-start gap-3 p-4">
-        <button
-          type="button"
-          className="focus-ring flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left"
-          aria-expanded={open}
-          onClick={select}
-        >
-          <span
-            className={`grid size-9 shrink-0 place-items-center rounded-lg ${
-              on ? "bg-mint/10 text-mint" : "bg-ink/5 text-ink/40"
-            }`}
-          >
-            <Icon size={18} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-              {t(title)}
-              {problem && (
-                <span className="rounded bg-coral/10 px-1.5 py-0.5 text-xs font-normal text-coral">
-                  {t("待配置")}
-                </span>
-              )}
-            </span>
-            <span className="mt-0.5 block text-xs leading-relaxed text-ink/55">
-              {on && summary ? summary : t(description)}
-            </span>
-          </span>
-          <ChevronDown
-            size={16}
-            className={`mt-0.5 shrink-0 text-ink/35 transition-transform ${
-              open ? "rotate-180" : ""
-            }`}
-            aria-hidden="true"
-          />
+    <section className="grid gap-4" aria-label={t(title)}>
+      <header className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">{t(title)}</h3>
+        <button type="button" className={`${buttonQuiet} min-h-9 px-2 text-xs text-coral`} onClick={remove}>
+          <Trash2 size={14} aria-hidden="true" />
+          {t("移除")}
         </button>
-        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-ink/60">
-          <input
-            type="checkbox"
-            role="switch"
-            className="peer sr-only"
-            checked={on}
-            onChange={(e) => toggle(e.target.checked)}
-          />
-          <span
-            aria-hidden="true"
-            className={`relative h-6 w-11 rounded-full transition-colors ${
-              on ? "bg-mint" : "bg-ink/20"
-            } after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-white after:transition-transform ${
-              on ? "after:translate-x-5" : ""
-            } peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-mint`}
-          />
-          <span>{t(on ? "已启用" : "未启用")}</span>
-        </label>
-      </div>
-      <div
-        hidden={!open}
-        className="border-t border-ink/10 p-4"
-        aria-label={t(title)}
-      >
-        {problem && (
-          <p role="alert" className="mb-3 text-sm text-coral">
-            {problem}
-          </p>
-        )}
-        {children}
-      </div>
+      </header>
+      {problem && <p role="alert" className="text-sm text-coral">{problem}</p>}
+      {children}
+    </section>
+  );
+}
+
+/** A value the shop pastes elsewhere, with a copy button. */
+function CopyField({ label, value }: { label: string; value: string }) {
+  const { t } = useI18n();
+  return (
+    <div className="grid min-w-0 gap-1">
+      <span className="flex items-center justify-between gap-2 text-xs font-medium text-ink/60">
+        {t(label)}
+        <CopyButton value={value} label="复制" />
+      </span>
+      <code className="truncate rounded bg-ink/5 px-2 py-1.5 text-xs">{value}</code>
     </div>
   );
 }
@@ -859,7 +945,7 @@ function DirectConnectPanel({
   live,
   hasRelayToken,
 }: {
-  live: Machine | null;
+  live: Resource | null;
   hasRelayToken: boolean;
 }) {
   const { t } = useI18n();

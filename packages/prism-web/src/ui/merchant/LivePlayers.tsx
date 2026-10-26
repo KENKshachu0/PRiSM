@@ -1,7 +1,7 @@
 import { browserCheckoutPreview } from "../../browser-billing";
 import { billTime } from "../bill-time";
 import { Link } from "react-router-dom";
-import { BillTotal, BillTimeline } from "../BillTimeline";
+import { BillLegend, BillTotal, BillTimeline } from "../BillTimeline";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { ActionForm, Field, Modal, button, input, money, primary, segment, useMerchant, useStaffApi, type LivePlayer, type Preview } from "./shared";
@@ -97,7 +97,10 @@ export function LivePlayers({ players: basePlayers, visibleIds, billingSnapshot,
             <span>{t(selected.quoteError || "账单预估失败，请刷新后重试")}</span>
             <button className={button} onClick={refresh}>{t("重试")}</button>
           </div>}
-          {selected.timeline && <BillTimeline timeZone={timeZone || undefined} preview={{ settlementPreview: { total: selected.estimatedTotal ?? 0 }, timeline: selected.timeline, chargeItems: [], adjustments: [] }} />}
+          {selected.timeline && <>
+            <div className="-mt-3 mb-5"><BillLegend timeline={selected.timeline} /></div>
+            <BillTimeline timeZone={timeZone || undefined} preview={{ settlementPreview: { total: selected.estimatedTotal ?? 0 }, timeline: selected.timeline, chargeItems: [], adjustments: [] }} />
+          </>}
           {canWrite && selected.sessions.filter(session => session.status === "active").map(session => <div key={session.id} className="flex items-center justify-between gap-3 border-t border-ink/10 py-3 text-sm">
             <span>{[...new Set(session.pricingCharges.map(charge => charge.planName))].join(" + ") || title(session)}</span>
             <button className={button} onClick={() => setStop({ playerId: selected.playerId, session })}>{t("停止计费")}</button>

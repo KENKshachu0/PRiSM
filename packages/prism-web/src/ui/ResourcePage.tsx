@@ -1,11 +1,12 @@
 import { SessionPasskeySetup } from "./SessionPasskeySetup";
-import { DeviceControls, type DeviceState } from "./DeviceControls";
+import { ResourceControls, type ResourceState } from "./ResourceControls";
 import { useI18n } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
-import { AlertCircle, CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, Loader2, Plus, XCircle } from "lucide-react";
+import { operationLocation } from "./BillingPages";
 import { ShopHero, SessionSignIn } from "./SessionContent";
-import { Api, ApiError, InlineError, type Card, type MachineLoginResult, type Notice, type PublicMachine } from "../api";
+import { Api, ApiError, InlineError, type Card, type MachineLoginResult, type Notice, type PublicResource } from "../api";
 import { useNotice } from "./NoticeProvider";
 import { useAuth } from "./AuthContext";
 
@@ -22,7 +23,7 @@ function FeedbackIcon({ level }: { level: Notice["level"] }) {
   return <Icon size={24} className="credential-feedback-icon" aria-hidden="true" />;
 }
 
-export function MachineLoginPage() {
+export function ResourcePage() {
   const { ticket: paramTicket = "", publicId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const { hash } = useLocation();
@@ -33,9 +34,9 @@ export function MachineLoginPage() {
     window.location.pathname === "/m/expired" ||
     searchParams.get("expired") === "1";
   return expired || !ticket ? (
-    <MachineExpiredPage />
+    <ResourceExpiredPage />
   ) : (
-    <MachineSessionLoader
+    <ResourceSessionLoader
       key={ticket}
       ticket={ticket}
       onExpired={onExpired}
@@ -43,7 +44,7 @@ export function MachineLoginPage() {
   );
 }
 
-function MachineSessionLoader({
+function ResourceSessionLoader({
   ticket, onExpired,
 }: {
   ticket: string;
@@ -53,17 +54,17 @@ function MachineSessionLoader({
   const [page, setPage] = useState<
     | { kind: "loading" }
     | { kind: "failed"; message: string }
-    | { kind: "session"; machine: PublicMachine; state: DeviceState | null }
+    | { kind: "session"; machine: PublicResource; state: ResourceState | null }
   >({ kind: "loading" });
-  const [machineAttempt, setMachineAttempt] = useState(0);
+  const [machineAttempt, setResourceAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setPage({ kind: "loading" });
     // One request for the machine and the page's state; an older address form has only the machine.
     const first = ticket.startsWith("v1.")
-      ? Api.bootstrap<DeviceState>(ticket)
-      : Api.publicMachine(ticket).then((result) => ({ machine: result.machine, state: null }));
+      ? Api.bootstrap<ResourceState>(ticket)
+      : Api.publicResource(ticket).then((result) => ({ machine: result.machine, state: null }));
     first
       .then((result) => {
         if (!cancelled) {
@@ -92,20 +93,20 @@ function MachineSessionLoader({
 
   switch (page.kind) {
     case "loading":
-      return <MachineLoadingPage />;
+      return <ResourceLoadingPage />;
     case "failed":
       return (
-        <MachineFailurePage
+        <ResourceFailurePage
           message={page.message}
           onRetry={() => {
             setPage({ kind: "loading" });
-            setMachineAttempt((value) => value + 1);
+            setResourceAttempt((value) => value + 1);
           }}
         />
       );
     case "session":
       return (
-        <MachineSessionPage
+        <ResourceSessionPage
           machine={page.machine}
           initialState={page.state}
           ticket={ticket}
@@ -115,13 +116,13 @@ function MachineSessionLoader({
   }
 }
 
-function MachineSessionPage({
+function ResourceSessionPage({
   machine,
   initialState,
   ticket, onExpired,
 }: {
-  machine: PublicMachine;
-  initialState: DeviceState | null;
+  machine: PublicResource;
+  initialState: ResourceState | null;
   ticket: string;
   onExpired: () => void;
 }) {
@@ -139,6 +140,8 @@ function MachineSessionPage({
   const showNotice = useNotice();
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  // Re-reads the card list alone; `reload` also restarts the controls from the page's first state.
+  const [cardsVersion, setCardsVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,7 +167,7 @@ function MachineSessionPage({
     return () => {
       cancelled = true;
     };
-  }, [machine, user, reload]);
+  }, [machine, user, reload, cardsVersion]);
 
   const loginWithCard = async (cardId: string) => {
     if (status !== "idle") return;
@@ -200,6 +203,57 @@ function MachineSessionPage({
     }
   };
 
+  /**
+   * Adding a card at this cabinet's reader: the page opens a short window and
+   * waits for the reader to report the card. A newer attempt or a cancel makes
+   * an older one stop waiting.
+   */
+  const [capture, setCapture] = useState<
+    | { phase: "starting" | "waiting" }
+    | { phase: "done"; level: "success" | "error"; message: string }
+    | null
+  >(null);
+  const captureRun = useRef(0);
+  useEffect(() => () => { captureRun.current += 1; }, []);
+  const startCapture = async () => {
+    const run = ++captureRun.current;
+    const current = () => captureRun.current === run;
+    setCapture({ phase: "starting" });
+    try {
+      const location = await operationLocation(!!(machine.shop.locationEnabled ?? machine.shop.machineGeo));
+      const started = await Api.startCardCapture({ ticket, location });
+      if (!current()) return;
+      setCapture({ phase: "waiting" });
+      const deadline = Date.parse(started.expiresAt) + 2000;
+      let status: Awaited<ReturnType<typeof Api.cardCaptureResult>>["status"] = "waiting";
+      while (status === "waiting" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (!current()) return;
+        status = (await Api.cardCaptureResult(started.captureId, ticket)).status;
+      }
+      if (!current()) return;
+      const added = status === "added" || status === "bound" || status === "exists";
+      setCapture({
+        phase: "done",
+        level: added ? "success" : "error",
+        message: t(
+          added ? "已添加卡片"
+            : status === "taken" ? "这张卡已绑定到本店的其他玩家"
+            : status === "unsupported" ? "不支持这种卡片"
+            : "没有读到卡片",
+        ),
+      });
+      if (added) setCardsVersion((value) => value + 1);
+    } catch (caught) {
+      if (current()) setCapture({ phase: "done", level: "error", message: caught instanceof Error ? errorText(caught.message) : t("请检查网络后重试") });
+    }
+  };
+  const cancelCapture = () => {
+    captureRun.current += 1;
+    setCapture(null);
+  };
+  const capturing = capture?.phase === "starting" || capture?.phase === "waiting";
+
   /** Shown for a few seconds; the page stays usable meanwhile. */
   const showFeedback = (next: typeof feedback) => {
     clearTimeout(feedbackTimer.current);
@@ -224,21 +278,52 @@ function MachineSessionPage({
         subtitle={checkingPower ? `${machine.name} · ${t("正在获取电源状态")}` : machine.name}
       />
 
-      {!Object.values(machine.capabilities).some(Boolean) ? (
-        <div className="device-controls"><p className="session-subtitle text-center">{t("当前设备没有可操作项")}</p></div>
+      {/* A resource without hardware still bills in a shop that bills, so it needs the player and a confirmation. */}
+      {!Object.values(machine.capabilities).some(Boolean) && !machine.shop.billingEnabled ? (
+        <div className="device-controls"><p className="session-subtitle text-center">{t("这里没有可操作的设备")}</p></div>
       ) : loading ? (
         <div className="device-controls" role="status"><Loader2 className="mx-auto animate-spin" aria-label={t("正在加载")} /></div>
       ) : !user ? (
         <SessionSignIn />
       ) : (
-        <SessionPasskeySetup><DeviceControls
+        <SessionPasskeySetup><ResourceControls
           key={reload}
           machine={machine}
           ticket={ticket}
           initialState={initialState}
           onCheckingPower={setCheckingPower}
           onExpired={onExpired}
-          cardBusy={status === "locating" || status === "sending"}
+          cardBusy={status === "locating" || status === "sending" || capturing}
+          cardHeadingAction={machine.cardCapture ? (
+            <button
+              type="button"
+              className="card-capture-add"
+              aria-label={t("添加卡片")}
+              disabled={busy || capturing}
+              onClick={() => void startCapture()}
+            >
+              <Plus size={22} aria-hidden="true" />
+            </button>
+          ) : undefined}
+          cardTask={capture ? (
+            <div className="card-capture" role="status" aria-live="polite">
+              {capturing ? (
+                <>
+                  <Loader2 size={28} className="animate-spin text-mint" aria-hidden="true" />
+                  <p className="session-subtitle">
+                    {capture.phase === "starting" ? t("正在连接机台…") : t("请把卡片放在「{name}」的读卡器上", { name: machine.name })}
+                  </p>
+                  <button type="button" className="session-action" onClick={cancelCapture}>{t("取消")}</button>
+                </>
+              ) : capture.phase === "done" ? (
+                <>
+                  <FeedbackIcon level={capture.level} />
+                  <p className="session-subtitle">{capture.message}</p>
+                  <button type="button" className="session-action" onClick={() => setCapture(null)}>{t("完成")}</button>
+                </>
+              ) : null}
+            </div>
+          ) : undefined}
         >
           {cardsLoading ? (
             <div
@@ -325,13 +410,13 @@ function MachineSessionPage({
               </button>
             </div>
           )}
-        </DeviceControls></SessionPasskeySetup>
+        </ResourceControls></SessionPasskeySetup>
       )}
     </section>
   );
 }
 
-function MachineLoadingPage() {
+function ResourceLoadingPage() {
   const { t } = useI18n();
   return (
     <section
@@ -345,7 +430,7 @@ function MachineLoadingPage() {
   );
 }
 
-function MachineFailurePage({
+function ResourceFailurePage({
   message,
   onRetry,
 }: {
@@ -364,7 +449,7 @@ function MachineFailurePage({
   );
 }
 
-function MachineExpiredPage() {
+function ResourceExpiredPage() {
   const { t } = useI18n();
   return (
     <section className="machine-session session-status">

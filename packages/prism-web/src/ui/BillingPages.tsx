@@ -316,52 +316,6 @@ export function BillingSettings({
             </label>
           )}
 
-          {section === "billing" && !needsConversion && (
-            <fieldset>
-              <legend className="font-medium">{t("入场规则")}</legend>
-              <p className="mt-2 text-sm text-ink/60">
-                {t("玩家入场时按选中的规则计费。在「计费」页新建的规则要在这里选中才会生效；消费封顶不能单独作为入场规则。")}
-              </p>
-              {!rules.some(availableEntryRule) && (
-                <p className="mt-2 text-sm text-ink/60">
-                  {t("还没有启用中的计费规则。")}{" "}
-                  <Link className="underline" to={`/merchant/${shopCode}/pricing`}>
-                    {t("去「计费」页创建")}
-                  </Link>
-                </p>
-              )}
-              {rules
-                .filter((r) => availableEntryRule(r) || settings.entryPricingIds.includes(r.id))
-                .map((rule) => (
-                  <label className="mt-2 flex gap-3" key={rule.id}>
-                    <input
-                      type="checkbox"
-                      checked={settings.entryPricingIds.includes(rule.id)}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          entryPricingIds: e.target.checked
-                            ? [...settings.entryPricingIds, rule.id]
-                            : settings.entryPricingIds.filter(
-                                (id) => id !== rule.id,
-                              ),
-                        })
-                      }
-                    />
-                    {rule.name}
-                    {!availableEntryRule(rule) && <span className="text-coral">{t("不可用，请取消选择")}</span>}
-                  </label>
-                ))}
-              {settings.entryPricingIds.filter(id => !rules.some(rule => rule.id === id)).map(id => (
-                <label className="mt-2 flex gap-3 text-coral" key={id}>
-                  <input type="checkbox" checked onChange={() => setSettings({ ...settings,
-                    entryPricingIds: settings.entryPricingIds.filter(selected => selected !== id) })} />
-                  {t("入场规则不存在，请取消选择")}
-                  <code>{id}</code>
-                </label>
-              ))}
-            </fieldset>
-          )}
           {error && errorSection === section && <p role="alert" className="text-sm text-coral">{error}</p>}
           {savedSection === section && <p role="status" className="text-sm text-mint">{t("已保存")}</p>}
           {!(section === "billing" && needsConversion) && (
@@ -376,11 +330,6 @@ export function BillingSettings({
             </button>
           )}
         </fieldset>
-        {section === "billing" && !needsConversion && (
-          <Link className="text-sm underline" to={`/merchant/${shopCode}/pricing`}>
-            {t("打开计费规则")}
-          </Link>
-        )}
       </form>
       {converting && (
         <BillingConversionWizard
@@ -537,10 +486,13 @@ export function EntryPricing({ info }: { info: ShopInfo }) {
                       </p>
                       {rule.pricing && (
                         <p className="text-xs text-ink/60">
-                          {rule.pricing.priceCap < Number.MAX_SAFE_INTEGER &&
-                            `${t("时段封顶")} ${rule.pricing.priceCap.toFixed(2)}`}
-                          {rule.pricing.roundGraceMinutes > 0 &&
-                            ` · ${t("每计费单位宽限")} ${rule.pricing.roundGraceMinutes} ${t("分钟")}`}
+                          {[
+                            // A cap of 0 leaves the period uncapped.
+                            rule.pricing.priceCap > 0 && rule.pricing.priceCap < Number.MAX_SAFE_INTEGER &&
+                              `${t("时段封顶")} ${rule.pricing.priceCap.toFixed(2)}`,
+                            rule.pricing.roundGraceMinutes > 0 &&
+                              `${t("每计费单位宽限")} ${rule.pricing.roundGraceMinutes} ${t("分钟")}`,
+                          ].filter(Boolean).join(" · ")}
                         </p>
                       )}
                     </div>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Bot, Gamepad2 } from "lucide-react";
-import { api, type Machine } from "../../api";
+import { api, type Resource } from "../../api";
 import { useI18n } from "../../i18n";
 import type { BoardWatcher, BoardWatchers, WatcherPhase } from "./board-state";
 
@@ -32,7 +32,7 @@ export function HaWatchersPanel({
 }: {
   shopId: string;
   watchers: BoardWatchers;
-  devices: readonly Machine[];
+  devices: readonly Resource[];
   canEdit: boolean;
   /** The platform took the new number; the hub's own frame follows. */
   onLimit(count: number): void;
@@ -41,7 +41,7 @@ export function HaWatchersPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const nameOf = (watcher: BoardWatcher) =>
-    watcher.kind === "bot" ? watcher.name : (devices.find((device) => device.id === watcher.deviceId)?.name ?? t("未知设备"));
+    watcher.kind === "bot" ? watcher.name : (devices.find((device) => device.id === watcher.deviceId)?.name ?? t("未知资源"));
   async function change(count: number) {
     setSaving(true);
     setError("");

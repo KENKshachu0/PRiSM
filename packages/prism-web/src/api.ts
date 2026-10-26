@@ -24,8 +24,10 @@ export type Card = {
   disabledAt?: string | null;
 };
 
-export type PublicMachine = {
+export type PublicResource = {
   coinAfterSwipe: boolean;
+  /** A card can be added at this cabinet's reader. */
+  cardCapture?: boolean;
   kind: "machine" | "door";
   capabilities: { power: boolean; climate?: boolean; coin: boolean; card: boolean; door: boolean; mahjong?: boolean };
   webOnly?: boolean;
@@ -61,10 +63,10 @@ export type MachineLoginResult = {
   };
 };
 
-export type MachineSession = {
+export type ResourceSession = {
   ticket: string;
   expiresIn: number;
-  machine: PublicMachine;
+  machine: PublicResource;
 };
 
 export type Shop = {
@@ -97,8 +99,33 @@ export type DeviceEvent = {
   payload: Record<string, unknown>;
 };
 
-export type Machine = {
+/** Who is on a resource now, as the resources page shows it. */
+export type ResourceOccupancyView = {
+  resourceId: string;
+  capacity: number;
+  /** The capability that decides who is on it, e.g. `hinata_io` or `mahjong`. */
+  source: string;
+  occupants: Array<{ playerId: string; displayName: string | null; startedAt: string; lastSeenAt: string; expiresAt: string | null }>;
+};
+
+/** One stay on a resource, newest first in the history. */
+export type OccupancyHistoryEntry = {
+  id: string;
+  playerId: string;
+  displayName: string | null;
+  source: string;
+  startedAt: string;
+  lastSeenAt: string;
+  endedAt: string | null;
+  endReason: "timeout" | "replaced" | "left" | "billing_ended" | null;
+};
+
+export type Resource = {
   mahjong?: { capacity: number; pricingConfigIds: string[] } | null;
+  /** How many people can use it at once; 0 for one nobody occupies. A mahjong table's is its size. */
+  capacity?: number;
+  /** How long someone counts as on it after the last sign of them; also its idle time. */
+  occupancyMinutes?: number;
   /** Actions this device can perform now, tagged with their capability. */
   actions?: { name: string; capability: string }[];
   coinAfterSwipe: boolean;
@@ -130,6 +157,35 @@ export type Machine = {
   relayOnline?: boolean | null;
   /** The connected IO still encrypts payloads, which embedded mode cannot read. */
   relayE2ee?: boolean | null;
+  /** A shop bot's settings; null for a resource that is not a bot. Its token is only shown when issued. */
+  bot?: BotSettings | null;
+  /** The group whose default plan this resource bills; "default" for the shop's default group. */
+  resourceGroupId?: string;
+  /** A plan of its own that replaces the group's; null to follow the group. */
+  pricingConfigOverrideId?: string | null;
+};
+
+/** What a shop bot offers players and staff; everything else it is told comes from the platform. */
+export type BotSettings = {
+  playerCommands: "all" | "readonly";
+  readOnlyNotice: string;
+  staffCommands: boolean;
+  powerOffStaffOnly: boolean;
+  doorResourceId: string | null;
+  receiptsToStaff: boolean;
+  idleChannelIds: string[];
+  idleReminderMinutes: number;
+  watchHomeAssistant: boolean;
+};
+
+/** A set of resources that bill the same default plan. The default group is the shop's own. */
+export type ResourceGroup = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  isDefault: boolean;
+  defaultPricingConfigId: string | null;
+  resourceCount: number;
 };
 
 export type UserSummary = {
@@ -333,8 +389,18 @@ export const Api = {
       authorizationRequired: boolean;
       syncError: string | null;
     }>("/api/v1/cards"),
-  startMachineSession: (shopCode: string, publicId: string) =>
-    api<MachineSession>("/api/v1/machines/session/start", {
+  /** Open a short window in which the card put on this cabinet's reader is added to the account. */
+  startCardCapture: (input: { ticket: string; location?: unknown }) =>
+    api<{ captureId: string; expiresAt: string }>("/api/v1/devices/session/cards/capture", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  cardCaptureResult: (captureId: string, ticket: string) =>
+    api<{ status: "waiting" | "expired" | "added" | "bound" | "exists" | "taken" | "unsupported"; cardType?: string }>(
+      `/api/v1/devices/session/cards/capture/${encodeURIComponent(captureId)}?ticket=${encodeURIComponent(ticket)}`,
+    ),
+  startResourceSession: (shopCode: string, publicId: string) =>
+    api<ResourceSession>("/api/v1/machines/session/start", {
       method: "POST",
       body: JSON.stringify({ shopCode, publicId }),
     }),
@@ -353,11 +419,11 @@ export const Api = {
     }),
   deleteCard: (id: string) =>
     api<{ ok: true }>(`/api/v1/cards/${id}`, { method: "DELETE" }),
-  publicMachine: (ticketOrPublicId: string, ticket?: string) => {
+  publicResource: (ticketOrPublicId: string, ticket?: string) => {
     const url = ticket
       ? `/api/v1/machines/${encodeURIComponent(ticketOrPublicId)}?ticket=${encodeURIComponent(ticket)}`
       : `/api/v1/machines/session?ticket=${encodeURIComponent(ticketOrPublicId)}`;
-    return api<{ machine: PublicMachine }>(url);
+    return api<{ machine: PublicResource }>(url);
   },
   /**
    * The machine and, for a signed-in player, the page state in one request: what
@@ -365,7 +431,7 @@ export const Api = {
    * state shape, which the page that reads it defines.
    */
   bootstrap: <S>(ticket: string) =>
-    api<{ machine: PublicMachine; state: S | null }>(
+    api<{ machine: PublicResource; state: S | null }>(
       `/api/v1/devices/session/bootstrap?ticket=${encodeURIComponent(ticket)}`,
     ),
   loginMachine: (
@@ -429,21 +495,43 @@ export const Api = {
   deleteShop: (id: string) =>
     api<{ ok: true }>(`/api/v1/merchant/shops/${id}`, { method: "DELETE" }),
   machines: (shopId: string) =>
-    api<{ machines: Machine[] }>(
+    api<{ machines: Resource[] }>(
       `/api/v1/merchant/machines?shopId=${encodeURIComponent(shopId)}`,
     ),
-  createMachine: (input: {
+  resourceGroups: (shopId: string) =>
+    api<{ resourceGroups: ResourceGroup[] }>(
+      `/api/v1/merchant/resource-groups?shopId=${encodeURIComponent(shopId)}`,
+    ),
+  createResourceGroup: (input: { shopId: string; name: string; defaultPricingConfigId: string | null }) =>
+    api<{ resourceGroup: ResourceGroup }>("/api/v1/merchant/resource-groups", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateResourceGroup: (
+    id: string,
+    input: { shopId: string; name?: string; enabled?: boolean; defaultPricingConfigId?: string | null },
+  ) =>
+    api<{ resourceGroup: ResourceGroup }>(`/api/v1/merchant/resource-groups/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteResourceGroup: (shopId: string, id: string) =>
+    api<{ ok: true }>(
+      `/api/v1/merchant/resource-groups/${encodeURIComponent(id)}?shopId=${encodeURIComponent(shopId)}`,
+      { method: "DELETE" },
+    ),
+  createResource: (input: {
     shopId: string;
     name: string;
     hinataUrl: string;
     hinataPassword?: string | undefined;
     enabled: boolean;
   }) =>
-    api<{ machine: Machine }>("/api/v1/merchant/machines", {
+    api<{ machine: Resource }>("/api/v1/merchant/machines", {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  updateMachine: (
+  updateResource: (
     id: string,
     input: {
       name?: string | undefined;
@@ -456,7 +544,7 @@ export const Api = {
       method: "PATCH",
       body: JSON.stringify(input),
     }),
-  deleteMachine: (id: string) =>
+  deleteResource: (id: string) =>
     api<{ ok: true }>(`/api/v1/merchant/machines/${id}`, { method: "DELETE" }),
   shopMembers: (shopId: string) =>
     api<{ members: ShopMember[] }>(

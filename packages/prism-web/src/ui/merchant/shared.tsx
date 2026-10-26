@@ -353,6 +353,21 @@ export type Player = {
   hasUnpaidSession?: boolean;
   identities?: { provider: string; subject: string; displayName?: string }[];
 };
+/**
+ * Who is in the shop and where, as the server lists them: each person once, at
+ * the resource they occupy or their most specific plan.
+ */
+export type Roster = {
+  total: number;
+  groups: Array<{
+    kind: "resource" | "plan";
+    id: string | null;
+    name: string;
+    capacity?: number;
+    members: Array<{ playerId: string; displayName: string | null }>;
+  }>;
+};
+
 export type LivePlayer = {
   quoteState?: "loading" | "ready" | "error";
   quoteError?: string;
@@ -371,6 +386,8 @@ export type LivePlayer = {
   }[];
   sessions: {
     id: string; label?: string; startedAt: string; endedAt: string | null;
+    /** The plan the session bills; null for the unpriced placeholder session. */
+    pricingConfigId?: string | null;
     status: "active" | "closed"; elapsedMinutes: number; currentImpact: number | null;
     pricingCharges: { pricingConfigId: string; planName: string; ruleLabel: string; amount: number }[];
     pricingSegments: {
