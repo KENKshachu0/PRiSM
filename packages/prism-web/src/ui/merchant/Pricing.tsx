@@ -167,21 +167,17 @@ export function PricingPage() {
           <button
             type="button"
             className={button}
-            aria-expanded={showSimulator}
-            onClick={() => setShowSimulator((value) => !value)}
+            onClick={() => setShowSimulator(true)}
           >
             {t("计费模拟器")}
-            <ChevronDown
-              size={15}
-              className={showSimulator ? "rotate-180" : ""}
-              aria-hidden="true"
-            />
           </button>
         )}
         </div>
       </div>
       {showSimulator && resource.data && (
-        <BillingSimulator pricingConfigs={resource.data.pricingConfigs} />
+        <Modal title={t("计费模拟器")} close={() => setShowSimulator(false)} xl>
+          <BillingSimulator pricingConfigs={resource.data.pricingConfigs} />
+        </Modal>
       )}
       {!rows ? (
         <State error={resource.error} />

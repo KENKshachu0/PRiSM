@@ -83,7 +83,6 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
   return (
     <section className="grid gap-4" aria-label={t("计费模拟器")}>
       <div className="grid gap-1">
-        <h3 className="text-lg font-semibold">{t("计费模拟器")}</h3>
         <p className="text-sm text-ink/60">
           {t("逐行填写 Session 的开启时间、关闭时间和计费方案；最早开启为入场时间，最晚关闭为退场时间。Session 可以重叠。")}
         </p>
@@ -94,7 +93,7 @@ export function BillingSimulator({ pricingConfigs }: { pricingConfigs: Pricing[]
           {t("自动参与计算的跨方案封顶")}：{caps.map(cap => cap.name).join("、")}
         </p>}
       </div>
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
       <div className="grid gap-4 rounded-xl border border-ink/10 bg-panel p-4">
       <form className="grid gap-4" onSubmit={simulate}>
         {sessions.map((session, index) => (
