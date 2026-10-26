@@ -12,11 +12,11 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 
 **Bot 向玩家开放哪些命令，在 Bot 端配置。** Koishi 插件的 `playerCommands` 默认 `all`；设为 `readonly` 后，玩家只能绑定（`bind`）、查询（余额、账单、记录、资产、查人、设备状态）和兑换（`redeem`），入场、结账、上下桌和设备操作只有 `staffUserIds` 中的管理员能用（包括替其他玩家操作），玩家会收到 `readOnlyNotice`。后台不做这层限制，因为它分不清请求来自管理员还是玩家。
 
-绑定确认不要求店铺启用计费。同一页面可编辑玩家看到的**绑定提示**（`settings.botContact`，含 `{code}` 的一行显示为可复制命令，并有实时预览），用来写明去哪个群、发什么命令，取代固定的「向店铺 Bot 发送 bind 绑定码」（插件命令为 `bind`，旧的 `prism.bind` 保留为同义命令）。Bot 请求里的 `autoRegister` 一律被店铺设置覆盖。
+绑定确认不要求店铺启用计费。「设置 → 玩家与身份 → 绑定提示」可编辑玩家看到的**绑定提示**（`settings.botContact`，含 `{code}` 的一行显示为可复制命令，并有实时预览），用来写明去哪个群、发什么命令，取代固定的「向店铺 Bot 发送 bind 绑定码」（插件命令为 `bind`，旧的 `prism.bind` 保留为同义命令）。Bot 请求里的 `autoRegister` 一律被店铺设置覆盖。
 
 **Token 要求：**
 
-- 在「设置 → Bot 与接入」中创建 Bot 接入凭据。
+- 在「资源」页添加一个带「店铺 Bot」能力的资源，保存时签发 Bot 接入凭据（只显示一次，连同店铺编号和 API 地址）；之后在这个资源的「店铺 Bot」一项里查看店铺编号和 API 地址，或重新签发凭据。设置里不再有「Bot 与接入」分组。
 - 请求 Header 使用 `Authorization: Bearer <integration-token>`。
 - 不需要 `X-PRiSM-Player-Id`。
 
@@ -53,6 +53,33 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 - 心跳：发送文本 `ping`，回复 `pong`（Workers 上由运行时自动回复，不唤醒 Hub）。
 - `{"type":"hello","reminderLeadSeconds":300}`：插件告诉 Hub 闲置关机前多久提醒。之后 Hub 推送 `{"type":"event","event":"idle.reminder","data":{"reason":"shop_empty"|"device_idle","at":<关机时间 ms>,"devices":[{"id","name"}]}}`；Koishi 发到店员配置的群或私聊。多个 Bot 连接时取最长的提前量。
 
+### Bot 是一种资源：设置由服务端下发
+
+每个机器人对应一个带 `bot` 能力的资源，在商户工作台「资源」页添加和编辑（见[资源与资源组](resources.md)）。添加时签发它的接入凭据（只显示一次），删除资源、关闭 Bot 能力或「重新签发」都会吊销旧凭据，旧连接随之断开。在「设置 → 集成」里单独创建的凭据，会在机器人第一次请求 `GET integration/bot` 时自动生成对应的 Bot 资源。Bot 资源不能被玩家扫码。
+
+插件本地只需要连接信息：API 地址、店铺编号和接入凭据。其余都由 `GET integration/bot` 下发：
+
+| 字段 | 来源 |
+| --- | --- |
+| `bot` | 资源 ID 与名称（名称也用于 Home Assistant 监听名单） |
+| `settings` | 在 Bot 资源上设置：玩家命令全部/只读及提示、店员命令、关机仅限店员、结账回执发给店员、闲置提醒的群与提前分钟数、是否监听 Home Assistant |
+| `staff` | 自动推导：店铺负责人和在职员工的账号绑定的平台身份 `{provider, subject}` |
+| `currencyName` | 自动推导：店铺余额资产的名称 |
+| `door` | 资源上选择的门锁；没选时若店里只有一个门锁就用它 |
+| `mahjongTables` | 自动推导：带麻将能力的资源，含名称、别名和开桌人数（即资源的容量） |
+| `billingEnabled` | 店铺是否启用计费 |
+
+机器人连上 WebSocket 后先读取这份配置，再发送 hello（名称、是否监听 Home Assistant、闲置提醒提前量都取自配置）。商家保存任何资源、员工通过机器人绑定平台身份后，Hub 会向所有在线机器人推送 `{"type":"config.changed"}`，机器人重新读取并再发一次 hello；不再允许监听时，它正在监听的 Home Assistant 会交给下一个监听者。Bot 资源被停用时该接口返回 `403 BOT_DISABLED`。
+
+Bot 和其他资源一样属于一个资源组，也可以设置专属方案（资源编辑页的「计费」一节）。玩家通过它 `/login`、`/入场` 时，开始的就是这个 Bot 的方案，规则与扫码一样：专属方案优先，否则用所属资源组的方案。没有改过的 Bot 在默认资源组，开始店铺默认计费方案。一家店可以有多个 Bot，例如麻将群的 Bot 放在麻将区，入场就开始麻将区的方案。Bot 所在资源组的方案只决定入场；Bot 替玩家操作其他资源时，检查的仍是目标资源的方案。
+
+### 按外部身份上下麻将桌
+
+- `POST integration/players/by-identity/mahjong`，`{identity, table, action: "join" | "leave"}`。`table` 可以是麻将桌资源的 ID、名称或别名。上桌即玩家本人的确认：服务端会开始这张桌资源的计费方案（以及它依赖的方案），满桌时为所有人开台；不需要先入场。返回 `{mahjong: {capacity, seats}}`。错误：`MAHJONG_TABLE_NOT_FOUND`、`MAHJONG_TABLE_FULL`、`MAHJONG_ALREADY_SEATED`。
+- `GET integration/mahjong-tables`：每张桌的座位 `{playerId, name, playing}`，供机器人列名单和不带桌名的下桌。
+- 下桌只结束座位当前所在的 session（已开局为麻将方案，等位中为麻将桌自己的等位方案），响应带 `billing.remaining`：还在计费的方案名，机器人回复「仍在计费：…」。见 [卡片、占用与查人](occupancy.md#3-麻将等位)。
+- `GET integration/roster` 列出在店的人：每人只列一处，正在占用的资源（麻将桌和其他游戏机一样，带人数/容量）或最具体的方案；`?name=` 只列一个资源或一个方案。机器人的 `list` 按它输出，不再自己拼麻将桌。`POST integration/players/by-identity/presence` 回答一位玩家是否在店、计费哪些方案、占用哪些资源。`GET integration/sessions/active` 的每条 session 带 `pricingConfigId` 与 `planName`。
+
 ### 常用玩家动作
 
 ### 在场客流与设备状态
@@ -61,7 +88,8 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 
 | 路由 | 用途 |
 | --- | --- |
-| `GET /rpc/integration/sessions/active` | 列出在场所有活跃 session，含 `playerDisplayName`、`identities` (provider+subject)、`startedAt`、`label`、`elapsedMinutes`。机器人在 `/list`、`/窝里` 这类命令里用 `identities` 中的 `subject`（平台用户 ID）去调用聊天平台 API 拉昵称，而不是直接显示后台存的 `playerDisplayName`。 |
+| `GET /rpc/integration/roster` | 在店的人，每人只列一处（见上文）。每位成员带 `displayName` 与 `identities` (provider+subject)；认不出主人的刷卡不产生占用，不会出现在这里。机器人在 `/list` 里用 `identities` 中的 `subject`（平台用户 ID）去调用聊天平台 API 拉昵称，而不是直接显示后台存的 `displayName`。 |
+| `GET /rpc/integration/sessions/active` | 列出在场所有活跃 session，含 `playerDisplayName`、`identities`、`startedAt`、`label`、`elapsedMinutes`、`pricingConfigId`、`planName`。 |
 | `GET /rpc/integration/device-states` | 列出每台已启用、绑定了电源的设备的电源状态。设备所在的 HA 连接处于事件驱动时读存储的事实，**不去问 Home Assistant**；无状态时才现场读取 Home Assistant 且不记录（电源可能在平台外被改动，所以这时每次请求都会现查，会变慢）。`state` 为 `on`/`off`；读不到时 `status` 为 `offline`、`state` 为最后一次存储的值或 `unknown`。`metadata.aliases` 为设备别名。bot 的 `/show` 直接消费。（插件原来的无人自动关机 `powerOffInterval` 已删除，改为后台的「闲置自动关机」。） |
 
 平台昵称的取法因适配器而异：Koishi 走 `session.bot.getUser(qq)`，AstrBot 在 aiocqhttp 走 `bot.call_action("get_stranger_info", user_id=qq)`，telegram、微信、Aime 等按对应适配器提供的方法拉取；取不到则退化为后台存的玩家名。机器人不要把后台存的 displayName 直接写进消息，避免不同身份来源的玩家出现 `Player 123` 这种开发者命名。
@@ -84,7 +112,7 @@ Integration player actions 都在 `/rpc/integration/players/by-identity/*` 下�
 | `POST /redeem` | 为玩家兑换礼物码。 |
 | `POST /device-actions` | 按玩家外部身份申请设备动作，例如投币或 Aime 扫卡。 |
 
-示例：平台用户第一次发送 `/入场`，不存在就自动注册，并进入标准音游计费：
+示例：平台用户第一次发送 `/入场`，不存在就自动注册，并开始这个 Bot 的计费方案：
 
 ```bash
 curl -X POST https://prism.example.com/rpc/integration/players/by-identity/session/start \
@@ -93,20 +121,17 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/sessi
   -d '{
     "identityKey": "onebot:123456",
     "autoRegister": true,
-    "displayName": "onebot:123456",
-    "pricingConfigIds": ["music-standard"],
-    "label": "音游区间",
-    "entry": true
+    "displayName": "onebot:123456"
   }'
 ```
 
-Bot 调用应明确区分会话类型：普通入场传 `"entry": true`（服务端按店铺入场规则去重，保存为规范标签 `entry`）；麻将上桌、包间等另开的独立计费会话传 `"entry": false`，并提交自己的 `label` 和 `pricingConfigIds`，即使与入场规则重叠也不会折叠为原入场 session。没有 `entry` 字段的旧客户端只会按空标签、`entry`、`音游区间` 识别为入场；使用自定义入场标签的 Bot 必须升级到显式字段。无论请求里的 `autoRegister` 如何设置，服务端都以店铺是否允许自动注册为准。
+开始哪个方案只由发请求的 Bot 资源决定（见上文「Bot 是一种资源」）；请求里的 `pricingConfigId`、`pricingConfigIds`、`label`、`entry` 都会被忽略。麻将由上下桌接口开始和结束计费，不再由机器人另开 session。无论请求里的 `autoRegister` 如何设置，服务端都以店铺是否允许自动注册为准。
 
-机器人或自助入口应该在配置中明确指定普通 `/login`、`/入场` 使用的标准计费方案，并把它作为 `pricingConfigIds` 传给 `/session/start`。不要依赖“空请求体使用后端默认方案”的行为；当店内同时启用了音游、麻将叠加、包间或固定收费方案时，空请求可能会让普通入场错误套用所有启用方案。麻将、包间等附加服务应另开平级 session，并为那条 session 传对应的附加计费方案。
+机器人、店员后台、前台收银和扫码确认都走同一个开始入口（`resourceBilling.activate`），结果相同；响应的 `billing.stopped` 列出因互斥被结束的方案，机器人在回复里列出。Bot 在默认资源组、店铺又没有设置默认计费方案且启用了多个计时方案时会被拒绝（`ENTRY_PRICING_REQUIRED`）；所在资源组停用时返回 `RESOURCE_GROUP_DISABLED`。在场就是有进行中的 session，在哪个场由 session 的方案区分：响应带 `created` 与 `planName`，`created: false` 表示这个方案在这次请求之前就在计费（例如已在「普通游玩」中），返回的是原 session。机器人对设备的操作要求该设备的计费方案在玩家这里计费中，否则返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。
 
 如果 `autoRegister` 为 `false` 或未传，而身份没有绑定玩家，接口会返回 `PLAYER_IDENTITY_NOT_FOUND` 和 HTTP 404。
 
-`POST /sessions/:sessionId/stop` 用于结束某一条 session 的计时但不结账，典型场景是 AstrBot 的麻将叠加计时：一张桌子每人各持一条平级 session，有人下桌只停他自己那一条，其余人继续。它会把 session 关闭并标记为待结算，不会扣款；玩家最终离店时，统一结算会把仍在运行的 session 和已经停止但未结算的 session 一起计算。
+`POST /sessions/:sessionId/stop` 用于结束某一条 session 的计时但不结账。麻将不再由机器人自己开 session，改用下面的上下桌接口，座位和开台都由服务端管理。它会把 session 关闭并标记为待结算，不会扣款；依赖该方案的其他 session 会在同一时间点一并关闭（见[计费状态编排](pricing-sessions.md)）；玩家最终离店时，统一结算会把仍在运行的 session 和已经停止但未结算的 session 一起计算。
 
 授权边界是**玩家**，不是开启渠道：接口校验外部身份对应的玩家与 session 归属，拿一个 Integration Token 停不了别人的 session；但在这名玩家名下，无论 session 是机器人开的、扫码入口开的还是员工在后台开的，都可以停。计费和结账历来不区分开启渠道，停表也一致。session 上的 `metadata.createdBy` 只记录来源供审计，不参与任何鉴权判断。
 
@@ -123,8 +148,6 @@ await fetch("https://prism.example.com/rpc/integration/players/by-identity/sessi
     identity: { provider: "onebot", subject: "123456" },
     autoRegister: true,
     displayName: "onebot:123456",
-    pricingConfigIds: ["music-standard"],
-    label: "音游区间",
   }),
 });
 ```
@@ -146,7 +169,7 @@ await client.requestScanByIdentity(
 );
 ```
 
-`coin`、`aime.scan`、`power.on` 和 `power.off` 都要求玩家当前至少有一条正在运行的计费 session。未入场时接口返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。Bot 不接收游戏机内部 ID 或 Aime 卡号：游戏机通过后台配置的 `name` / `aliases` 解析，刷卡身份由后端从当前玩家已绑定的 `aime` 身份中读取。Bot 配置为关机仅管理员可用时，只允许白名单管理员提交 `power.off` 请求，并附加 `staffOverride: true`；`power.on` 仍要求玩家已入场。后端将覆盖请求记录为员工动作。该覆盖只接受 `power.on/off`，不能用于投币、刷卡或其他设施动作。
+`coin`、`aime.scan`、`power.on` 和 `power.off` 都要求玩家当前至少有一条正在运行的计费 session。未入场时接口返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。Bot 不接收游戏机内部 ID 或 Aime 卡号：游戏机通过后台配置的 `name` / `aliases` 解析，刷卡用的是玩家在本店最近用过的卡（加密保存在 `player_cards`，见 [卡片、占用与查人](occupancy.md#1-卡片)）；请求指明卡号时只在它属于该玩家时使用。Bot 配置为关机仅管理员可用时，只允许白名单管理员提交 `power.off` 请求，并附加 `staffOverride: true`；`power.on` 仍要求玩家已入场。后端将覆盖请求记录为员工动作。该覆盖只接受 `power.on/off`，不能用于投币、刷卡或其他设施动作。
 
 旧的 `botToken + playerToken + staffToken` 普通命令模式已经废弃。Integration Token 可调用受限的管理员快捷操作接口：按外部身份调整玩家资产（`POST /rpc/integration/players/by-identity/assets/adjustments`）和按指定总价立即结账（`POST /rpc/integration/players/by-identity/checkout/override`）。这两个接口不授予完整 Staff API 权限；机器人仍必须在自身配置中限制可发起该操作的平台管理员。麻将上桌、下桌这类玩家业务命令不需要额外权限。
 
@@ -162,7 +185,7 @@ await client.requestScanByIdentity(
 | `climate` | `connectionId`、`entityId`（`climate.*`） | —（同上） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威（同上） |
 | `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`card.login`（由读卡器灯光推出）、`led.set`（不存） | `link`，平台权威 |
 | `door` | `lockId` | — | `door.open` | — | — |
-| `mahjong` | `capacity`、`pricingConfigIds` | — | —（上下桌走麻将流程） | — | — |
+| `mahjong` | `capacity`、`pricingConfigIds`（最多一个方案） | — | —（上下桌走麻将流程） | — | — |
 
 **空调（`climate`）单列一个能力，不并入电源**：它的状态是模式和温度而不是开/关；用空调不算「玩过」机台（所有空调动作 `countsAsPlay: false`，不会取消入场的免费宽限）；空调关着也不应该挡住机台投币、刷卡（那只看 `power`）。一台设备可以同时带电源和空调（例如包间：灯电源 + 空调）。
 
@@ -191,7 +214,7 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 - **旧连接补建**：只读账号只在新建连接、改连接的地址或令牌时自动创建，而功能上线之前存下的连接是第一次读取时由旧绑定「采纳」出来的，`readAccess` 为空，从没有人尝试过，编辑器里会一直显示「正在启用实时状态…」。所以店铺 Hub 在构建监听任务时（IO 上线、设备或连接变化、闹钟补位都会走到），对**有设备在用、`readAccess` 为空**的连接补建一次：用控制令牌走上面的流程，成功后立刻重建监听。补建放在 Hub 里而不是请求里，因为每个店铺只有这一个对象，能看到「已经在跑」，同一条连接同一时间只会跑一次；两次并发会在 HA 里各建一个用户，先建的那个留下仍然有效的令牌。结果是 `needs_admin` 或 `failed` 的不会再自动重试，由编辑器提示原因。没有 IO 在线的店铺不会触发，也就不会在没有人需要实时状态时去动店家的 Home Assistant。
 - 依赖 Home Assistant 默认的用户名密码登录方式；店家关掉它时这一步失败，需要手动提供令牌。只读用户仍可调用少数不针对实体的服务（如发通知），但控制不了任何设备。整条流程已在真实 Home Assistant（官方 docker 镜像）上跑过：管理员令牌得到 `ready`，非管理员令牌得到 `needs_admin`，IO 固件用只读令牌订阅事件并收到完整快照；见 [开发环境](dev-environment.md#真实-home-assistant-与-hinata-io-的端到端测试)。
 
-能力目录写在 `packages/server/src/devices/capabilities.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
+能力目录写在 `packages/server/src/resources/capabilities/catalog.ts`，是唯一的定义处：配置校验、动作是否算作「玩过」（计费宽限用）、哪些回报要存、状态由谁权威，都在这里声明。数据库里没有能力名或事件类型的 CHECK 约束，新增能力不需要改表。
 
 ### 动作、副作用与事件
 
@@ -202,21 +225,21 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 - 状态（`device_state`）只在值变化时写一条 `change` 事件。电源和空调是**外部权威**：真相在 Home Assistant。一个连接被监听者订阅时（事件驱动），每个事件写入 `device_state`，存储的值就是事实，读者只读存储；没有人监听时（无状态）设备没有已知状态，读者现查 HA 且不记录，存储里残留的旧值被忽略（见「店铺 Hub」）。直连链路 `link` 是**平台权威**，由中继在连接/断开时写入。
 - 以后要做「空闲/忙碌」这类派生状态时，应当监听**事件**（包括设备回报和观测到的变化），而不是只看平台发出的动作。
 
-所有写入都经过 `packages/server/src/devices/bus.ts`：`perform`（动作）、`signal`（回报）、`setOwned`（平台权威状态）、`reportMany`（监听者上报的外部状态，一批写入，可只存储不记事件）。`observe`（现读后写入）仍在总线上但不再用于任何读取路径。动作不会在完成后读回外部状态。其他代码不直接写设备表。卡号只作为临时参数交给执行器，从不落库；门锁临时密码只在本次响应返回。
+所有写入都经过 `packages/server/src/resources/capabilities/bus.ts`：`perform`（动作）、`signal`（回报）、`setOwned`（平台权威状态）、`reportMany`（监听者上报的外部状态，一批写入，可只存储不记事件）。`observe`（现读后写入）仍在总线上但不再用于任何读取路径。动作不会在完成后读回外部状态。其他代码不直接写设备表。卡号只作为临时参数交给执行器，从不落库；门锁临时密码只在本次响应返回。
 
 ### 设备看板与编辑器（Web）
 
-商户后台的设备页按「设备是身份、能力是配置」组织，与服务端能力目录一一对应：
+商户后台的资源页按「资源是身份、能力是配置」组织，与服务端能力目录一一对应：
 
 - 设备卡片只陈述三件事：设备身份（名称、别名、启用状态）、已绑定的能力徽章、实时状态（电源、空调模式与温度、直连在线）。**每个带电源或空调的设备有一个「实时 / 非实时」标签**：「实时」表示它用到的 Home Assistant 连接有 HINATA IO 监听者订阅着并交付了完整状态，显示的值是推来的事实；「非实时」表示设备没有自己的状态，显示的是最近一次读到的值。**非实时设备不会是「未知」**：进入页面后看板对它读一次，之后即使这个值已经落后了十分钟也照样显示，只有从没读到过的字段才是空（读取期间显示「读取…」；读不到才是「未知」）。一台实时设备变成非实时（连接不再被监听）时保留它最后一次的值，只把标签换成「非实时」。是否实时由监听者对 HA 连接的订阅决定，不是看板自己的这条连接。门锁、麻将桌这类没有电源和空调的设备没有标签。
-- **实时设备的状态完全靠 Hub 推送，看板和面板都不去读它。** 进入设备页后连上店铺 Hub 的一条 WebSocket：连接建立时 Hub 发整店的当前状态（含每台设备实时与否），之后每台实时设备的变化（电源开关、空调设定和室温）推过来，页面直接更新；哪些设备是实时的发生变化时（有连接开始或停止被监听），Hub 重发整店。Hub 只给看板推实时设备的变化，一个连接的第一份快照也不是逐台推的变化，而是以整店状态的形式在宣布该连接实时之后发一次，所以客户端不做过滤，收到变化就更新它指的那台设备。对实时设备执行操作后**什么都不读**，操作的结果会作为事件自己推过来；只重载设备列表（名称、绑定等）。
+- **实时设备的状态完全靠 Hub 推送，看板和面板都不去读它。** 进入资源页后连上店铺 Hub 的一条 WebSocket：连接建立时 Hub 发整店的当前状态（含每台设备实时与否），之后每台实时设备的变化（电源开关、空调设定和室温）推过来，页面直接更新；哪些设备是实时的发生变化时（有连接开始或停止被监听），Hub 重发整店。Hub 只给看板推实时设备的变化，一个连接的第一份快照也不是逐台推的变化，而是以整店状态的形式在宣布该连接实时之后发一次，所以客户端不做过滤，收到变化就更新它指的那台设备。对实时设备执行操作后**什么都不读**，操作的结果会作为事件自己推过来；只重载设备列表（名称、绑定等）。
 - **非实时设备靠主动读取，读的就是 Home Assistant。** 进入页面、看板拿到第一份状态后，对所有非实时设备读一次（`GET …/machines/states?shopId=`，没有任何开关：实时设备返回存储的事实，非实时设备没有存储的状态，所以去问它们的 Home Assistant，不记录）；页头有一个店铺级的「刷新设备状态」按钮再读一次，**只对非实时设备有作用**，实时设备原样不动（Hub 一直让它是当前的，读取带回的只是读取时数据库里的值，客户端不采用）；全部设备都是实时时按钮禁用。对一台非实时设备在「操作」面板里执行开关机或空调操作后，重读**这一台**一次（`GET …/machines/:id/state`），因为没有别的途径能说明操作的结果；读到的值写回看板，面板和卡片显示同一份。HTTP 读取只有这三种用途，外加 Hub 没给出状态时的兜底（连不上或连上后 3 秒内没有任何状态，按进入页面的方式读一次整店）。**实时设备没有任何读取，连接断开期间也没有**：连接断开后按 5、10、20、60 秒递增重连，Hub 在重连成功时重发整店状态，实时设备靠它补上断开期间错过的变化；断开期间看板显示的是断开前的值。「操作」面板的电源和空调直接取看板已有的状态，打开时不读；麻将座位不是 Home Assistant 状态，没有推送，面板用 `GET …/machines/:id/mahjong` 单独读。卡片底部是「操作」（主按钮）、「编辑」、「操作记录」和二维码入口；有可执行能力的设备才显示「操作」，只读账号不显示。
 - **下发操作与历史记录是两个入口**：`操作` 打开只含开机/关机/投币/开门密码的确认面板，`操作记录` 打开只读的事件时间线。两者混在一个弹窗里会让有后果的按钮看起来像记录的一部分。
 - 编辑器分两段：**设备身份**（名称、别名、启用）和**设备能力**。每项能力是一张带开关的卡片——电源、空调、刷卡（外部中继或直连）、开门密码、麻将桌；关闭的能力不渲染其表单，避免四种凭据同时铺开。提交按钮吸底，长表单无需滚到末尾才能保存。
 - 直连模式（`transport: "embedded"`）的令牌是**显式签发的**：面板里只有「签发设备令牌 / 轮换设备令牌」按钮，普通保存不会顺手创建凭据；未签发就保存会被拒绝并提示先签发或改用外部中继。签发成功后弹窗切换为一次性交付步骤，显示令牌、可复制的两行 INI 片段（`serverUrl=` / `deviceToken=`），在点击「我已写入机台」之前关闭按钮禁用。轮换前明确提示机台现有令牌会立即失效。
-- 空设备页说明「设备」对应店里一样玩家扫码就能用的东西；`/merchant/:shop/devices?add=1` 直接打开添加设备弹窗（开店指引使用）。二维码弹窗提供「打印」（新窗口只含二维码和设备名）、带「已复制」反馈的复制链接和测试扫码入口。NFC 入口就是把同一个链接写进标签的 NDEF URI 记录：iPhone 碰一下会唤起 hinata_go 里的 PRiSM Link App Clip（免安装），其它手机用浏览器或 HINATA Go 打开；弹窗下方写明了这一点。
+- 空资源页说明「资源」是店里玩家扫码就能用的东西（机台、门、麻将桌，或没有硬件、只用来开始计费的二维码）；`/merchant/:shop/resources?add=1` 直接打开添加资源弹窗（开店指引使用；旧地址 `/devices` 会跳转过来）。二维码弹窗提供「打印」（新窗口只含二维码和资源名）、带「已复制」反馈的复制链接和测试扫码入口。NFC 入口就是把同一个链接写进标签的 NDEF URI 记录：iPhone 碰一下会唤起 hinata_go 里的 PRiSM Link App Clip（免安装），其它手机用浏览器或 HINATA Go 打开；弹窗下方写明了这一点。
 - 编辑器里开门密码能力会检查店铺 TTLock 账号：未连接时红字提示并链接到「设置 → 位置与设备」；麻将桌没有可选计费规则时链接到「计费」页（未启用计费时链接到转换向导）；外部中继缺连接密码时说明投币为何不可设置。
-- 能力判定集中在前端适配层 `packages/prism-web/src/ui/merchant/device-capabilities.ts`（`deviceCapabilities`、`canOperateCoin`、`deviceActions`、`deviceSummaryKey`）。卡片徽章、操作记录里的可用动作、编辑器里的开关都读这一处，不再各自从 `ttlockLockId`/`homeAssistant`/`hasHinata` 推导。
+- 能力判定集中在前端适配层 `packages/prism-web/src/ui/merchant/resource-capabilities.ts`（`resourceCapabilities`、`canOperateCoin`、`deviceActions`、`deviceSummaryKey`）。卡片徽章、操作记录里的可用动作、编辑器里的开关都读这一处，不再各自从 `ttlockLockId`/`homeAssistant`/`hasHinata` 推导。
 - 提交仍使用商户 API 的扁平字段（`homeAssistant`、`ttlockLockId`、`mahjong`、`hinataUrl`/`hinataPassword`、`relayConnection`、`coinKey`、`coinAfterSwipe`）；关闭某项能力时发送 `null`（刷卡为 `relayConnection: "external"` + `hinataUrl: null`）让服务端删除对应能力行。适配层只是视图模型，不改变接口契约。
 
 ### 「操作」面板
@@ -225,7 +248,7 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 - 空调分组（`ClimateControls`，与玩家扫码页共用）：开/关空调，以及按实体上报的模式、温度加减（按步长、限制在最低/最高温度之间）和风速，单击即下发；标题右侧显示「模式 · 设定温度 · 室温」。
 - 每个分组标题右侧显示与该组操作相关的状态：电源为实时 `power`（已开机/已关机/未知），直连刷卡为链路在线状态（外部中继则显示连接方式），门锁显示 `lockId`，麻将桌显示 `已入座 / 容量`。
 - 麻将上桌的候选人来自 `staff/live-players`（已入场在店玩家），已入座的人不重复出现；上桌要求该玩家有进行中的入场，所以全量玩家列表里大多数人本来就会失败。
-- 刷卡由店员直接输入 **20 位卡号**（`cardNumber`）发送；也兼容传 `playerId`，平台读取该玩家绑定的卡号（优先 `aime` provider）。卡号只作为临时参数交给执行器，不落库；卡号格式不合法返回 400，玩家没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
+- 刷卡由店员直接输入 **20 位卡号**（`cardNumber`）发送；也可以传 `playerId`，平台解密该玩家在本店最近用过的卡，这次操作同时记为该玩家占用这台机台。卡号只作为临时参数交给执行器，不落库；卡号格式不合法返回 400，玩家没有绑定卡返回 `SCAN_IDENTITY_NOT_BOUND_TO_PLAYER`。
 - `mahjong.seat` / `mahjong.unseat` 接受 `playerId`，让所选玩家上桌/下桌。上桌与玩家自身上桌走同一套校验：玩家必须启用、计费开启时必须有进行中的入场（`CHECKIN_REQUIRED`），麻将计费规则必须齐全且处于可计费时段。店员操作不校验店员自身定位，但玩家资格、封禁与牌桌容量照常校验。
 - `GET /api/v1/merchant/machines/:id/mahjong` 返回 `{ mahjong }`；`mahjong` 为 `{ capacity, seats: [{ playerId, name, playing }] }`，供操作面板显示座位并选择下桌对象。没有麻将能力的设备返回 `null`。电源和空调的状态是另一个接口 `…/:id/state`，见「读取的接口」。
 
@@ -255,7 +278,7 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 - WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`，平台在握手前按令牌找到设备和通道；令牌无效返回 401，机台客户端把 401/403 当作永久失败停止重连。
 - 直连不做端到端加密：平台既是中继也是控制端，卡号本来就由平台从 `cards.access_code` 取出，身份由设备令牌承担，机密性由 `wss://` 承担。保存为直连时会丢弃之前给外部中继存的密码；请求里同时提交密码返回 `DEVICE_RELAY_PASSWORD_CONFLICT`。机台若仍设置了 `remotePassword`，会在 `CLIENT_HELLO` 里声明 `e2ee: true`，平台拒绝下发并在设备看板提示清空。
 - 通道是 `MachineRelay` Durable Object（binding `MACHINE_RELAY`，迁移 tag `machine-relay-v1`）。控制端接口不对外暴露，`/io/ws` 是唯一公开路径。设备看板上的「已连接」直接问 Durable Object，不读存储：部署重启会断开连接却不触发断开回调。
-- 机台通过同一连接回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`，分别记为 `card.state`、`card.consumed` 信号；`led.set` 每帧都有，不存储。下发刷卡时平台把操作 ID 放进 `source`，机台原样回传；只有 UUID 形式的 `source` 被当作关联，`Remote`、`HINATA(<实例>)` 等机台本地来源不关联任何操作。
+- 机台通过同一连接回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`，分别记为 `card.state`、`card.consumed` 信号；`led.set` 每帧都有，不存储。下发刷卡时平台把操作 ID 放进 `source`，机台原样回传；只有 UUID 形式的 `source` 被当作关联，`Remote`、`HINATA(<实例>)` 等机台本地来源不关联任何操作。卡片事件带着卡号（包括玩家直接在读卡器上刷的实体卡）：平台用它认出卡主人、记在事件的 `player_id` 上，并推断谁在占用机台，存入日志前去掉卡号，只留卡类型。
 - 机台断线重连时，平台只重发**仍在有效期内、且还没被游戏取走**的那张卡（客户端默认 3 秒后丢弃远程卡）。游戏取走后（`source` 一致的 `card.consumed`）或过了有效期，存着的卡就被删除；旧版本存下的、没有有效期的卡一律不重发。否则机台几小时后重启，会把上一位玩家的卡再塞进游戏。
 
 #### 扫码刷卡的结果
@@ -271,14 +294,14 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 
 ### 店铺 Hub：谁替店里盯着 Home Assistant，以及设备状态的两种模式
 
-每家店有一个 `ShopHub` Durable Object（binding `SHOP_HUB`，迁移 tag `shop-hub-v1`，名字是店铺 ID），它从店里**在线的 Bot 和直连 HINATA IO 中挑最多两个**（默认两个，平台管理员可按店铺调整，见下），让它们用只读令牌订阅 Home Assistant（`subscribe_entities`），把状态变化经已有的连接报回来。HA 不必暴露到公网（监听者在局域网里也行），机台连进来的 WebSocket 照常可以休眠。Bot 的 WebSocket、玩家设备页和商户看板的 WebSocket 都进这个对象；只有机台直连走每台一个的 `MachineRelay`。
+每家店有一个 `ShopHub` Durable Object（binding `SHOP_HUB`，迁移 tag `shop-hub-v1`，名字是店铺 ID），它从店里**在线的 Bot 和直连 HINATA IO 中挑最多两个**（默认两个，平台管理员可按店铺调整，见下），让它们用只读令牌订阅 Home Assistant（`subscribe_entities`），把状态变化经已有的连接报回来。HA 不必暴露到公网（监听者在局域网里也行），机台连进来的 WebSocket 照常可以休眠。Bot 的 WebSocket、玩家资源页和商户看板的 WebSocket 都进这个对象；只有机台直连走每台一个的 `MachineRelay`。
 
 #### 两种模式（按 Home Assistant 连接）
 
 - **事件驱动**：一个 HA 连接被至少一台存活的监听者订阅着、并且那台已经交付了完整状态时，`ha_event_connections` 里有它的一行。此时 `device_state` 就是**事实**：玩家页的首屏接口、后台设备看板、Bot 的 `device-states`、投币前的电源检查都直接读 D1，**不再去问 Home Assistant**，也就不需要信任或过期的判断。
 - **无状态**：其余情况下设备没有已知状态。需要状态的读者自己现查 Home Assistant，**不写入任何状态或事件**；只有平台自己发起的动作（开关机、空调）会写 `request`/`result` 事件。闲置自动关机不依赖设备的实际状态，所以不受影响（见下）。后台设备看板给这样的设备打「非实时」标签，它的值靠看板主动向 HA 读（进页面、刷新按钮、操作后），见下。
 
-连接进入事件驱动要同时满足：监听者的租约有效（90 秒内有上报）、它对这个连接最近一次 `ha.status` 是已连接、当前这一任期已交付该连接的全量状态。**先把状态写进 D1，再把连接宣布为事件驱动**；任何一条不满足就回到无状态。只有 ShopHub 判定模式，`ha_event_connections` 只在切换时写。模式变化会通过 WebSocket 推给相关的设备页（`watching` 帧）。读者拿到的 `watching` 是设备用到的所有连接都处于事件驱动；值为 `null` 表示 HA 报告不可用（`unavailable`/`unknown`），不当作开也不当作关。
+连接进入事件驱动要同时满足：监听者的租约有效（90 秒内有上报）、它对这个连接最近一次 `ha.status` 是已连接、当前这一任期已交付该连接的全量状态。**先把状态写进 D1，再把连接宣布为事件驱动**；任何一条不满足就回到无状态。只有 ShopHub 判定模式，`ha_event_connections` 只在切换时写。模式变化会通过 WebSocket 推给相关的玩家资源页（`watching` 帧）。读者拿到的 `watching` 是设备用到的所有连接都处于事件驱动；值为 `null` 表示 HA 报告不可用（`unavailable`/`unknown`），不当作开也不当作关。
 
 #### 监听者
 
@@ -296,12 +319,12 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 #### 监听器数量与看板上的监听器区域
 
 - **数量只有平台管理员能改，范围是单个店铺。** `PUT /api/v1/merchant/ha-watchers?shopId=`，body `{"count": 1–4}`，非管理员（包括这家店的店主）返回 403，越界或不是整数返回 422，店铺不存在返回 404。存在这家店的 `app_settings`（键 `devices.ha_watcher_limit`），默认 2，上限 `MAX_WATCHERS = 4`。写入后 Hub 重读（`refresh`），名额变大就补人，变小就按上面的规则让位。限制值读不出来或越界一律回到默认。
-- **看板能看到谁在监听。** 设备页（有电源或空调设备时）的「HA 监听器」区域，数据来自看板那条 WebSocket 的 `watchers` 帧：`{"type":"watchers","limit":2,"max":4,"standby":1,"watchers":[{"id":"bot:…","kind":"bot","name":"前台","state":"watching"},{"id":"<机台 ID>","kind":"device","deviceId":"<机台 ID>","state":"starting"}]}`。连接建立时发一次，之后只在内容变化时发（监听者上线、让位、报告连不上 HA、数量变化）。Bot 排在前面，用它 hello 里的名字；机台用设备页已有的设备名。`state` 是 `watching`（已交付完整状态）、`subscribing`（已订阅、完整状态还在路上）、`starting`（刚下发）、`unreachable`（报告连不上 Home Assistant）；租约过期的不列。`standby` 是在线但没拿到名额的候选数。没有任何监听者时区域写明设备状态是非实时。
+- **看板能看到谁在监听。** 资源页（有带电源或空调的资源时）的「HA 监听器」区域，数据来自看板那条 WebSocket 的 `watchers` 帧：`{"type":"watchers","limit":2,"max":4,"standby":1,"watchers":[{"id":"bot:…","kind":"bot","name":"前台","state":"watching"},{"id":"<机台 ID>","kind":"device","deviceId":"<机台 ID>","state":"starting"}]}`。连接建立时发一次，之后只在内容变化时发（监听者上线、让位、报告连不上 HA、数量变化）。Bot 排在前面，用它 hello 里的名字；机台用资源页已有的资源名。`state` 是 `watching`（已交付完整状态）、`subscribing`（已订阅、完整状态还在路上）、`starting`（刚下发）、`unreachable`（报告连不上 Home Assistant）；租约过期的不列。`standby` 是在线但没拿到名额的候选数。没有任何监听者时区域写明设备状态是非实时。
 - 所有人都能看到这个区域和名额；下拉框只对平台管理员显示，店主看到的是「由平台管理员设置」。
 
 #### 读取的接口
 
-- `GET /api/v1/devices/session/bootstrap?ticket=`：扫码首屏一次请求拿到机台和（已登录时）页面状态；页面状态里的 `device: { watching, power, climate }` 是**已知的事实**，不问 HA。`/session/state` 同样带 `device`；它的 `includePower` / `includeClimate` 默认仍现读 HA，给没升级的旧客户端用，新客户端传 `=0`。
+- `GET /api/v1/devices/session/bootstrap?ticket=`：扫码首屏一次请求拿到机台和（已登录时）页面状态；页面状态里的 `device: { watching, power, climate }` 是**已知的事实**，不问 HA。启用计费的店铺里，任何资源（包括没有硬件的二维码）的方案未在计费时 `gate` 为 `entry`，`billing.preview` 列出确认后开始、结束和继续的方案及 `revision`，无法计费时为 `billing.error`；见 [资源与资源组](resources.md)。`/session/state` 同样带 `device`；它的 `includePower` / `includeClimate` 默认仍现读 HA，给没升级的旧客户端用，新客户端传 `=0`。
 - `GET /api/v1/devices/session/device?ticket=`：无状态时页面自己取一次状态；事件驱动时直接返回事实。无状态时电源和空调并发去问 HA，且不记录。`/session/power` 语义相同，只返回电源。
 - `GET /api/v1/merchant/machines/states?shopId=`：看板的整店读取，用于**进入页面时对非实时设备读一次、刷新按钮、Hub 没给出状态时的兜底**，不是实时设备取状态的路径。返回 `{ states: { [deviceId]: { watching, power, climate } } }`，只含带电源或空调的设备，用两条 D1 查询读出存储的事实。`watching` 为真的设备返回存储的事实；`watching` 为假的设备没有存储的状态，所以去问它们的 Home Assistant（并发上限 4，不记录），问不到的是 `null`，客户端对它保留已有的值；`watching` 为真的设备客户端不采用读取的值。没有任何开关参数。店铺成员可读，非成员 403，缺 `shopId` 为 400。
 - `GET /api/v1/merchant/machines/:id/state`：单台设备的电源和空调，**只用于对一台非实时设备执行开关机或空调操作后重读这一台**。返回 `{ watching, power, climate }`：实时设备返回存储的事实，非实时设备去问 HA。实时设备不用它。
@@ -321,9 +344,9 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 两条规则，**默认都关**，由店长在「设置 → 位置与设备 → 闲置自动关机」打开（`GET/PUT /api/v1/merchant/idle-power?shopId=`，存在 `app_settings` 的 `devices.idle_power`）：
 
 - **店里没人**：没有任何进行中的场次满 N 分钟（默认 15），关掉所有开着的电源和所有在运行的空调。一段「没人」只执行一次；没人的起点取 Hub 记下的时间，没有就取最后一次结账时间。
-- **单台设备闲置**：设备开着、超过闲置时长没有活动。默认时长为 0（不启用）；每台设备可以单独设置时长，或设为「从不自动关机」（`PUT /idle-power/devices/:deviceId?shopId=`，`{ minutes: number|null, exclude }`，`null` 用店铺默认，`0` 不参与）。店里没人且「店里没人」规则关着时直接关机；店里有人时按店长的选择：只标记为闲置、通过 Bot 提醒、或直接关机——平台不知道谁在玩哪台，游客模式、实体投币都没有任何回报。
+- **单台设备闲置**：设备开着、没有人占用，并且不忙之后又过了「闲置判定时长」（`device.enabled` 打开；`device.minutes`，默认 10 分钟，全店一个值）。不忙的时刻是「最后一次经平台开机、延迟关机或操作 + 资源的占用时长」与「占用到期」中较晚的那个（麻将桌这类按座位判断占用的资源，占用时长按 0 计），见 [卡片、占用与查人](occupancy.md#闲置自动关机)。可以把设备设为「从不自动关机」（`PUT /idle-power/devices/:deviceId?shopId=`，`{ exclude }`）。店里没人且「店里没人」规则关着时直接关机；店里有人时按店长的选择：只标记为闲置、通过 Bot 提醒、或直接关机。
 
-**活动**指能说明有人在用这台设备的事：机台的 `card.state`、`card.consumed`、`card.login` 信号，以及玩家或店员发起的、算作「玩过」的动作（`power.on`、`coin`、`aime.scan`、`power.keep`；关机不算）。设备开机的时刻也算一次，所以在 HA 外面手动开机也有完整的闲置时长（事件驱动时用 HA 的 `last_changed`）。
+闲置和占用是同一件事：有人占用的设备不会被关，座位类的占用（麻将桌）一直算忙；占用怎么判断见 [卡片、占用与查人](occupancy.md#2-占用)。没有人占用时，经平台的开机、延迟关机和操作（`power.on`、`power.keep`、`coin`、`aime.scan`；关机不算）在占用时长内也让设备算忙，所以游客模式、实体投币的设备也能用「延迟关机」顶住。设备开机的时刻也算一次（事件驱动时用 HA 的 `last_changed`）。旧设置里大于 0 的默认闲置时长读作「单台设备闲置」已打开，并作为闲置判定时长。
 
 **设备状态未知时规则照样执行**（连接是无状态模式，或 HA 报告不可用）：自动关机不依赖设备的实际状态。「店里没人」规则对每台没有明确关着的设备都下发关机，空调同理，往已经关着的设备再发一次关机没有害处。「单台设备闲置」规则没有开机时刻，只能以设备自己的最近活动为时钟：没有任何活动就没有起点，不处理；超时后关一次，之后只要它在上次关机之后没有新的活动就不再重复，因为没有状态能证明那次关机生效了。已知状态只来自事件驱动的连接，无状态连接上存着的旧值不会被采信。
 
