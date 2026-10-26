@@ -286,6 +286,8 @@ function createStaffQueries(input: CreateSqlReadModelsInput): StaffQueries {
            p.display_name AS player_display_name,
            s.started_at,
            s.label,
+           CASE WHEN json_array_length(s.pricing_config_ids_json) = 1 AND json_extract(s.pricing_config_ids_json, '$[0]') != 'default'
+             THEN json_extract(s.pricing_config_ids_json, '$[0]') END AS pricing_config_id,
            i.provider AS identity_provider,
            i.subject AS identity_subject
          FROM (SELECT * FROM sessions WHERE shop_id = ${sqlShop(input.executor)}) s
@@ -309,6 +311,8 @@ function createStaffQueries(input: CreateSqlReadModelsInput): StaffQueries {
            s.started_at,
            s.ended_at,
            s.label,
+           CASE WHEN json_array_length(s.pricing_config_ids_json) = 1 AND json_extract(s.pricing_config_ids_json, '$[0]') != 'default'
+             THEN json_extract(s.pricing_config_ids_json, '$[0]') END AS pricing_config_id,
            s.status
          FROM (SELECT * FROM sessions WHERE shop_id = ${sqlShop(input.executor)}) s
          INNER JOIN (SELECT * FROM players WHERE shop_id = ${sqlShop(input.executor)}) p ON p.id = s.player_id
@@ -331,6 +335,7 @@ function createStaffQueries(input: CreateSqlReadModelsInput): StaffQueries {
           endedAt,
           elapsedMinutes: Math.floor((effectiveEnd.getTime() - startedAt.getTime()) / 60_000),
           label: row.label,
+          pricingConfigId: row.pricing_config_id,
           status: row.status as "active" | "closed",
         };
       });
@@ -917,6 +922,7 @@ function groupStaffActiveSessions(
         startedAt,
         elapsedMinutes: Math.floor((now.getTime() - startedAt.getTime()) / 60_000),
         label: row.label,
+        pricingConfigId: row.pricing_config_id,
         identities: [],
       };
       sessions.set(row.id, session);
@@ -1022,6 +1028,8 @@ type StaffActiveSessionRow = {
   started_at: string;
   ended_at?: string | null;
   label: string | null;
+  /** Null for the unpriced placeholder session. */
+  pricing_config_id: string | null;
 };
 
 type StaffActiveSessionWithIdentityRow = StaffActiveSessionRow & {

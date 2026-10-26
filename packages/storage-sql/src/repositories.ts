@@ -7,6 +7,7 @@ import {
   centsOfInteger,
   type Cents,
   yuanOf,
+  PLACEHOLDER_PRICING_CONFIG_ID,
   PrismDomainError,
 } from "@prism/core";
 import { sqlShop, shopValues } from "./shop-scope";
@@ -52,6 +53,7 @@ import type {
   Session,
   SessionRepository,
   SettlementRecord,
+  PricingConfigRelations,
   SettlementRepository,
   StaffUser,
   SystemRepository,
@@ -739,18 +741,50 @@ function createSessionRepository(executor: SqlExecutor): SessionRepository {
 
     async save(session) {
       try { await saveMany([session]); }
-      catch (error) {
-        if (String(error).includes("PRICING_CONFIG_NOT_IN_RELEASE")) {
-          throw new PrismDomainError("当前入场版本不包含此计费方案，请先结账后重新入场", "PRICING_CONFIG_NOT_IN_RELEASE");
-        }
-        throw error;
-      }
+      catch (error) { throw sessionWriteError(error); }
     },
 
     async saveMany(sessions) {
       await saveMany(sessions);
     },
+
+    async applyTransition(transition) {
+      const shop = sqlShop(executor);
+      const statements: SqlStatement[] = transition.close.map((session) => ({
+        sql: `UPDATE sessions SET status = 'closed', ended_at = ?
+              WHERE shop_id = ${shop} AND id = ? AND status = 'active'`,
+        params: [session.endedAt!.toISOString(), session.id],
+      }));
+      for (const session of transition.create) {
+        statements.push({
+          sql: `INSERT INTO sessions (shop_id, id, player_id, started_at, ended_at, status, pricing_config_ids_json, payment_status, label, metadata_json)
+                VALUES (${shop}, ?, ?, ?, NULL, 'active', ?, 'unpaid', ?, ?)`,
+          params: [
+            session.id,
+            session.playerId,
+            session.startedAt.toISOString(),
+            JSON.stringify(session.pricingConfigIds ?? []),
+            session.label ?? null,
+            session.metadata ? JSON.stringify(session.metadata) : null,
+          ],
+        });
+      }
+      try { await executor.batch(statements); }
+      catch (error) { throw sessionWriteError(error); }
+    },
   };
+}
+
+/** Turns the database's session guards into the domain errors callers handle. */
+function sessionWriteError(error: unknown): unknown {
+  const message = String(error);
+  if (message.includes("PRICING_CONFIG_NOT_IN_RELEASE")) {
+    return new PrismDomainError("当前入场版本不包含此计费方案，请先结账后重新入场", "PRICING_CONFIG_NOT_IN_RELEASE");
+  }
+  if (message.includes("idx_sessions_active_plan")) {
+    return new PrismDomainError("该计费方案已在计费中", "PRICING_PLAN_ALREADY_ACTIVE");
+  }
+  return error;
 }
 
 function createAssetRepository(
@@ -1203,7 +1237,7 @@ function createPricingConfigRepository(
           config.name,
           config.enabled ? 1 : 0,
           config.status ?? "active",
-          JSON.stringify(serializePricingProviderConfig(config.provider)),
+          JSON.stringify(serializePricingConfigProviderJson(config)),
           config.createdAt.toISOString(),
           config.updatedAt.toISOString(),
         ],
@@ -1799,13 +1833,16 @@ type AppSettingRow = {
 };
 
 function toSession(row: SessionRow): Session {
+  const pricingConfigIds = JSON.parse(row.pricing_config_ids_json ?? "[]") as string[];
+  const [only] = pricingConfigIds;
   return {
     id: row.id,
     playerId: row.player_id,
     startedAt: new Date(row.started_at),
     endedAt: row.ended_at ? new Date(row.ended_at) : undefined,
     status: row.status,
-    pricingConfigIds: JSON.parse(row.pricing_config_ids_json ?? "[]"),
+    pricingConfigIds,
+    ...(pricingConfigIds.length === 1 && only !== PLACEHOLDER_PRICING_CONFIG_ID ? { pricingConfigId: only } : {}),
     pricingReleaseId: row.pricing_release_id ?? undefined,
     paymentStatus: row.payment_status,
     label: row.label ?? undefined,
@@ -2076,13 +2113,15 @@ export function toPricingConfig(row: PricingConfigRow): PricingConfig {
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
-  const provider = mapPricingProviderMoney(JSON.parse(row.provider_json), value => yuanOf(centsOfInteger(value)));
+  const { relations, ...stored } = JSON.parse(row.provider_json) as Record<string, unknown> & { relations?: PricingConfigRelations };
+  const provider = mapPricingProviderMoney(stored as PricingConfig["provider"], value => yuanOf(centsOfInteger(value)));
 
   switch (row.kind) {
     case "time.priority":
       return {
         ...base,
         kind: row.kind,
+        ...(relations ? { relations: { requires: [...(relations.requires ?? [])], conflicts: [...(relations.conflicts ?? [])] } } : {}),
         provider: deserializeTimePriorityPricingProviderConfig(
           provider as Extract<
             PricingConfig,
@@ -2191,6 +2230,19 @@ function toApiToken(row: ApiTokenRow): ApiToken {
     lastUsedAt: row.last_used_at ? new Date(row.last_used_at) : null,
     revokedAt: row.revoked_at ? new Date(row.revoked_at) : null,
   };
+}
+
+/**
+ * The stored `provider_json` of a config. Relations ride inside it so the
+ * existing version triggers version and publish them with the price; an empty
+ * relation set is omitted, keeping the stored bytes of unrelated configs
+ * unchanged so saving one does not mint a new version.
+ */
+export function serializePricingConfigProviderJson(config: PricingConfig): unknown {
+  const provider = serializePricingProviderConfig(config.provider);
+  const relations = config.kind === "time.priority" ? config.relations : undefined;
+  if (!relations || (relations.requires.length === 0 && relations.conflicts.length === 0)) return provider;
+  return { ...(provider as Record<string, unknown>), relations: { requires: relations.requires, conflicts: relations.conflicts } };
 }
 
 export function serializePricingProviderConfig(

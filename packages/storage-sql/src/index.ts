@@ -392,6 +392,9 @@ export const sqliteSchema = [
   )`,
   ...deviceEventSchema,
   `CREATE INDEX IF NOT EXISTS idx_sessions_player_status ON sessions(shop_id, player_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_active_plan
+    ON sessions(shop_id, player_id, json_extract(pricing_config_ids_json, '$[0]'))
+    WHERE status = 'active' AND json_array_length(pricing_config_ids_json) = 1 AND pricing_config_ids_json != '["default"]'`,
   `CREATE INDEX IF NOT EXISTS idx_player_identities_player ON player_identities(shop_id, player_id)`,
   `CREATE INDEX IF NOT EXISTS idx_player_sessions_token ON player_sessions(shop_id, token_hash)`,
   `CREATE INDEX IF NOT EXISTS idx_asset_holdings_player ON asset_holdings(shop_id, player_id)`,

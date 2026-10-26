@@ -71,6 +71,36 @@ export const deviceEventSchema = [
     since TEXT NOT NULL,
     PRIMARY KEY (shop_id, connection_id)
   )`,
+  // Who occupies a resource; see migration 0042 and docs/occupancy.md.
+  `CREATE TABLE IF NOT EXISTS resource_occupancies (
+    shop_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    expires_at TEXT,
+    ended_at TEXT,
+    end_reason TEXT,
+    session_ids_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (shop_id, id)
+  )`,
+  // A player's cards at a shop, as a keyed hash and encrypted; see migration 0041.
+  `CREATE TABLE IF NOT EXISTS player_cards (
+    shop_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    card_hash TEXT NOT NULL,
+    card_encrypted TEXT NOT NULL,
+    card_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    PRIMARY KEY (shop_id, id),
+    UNIQUE (shop_id, card_hash)
+  )`,
+  `CREATE INDEX IF NOT EXISTS resource_occupancies_open ON resource_occupancies(shop_id, resource_id, ended_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS device_capabilities_credential ON device_capabilities(credential_hash) WHERE credential_hash IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS device_events_device ON device_events(shop_id, device_id, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS device_events_operation ON device_events(shop_id, operation_id)`,
