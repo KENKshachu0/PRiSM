@@ -460,8 +460,6 @@ function PricingEditor({
       } else if (rule.pricing) {
         if (!(rule.pricing.unitMinutes > 0))
           return { message: t("每隔分钟数需要大于 0"), period: index };
-        if (!(rule.pricing.unitPrice >= 0))
-          return { message: t("收费金额不能为负数"), period: index };
       }
     }
     return null;
@@ -848,7 +846,8 @@ function PeriodCard({
               {(
                 [
                   ["unitMinutes", "计费间隔", "分钟", 1],
-                  ["unitPrice", "收费金额", "元", 0],
+                  // A negative price is a discount on that period, so no floor.
+                  ["unitPrice", "收费金额", "元", undefined],
                   ["roundGraceMinutes", "宽限时长", "分钟", 0],
                   ["priceCap", "时段封顶", "元", 0],
                 ] as const
@@ -862,7 +861,8 @@ function PeriodCard({
                     className={input}
                     type="number"
                     required
-                    min={min}
+                    aria-describedby={key === "unitPrice" ? "negative-price-note" : undefined}
+                    {...(min === undefined ? {} : { min })}
                     step={
                       key === "unitPrice" || key === "priceCap" ? "0.01" : "1"
                     }
@@ -878,6 +878,9 @@ function PeriodCard({
                   />
                 </Field>
               ))}
+              <p id="negative-price-note" className="col-span-2 text-xs text-ink/50">
+                {t("负数表示在该时段减免（例如活动价）。")}
+              </p>
             </div>
           )}
           <details>

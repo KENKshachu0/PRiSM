@@ -144,6 +144,10 @@ Swift 移植以与 TypeScript 逐字段一致为验收标准。改动计费引�
 
 ## 店长计费模拟器
 
+模拟器用与结账相同的封顶结算：跨方案封顶按发布里所有按时计费方案生效，不读存储里那个已不再使用的方案列表。改封顶算法时，`packages/application/test/billing-simulator.test.ts` 与结算用例要一起通过。
+
+## 店长计费模拟器详情
+
 在店铺工作台「计费」页展开「计费模拟器」，逐行设置 Session 的「开启时间／关闭时间／计费方案」，支持多 Session 同时计费与跨日区间。入场时间取全部 Session 的最早开启时间，退场时间取最晚关闭时间，不依赖列表顺序。时间按店铺时区输入，结果复用正式账单多轨时间轴和跨方案封顶规则。
 
 只读接口：POST /api/v1/shops/:shopCode/staff/pricing-configs/simulate/preview。仅店主和经理可访问。

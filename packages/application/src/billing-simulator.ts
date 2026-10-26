@@ -16,6 +16,7 @@ import {
   type TimeCapPricingWindow,
 } from "@prism/core";
 import { buildBillTimeline } from "./bill-timeline";
+import { capProviderConfig, capTimePlanIds } from "./versioned-pricing";
 
 export type BillingSimulationSession = {
   startedAt: string;
@@ -107,13 +108,14 @@ export async function simulateBilling(input: {
   const charges = timelineSessions.flatMap(session => session.chargeItems.map(item =>
     item.sessionId ? item : { ...item, sessionId: session.sessionId },
   ));
+  // A cap holds every time plan; the stored list is empty, so it is filled the
+  // way settlement fills it, or nothing would be counted against the cap.
+  const timePlanIds = capTimePlanIds(enabled);
+  const timeZone = input.timeZone ?? "UTC";
   const { windows: capWindows, adjustments: capAdjustments } = settleTimeCaps({
-    configs: enabled.flatMap(config => config.kind === "time.cap" ? [{
-      ...config.provider,
-      name: config.name,
-      pricingConfigId: config.id,
-      timeZone: config.provider.timeZone ?? input.timeZone ?? "UTC",
-    }] : []),
+    configs: enabled.flatMap(config => config.kind === "time.cap"
+      ? [capProviderConfig(config, timeZone, timePlanIds)]
+      : []),
     chargeItems: charges,
     paidHistory: {},
   });
