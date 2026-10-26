@@ -73,7 +73,10 @@ it('live list skips empty venues and bounds preview concurrency to four players'
         peak = Math.max(peak, ++running);
         await new Promise(resolve => setTimeout(resolve, 5));
         running--;
-        return {settlementPreview: {total: moneyFixture(3)}, sessionPreviews: []};
+        return {
+          settlementPreview: {playerId: 'p', sessionIds: [], subtotal: moneyFixture(3), total: moneyFixture(3), status: 'preview' as const, previewedAt: now},
+          sessionPreviews: [], adjustments: [], globalCapWindows: [],
+        };
       },
     },
   });

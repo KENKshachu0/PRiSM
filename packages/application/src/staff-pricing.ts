@@ -1,7 +1,8 @@
-import { buildPriorityTimePricingTimeline, buildTimeCapPricingTimeline, convertPricingRuleClock, PrismDomainError, quantizePricingProvider, validatePricingConfig } from "@prism/core";
+import { buildPricingRelationGraph, relationsOf, buildPriorityTimePricingTimeline, buildTimeCapPricingTimeline, convertPricingRuleClock, PrismDomainError, quantizePricingProvider, validatePricingConfig } from "@prism/core";
 import type {
   PricingConfig,
   PricingConfigKind,
+  PricingConfigRelations,
   PricingConfigRepository,
   PriorityTimePricingTimeline,
 } from "@prism/core";
@@ -11,6 +12,8 @@ export type StaffCreatePricingConfigInput = {
   name: string;
   enabled: boolean;
   provider: PricingConfig["provider"];
+  /** Only `time.priority` plans may declare relations. */
+  relations?: PricingConfigRelations;
 };
 
 export type StaffUpdatePricingConfigInput = {
@@ -18,10 +21,14 @@ export type StaffUpdatePricingConfigInput = {
   name: string;
   enabled: boolean;
   provider: PricingConfig["provider"];
+  /** Omitted keeps the plan's current relations. */
+  relations?: PricingConfigRelations;
 };
 
 export type StaffPricingServiceDependencies = {
   pricingConfigs: PricingConfigRepository;
+  /** What else bills through a plan (resource groups, resources, the shop default), by display name. */
+  planUsers?(planId: string): Promise<string[]>;
   getDefaultTimeZone?: () => Promise<string | undefined>;
   id: () => string;
   now: () => Date;
@@ -55,9 +62,12 @@ export function createStaffPricingService(dependencies: StaffPricingServiceDepen
         createdAt: now,
         updatedAt: now,
       };
-      const config = await createPricingConfigForKind(input.kind, input.provider, base, dependencies);
+      // Spending history is keyed by the provider ID, so a provider never goes without one.
+      const provider = { ...input.provider, id: input.provider.id || base.id } as typeof input.provider;
+      const config = withRelations(await createPricingConfigForKind(input.kind, provider, base, dependencies), input.relations);
 
       validatePricingConfig(config);
+      await assertRelationGraphHolds(config, dependencies);
       await dependencies.pricingConfigs.save(config);
       return await dependencies.pricingConfigs.findById(config.id) ?? config;
     },
@@ -69,21 +79,25 @@ export function createStaffPricingService(dependencies: StaffPricingServiceDepen
       }
       const status = existing.status ?? "active";
 
-      const config = await createPricingConfigForKind(
-        existing.kind,
-        input.provider,
-        {
-          id: existing.id,
-          name: input.name,
-          enabled: status === "archived" ? false : input.enabled,
-          status,
-          createdAt: existing.createdAt,
-          updatedAt: dependencies.now(),
-        },
-        dependencies,
+      const config = withRelations(
+        await createPricingConfigForKind(
+          existing.kind,
+          input.provider,
+          {
+            id: existing.id,
+            name: input.name,
+            enabled: status === "archived" ? false : input.enabled,
+            status,
+            createdAt: existing.createdAt,
+            updatedAt: dependencies.now(),
+          },
+          dependencies,
+        ),
+        input.relations ?? (existing.kind === "time.priority" ? existing.relations : undefined),
       );
 
       validatePricingConfig(config);
+      await assertRelationGraphHolds(config, dependencies);
       await dependencies.pricingConfigs.save(config);
       return await dependencies.pricingConfigs.findById(config.id) ?? config;
     },
@@ -92,6 +106,16 @@ export function createStaffPricingService(dependencies: StaffPricingServiceDepen
       const existing = await dependencies.pricingConfigs.findById(input.pricingConfigId);
       if (!existing) {
         throw new PrismDomainError("Pricing config not found.", "PRICING_CONFIG_NOT_FOUND");
+      }
+      // A plan something still bills through cannot go away: the resource or
+      // the plan requiring it would fail for every player who scans.
+      const requiredBy = (await dependencies.pricingConfigs.listAll())
+        .filter((config) => config.id !== existing.id && (config.status ?? "active") !== "archived")
+        .filter((config) => relationsOf(config).requires.includes(existing.id))
+        .map((config) => `规则「${config.name}」`);
+      const users = [...requiredBy, ...((await dependencies.planUsers?.(existing.id)) ?? [])];
+      if (users.length) {
+        throw new PrismDomainError(`${users.join("、")}仍在使用这条规则，请先改掉再归档。`, "PRICING_CONFIG_IN_USE");
       }
       const archived: PricingConfig = {
         ...existing,
@@ -154,6 +178,25 @@ export function createStaffPricingService(dependencies: StaffPricingServiceDepen
   };
 }
 
+function withRelations(config: PricingConfig, relations: PricingConfigRelations | undefined): PricingConfig {
+  if (!relations) return config;
+  if (config.kind !== "time.priority") {
+    if (relations.requires.length === 0 && relations.conflicts.length === 0) return config;
+    throw new PrismDomainError("只有计时方案可以设置依赖与互斥。", "PRICING_RELATION_UNSUPPORTED_KIND");
+  }
+  return { ...config, relations: { requires: [...relations.requires], conflicts: [...relations.conflicts] } };
+}
+
+/**
+ * Rebuilds the shop's relation graph with this config in place. Self or unknown
+ * references, cycles and contradictions are refused when saved, so a plan that
+ * can never start never reaches a player.
+ */
+async function assertRelationGraphHolds(config: PricingConfig, dependencies: StaffPricingServiceDependencies): Promise<void> {
+  const others = (await dependencies.pricingConfigs.listAll()).filter((candidate) => candidate.id !== config.id);
+  buildPricingRelationGraph([...others, config]);
+}
+
 async function createPricingConfigForKind(
   kind: PricingConfigKind,
   provider: PricingConfig["provider"],
@@ -182,18 +225,17 @@ async function createPricingConfigForKind(
     case "time.cap":
       if (
         !("rules" in provider) ||
-        !("includedPricingConfigIds" in provider) ||
         provider.rules.some((rule) => "pricing" in rule || !("priceCap" in rule))
       ) {
-        throw new PrismDomainError("Global cap pricing requires cap rules and included pricing configs.", "INVALID_TIME_CAP_PROVIDER");
+        throw new PrismDomainError("Global cap pricing requires cap rules.", "INVALID_TIME_CAP_PROVIDER");
       }
-      await assertIncludedPricingConfigsAreTimePriority(provider.includedPricingConfigIds, dependencies);
+      // A cap across plans holds every time plan; it no longer names any.
       return {
         ...base,
         kind,
         provider: quantizePricingProvider(
           await withUtcCapClock(
-            provider as Extract<PricingConfig, { kind: "time.cap" }>["provider"],
+            { ...(provider as Extract<PricingConfig, { kind: "time.cap" }>["provider"]), includedPricingConfigIds: [] },
             dependencies,
           ),
         ),
@@ -207,25 +249,6 @@ async function createPricingConfigForKind(
         kind,
         provider: quantizePricingProvider(provider),
       };
-  }
-}
-
-async function assertIncludedPricingConfigsAreTimePriority(
-  pricingConfigIds: readonly string[],
-  dependencies: StaffPricingServiceDependencies,
-): Promise<void> {
-  if (pricingConfigIds.length === 0) return;
-  const configsById = new Map(
-    (await dependencies.pricingConfigs.listAll()).map((config) => [config.id, config]),
-  );
-  for (const pricingConfigId of pricingConfigIds) {
-    const config = configsById.get(pricingConfigId);
-    if (!config || config.kind !== "time.priority") {
-      throw new PrismDomainError(
-        "Global cap included pricing configs must reference time priority configs.",
-        "INVALID_TIME_CAP_INCLUDED_PRICING_CONFIG",
-      );
-    }
   }
 }
 

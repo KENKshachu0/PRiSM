@@ -21,7 +21,7 @@ import {
   type Cents,
   PrismDomainError,
 } from "@prism/core";
-import { withOperationLease } from "./operation-lock";
+import { PLAYER_BILLING_LOCK_SCOPE, withOperationLease } from "./operation-lock";
 import { sumAvailableWalletBalance, type AvailableAssetReader } from "./available-assets";
 
 export type StaffAssetGrantInput = {
@@ -243,7 +243,7 @@ export function createStaffAssetService(dependencies: StaffAssetServiceDependenc
 }
 
 function withPlayerAssetLease<T>(dependencies: StaffAssetServiceDependencies, playerId: string, action: () => Promise<T>): Promise<T> {
-  return withOperationLease({ repository: dependencies.operationLocks, scope: "player.assets", resourceId: playerId, id: dependencies.id, now: dependencies.now }, action);
+  return withOperationLease({ repository: dependencies.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: playerId, id: dependencies.id, now: dependencies.now }, action);
 }
 
 async function assertGrantAssetDefinitionsActive(

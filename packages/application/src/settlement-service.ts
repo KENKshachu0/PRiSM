@@ -1,5 +1,6 @@
 import { buildBillTimeline } from "./bill-timeline";
 import type {
+  BillTimeline,
   CheckoutCommit,
   AssetDefinitionRepository,
   AssetDefinition,
@@ -32,10 +33,10 @@ import {
   operatedWithin,
   addCents,
   assetQuantityFromStored,
-  applyTimeCapPricing,
   allocate,
   closeSession,
   collectTimeCapPricingHistoryLookupKeys,
+  settleTimeCaps,
   type Cents,
   centsOf,
   compareCents,
@@ -48,7 +49,6 @@ import {
   deductCurrency,
   diffAssetHoldings,
   grantAssets,
-  explainTimeCapPricing,
   isActiveInWindow,
   previewSessionSettlement,
   PrismDomainError,
@@ -57,7 +57,7 @@ import {
   sumCents,
   ZERO_CENTS,
 } from "@prism/core";
-import { withOperationLease } from "./operation-lock";
+import { PLAYER_BILLING_LOCK_SCOPE, withOperationLease } from "./operation-lock";
 import { sumAvailableWalletBalance, type AvailableAssetReader } from "./available-assets";
 import {
   assetDefinitionEffectSource,
@@ -178,6 +178,8 @@ export type SettlePlayerCheckoutResult = {
   assetLedgerEntries: AssetLedgerEntry[];
   wallet: CheckoutWallet;
   globalCapWindows: TimeCapPricingWindow[];
+  /** The bill as it was persisted with the checkout; receipts read this same timeline back. */
+  timeline: BillTimeline;
 };
 
 export type ExternalCheckoutInput = {
@@ -198,7 +200,7 @@ const playerLocks = new Map<string, Promise<any>>();
 
 async function acquireCheckoutLock<T>(dependencies: SettlementServiceDependencies, playerId: string, fn: () => Promise<T>): Promise<T> {
   if (!dependencies.operationLocks) return acquireLock(playerId, fn);
-  return withOperationLease({ repository: dependencies.operationLocks, scope: "player.assets", resourceId: playerId, id: dependencies.id, now: dependencies.now }, fn);
+  return withOperationLease({ repository: dependencies.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: playerId, id: dependencies.id, now: dependencies.now }, fn);
 }
 
 async function acquireLock<T>(playerId: string, fn: () => Promise<T>): Promise<T> {
@@ -590,27 +592,20 @@ async function calculateUnifiedCheckoutDetails(
   const globalCapPaidHistory = dependencies.pricingCapHistory
     ? await dependencies.pricingCapHistory.sumByPlayerAndKeys(playerId, globalCapHistoryKeys)
     : {};
-  for (const config of globalCapConfigs) {
-    const windows = explainTimeCapPricing({
-      config: {
-        ...config,
-        paidHistory: globalCapPaidHistory,
-      },
-      chargeItems: chargeItemsForGlobalCaps,
-    });
-    globalCapWindows.push(...allocateGlobalCapWindowContributions(windows));
-    const adjustments = applyTimeCapPricing({
-      config: {
-        ...config,
-        paidHistory: globalCapPaidHistory,
-      },
-      chargeItems: chargeItemsForGlobalCaps,
-    });
-    for (const adjustment of adjustments) {
-      globalCapAdjustments.push(adjustment);
-      unifiedAdjustments.push(adjustment);
-        totalAmount = addCents(totalAmount, adjustment.amount);
-    }
+  // Every cap across plans limits the same charges together, so a charge is held back once.
+  const capSettlement = settleTimeCaps({
+    configs: globalCapConfigs,
+    chargeItems: chargeItemsForGlobalCaps,
+    paidHistory: globalCapPaidHistory,
+  });
+  globalCapWindows.push(...capSettlement.windows);
+  // Period caps count what was actually charged: each charge's history records that, not its quote.
+  const chargedByItem = new Map<string, Cents>();
+  for (const unit of capSettlement.units) chargedByItem.set(unit.item.id, addCents(chargedByItem.get(unit.item.id) ?? ZERO_CENTS, unit.charged));
+  for (const adjustment of capSettlement.adjustments) {
+    globalCapAdjustments.push(adjustment);
+    unifiedAdjustments.push(adjustment);
+    totalAmount = addCents(totalAmount, adjustment.amount);
   }
 
   if (dependencies.assetDefinitions) {
@@ -692,6 +687,7 @@ async function calculateUnifiedCheckoutDetails(
     walletBalanceBefore,
     globalCapAdjustments,
     globalCapWindows,
+    chargedByItem,
     timeZone,
     pastAppliedAdjustments: accumulatedAdjustments,
     anchorSession,
@@ -761,25 +757,6 @@ function toPlayerCheckoutPreview(
     },
     globalCapWindows: details.globalCapWindows,
   };
-}
-
-function allocateGlobalCapWindowContributions(
-  windows: readonly TimeCapPricingWindow[],
-): TimeCapPricingWindow[] {
-  return windows.map((window) => {
-    const contributions = [...window.contributions].sort((a, b) =>
-      a.sessionId.localeCompare(b.sessionId) || a.pricingConfigId.localeCompare(b.pricingConfigId),
-    );
-    const discounts = allocate(subCents(window.currentAmount, window.amountApplied),
-      contributions.map((contribution) => Math.max(0, contribution.amount)));
-
-    return {
-      ...window,
-      contributions: contributions.map((contribution, index) =>
-        ({ ...contribution, amount: subCents(contribution.amount, discounts[index] ?? ZERO_CENTS) }),
-      ),
-    };
-  });
 }
 
 async function persistUnifiedPlayerCheckout(
@@ -889,7 +866,7 @@ async function persistUnifiedPlayerCheckout(
       playerId,
       sessionId: result.session.id,
       createdAt: now,
-    }));
+    }, details.chargedByItem));
     settlements.push(record);
   }
   const pricingCapHistory = toPricingCapHistoryEntries(details.globalCapAdjustments, {
@@ -899,13 +876,14 @@ async function persistUnifiedPlayerCheckout(
     anchorSessionId: anchorSession.id,
   });
   const sessions = details.sessionResults.map((result) => result.session);
-  checkout.timeline = buildBillTimeline({
+  const timeline = buildBillTimeline({
     at: now,
     sessions: details.sessionResults.map(({ session, chargeItems }) => ({ sessionId: session.id, label: session.label ?? null, startedAt: session.startedAt, endedAt: session.endedAt ?? now, chargeItems })),
     adjustments: settlements.flatMap(record => record.adjustments),
     globalCapWindows: details.globalCapWindows,
   });
-  checkout.timeline.pricingReleaseIds = [...new Set(sessions.flatMap(session => session.pricingReleaseId ? [session.pricingReleaseId] : []))];
+  timeline.pricingReleaseIds = [...new Set(sessions.flatMap(session => session.pricingReleaseId ? [session.pricingReleaseId] : []))];
+  checkout.timeline = timeline;
   if (dependencies.commitCheckout) {
     await dependencies.commitCheckout({ assets: externalPayment ? null : assetCommit, checkout, settlements, sessions, pricingHistory: pricingHistoryEntries, pricingCapHistory });
   } else {
@@ -945,6 +923,7 @@ async function persistUnifiedPlayerCheckout(
       ...(overrideAdjustment ? [overrideAdjustment] : []),
     ],
     pricingCapAdjustments: details.globalCapAdjustments,
+    timeline,
     assetLedgerEntries,
     wallet: {
       balanceBefore: details.walletBalanceBefore,
@@ -1035,6 +1014,8 @@ function toPricingHistoryEntries(
     sessionId: string;
     createdAt: Date;
   },
+  /** What each charge was actually charged after every cap, by charge id. */
+  chargedByItem?: ReadonlyMap<string, Cents>,
 ): PricingHistoryEntry[] {
   return chargeItems.flatMap((item, index) => {
     if (!item.pricingHistory) return [];
@@ -1048,7 +1029,7 @@ function toPricingHistoryEntries(
         ruleId: history.ruleId,
         ruleAnchorAt: history.ruleAnchorAt,
         sessionId: input.sessionId,
-        amount: history.amount,
+        amount: chargedByItem?.get(item.id) ?? history.amount,
         createdAt: input.createdAt,
         metadata: null,
       },

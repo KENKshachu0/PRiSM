@@ -1,7 +1,6 @@
 import {
-  applyTimeCapPricing,
   createPricingProviderFromConfig,
-  explainTimeCapPricing,
+  settleTimeCaps,
   isApiInstant,
   maxCents,
   previewSessionSettlement,
@@ -108,20 +107,16 @@ export async function simulateBilling(input: {
   const charges = timelineSessions.flatMap(session => session.chargeItems.map(item =>
     item.sessionId ? item : { ...item, sessionId: session.sessionId },
   ));
-  const capAdjustments: SettlementAdjustment[] = [];
-  const capWindows: TimeCapPricingWindow[] = [];
-  for (const config of enabled) {
-    if (config.kind !== "time.cap") continue;
-    const cap = {
+  const { windows: capWindows, adjustments: capAdjustments } = settleTimeCaps({
+    configs: enabled.flatMap(config => config.kind === "time.cap" ? [{
       ...config.provider,
       name: config.name,
       pricingConfigId: config.id,
       timeZone: config.provider.timeZone ?? input.timeZone ?? "UTC",
-      paidHistory: {},
-    };
-    capWindows.push(...explainTimeCapPricing({ config: cap, chargeItems: charges }));
-    capAdjustments.push(...applyTimeCapPricing({ config: cap, chargeItems: charges }));
-  }
+    }] : []),
+    chargeItems: charges,
+    paidHistory: {},
+  });
 
   const subtotal = sumCents(charges.map(item => item.amount));
   const total = maxCents(ZERO_CENTS, sumCents([subtotal, ...capAdjustments.map(item => item.amount)]));

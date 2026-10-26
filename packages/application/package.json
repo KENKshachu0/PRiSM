@@ -5,6 +5,13 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "imports": {
+    "#lease-context": {
+      "workerd": "./src/lease-context.ts",
+      "browser": "./src/lease-context.browser.ts",
+      "default": "./src/lease-context.ts"
+    }
+  },
   "scripts": {
     "test": "bun test test",
     "typecheck": "tsc -p tsconfig.json"

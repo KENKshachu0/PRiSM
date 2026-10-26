@@ -1,4 +1,5 @@
-import { buildBillTimeline } from "./bill-timeline";
+import type { PreviewPlayerCheckoutResult } from "./settlement-service";
+import { previewBillTimeline } from "./bill-timeline";
 import { type Cents, addCents, yuanOf, ZERO_CENTS } from "@prism/core";
 import type { BillTimeline, SettlementAdjustment, ChargeItem, PricingConfig, TimeCapPricingWindow } from "@prism/core";
 import type { StaffActiveSessionListItem, StaffPlayerListItem, StaffQueries } from "./query-contracts";
@@ -35,6 +36,8 @@ export type LiveGlobalCapWindowView = {
   paidBefore: number;
   currentAmount: number;
   amountApplied: number;
+  /** What this cap itself held back. */
+  heldBack?: number;
   priceCapReached: boolean;
   contributions: Array<{
     sessionId: string;
@@ -46,6 +49,8 @@ export type LiveGlobalCapWindowView = {
 export type LiveSessionView = {
   id: string;
   label?: string;
+  /** The plan the session bills; null for the unpriced placeholder or when unknown. */
+  pricingConfigId: string | null;
   startedAt: string;
   endedAt: string | null;
   elapsedMinutes: number;
@@ -69,20 +74,8 @@ export type LivePlayerView = {
   sessions: LiveSessionView[];
 };
 
-export type LiveCheckoutPreview = {
-  adjustments?: SettlementAdjustment[];
-  settlementPreview: { total: Cents };
-  sessionPreviews: Array<{
-    sessionId: string;
-    label?: string | null;
-    startedAt?: Date;
-    endedAt?: Date | null;
-    status?: "active" | "closed";
-    total: Cents;
-    chargeItems: ChargeItem[];
-  }>;
-  globalCapWindows?: TimeCapPricingWindow[];
-};
+/** What the live players list reads of a checkout preview: the bill, as the checkout preview has it. */
+export type LiveCheckoutPreview = Pick<PreviewPlayerCheckoutResult, "settlementPreview" | "sessionPreviews" | "adjustments" | "globalCapWindows">;
 
 export type StaffOperationsService<TCheckoutResult> = {
   listLivePlayers(input?: { playerId?: string; summary?: boolean }): Promise<LivePlayerView[]>;
@@ -162,18 +155,14 @@ export function createStaffOperationsService<TCheckoutResult>(
             walletTotal: yuanOf(player?.walletTotal ?? ZERO_CENTS),
             stayDurationMinutes: Math.max(...orderedSessions.map((session) => session.elapsedMinutes)),
             estimatedTotal: preview ? yuanOf(preview.settlementPreview.total) : null,
-            timeline: preview ? buildBillTimeline({
-              at: dependencies.now(),
-              sessions: orderedSessions.map(session => ({ sessionId: session.id, label: session.label ?? null,
-                startedAt: session.startedAt, endedAt: session.endedAt ?? null,
-                chargeItems: previewBySessionId.get(session.id)?.chargeItems ?? [] })),
-              adjustments: preview.adjustments ?? [], globalCapWindows: preview.globalCapWindows ?? [],
-            }) : undefined,
+            // The same bill the checkout preview shows.
+            timeline: preview ? previewBillTimeline(preview) : undefined,
             sessions: orderedSessions.map((session) => {
               const sessionPreview = previewBySessionId.get(session.id);
               return {
                 id: session.id,
                 label: session.label ?? undefined,
+                pricingConfigId: session.pricingConfigId ?? null,
                 startedAt: session.startedAt.toISOString(),
                 endedAt: session.endedAt?.toISOString() ?? null,
                 elapsedMinutes: session.elapsedMinutes,
@@ -217,6 +206,7 @@ export function createStaffOperationsService<TCheckoutResult>(
 function toLiveSession(session: StaffActiveSessionListItem): {
   id: string;
   label?: string | null;
+  pricingConfigId?: string | null;
   startedAt: Date;
   endedAt?: Date | null;
   elapsedMinutes: number;
@@ -225,6 +215,7 @@ function toLiveSession(session: StaffActiveSessionListItem): {
   return {
     id: session.id,
     label: session.label,
+    pricingConfigId: session.pricingConfigId ?? null,
     startedAt: session.startedAt,
     endedAt: session.endedAt ?? null,
     elapsedMinutes: session.elapsedMinutes,
@@ -295,7 +286,11 @@ function globalCapWindowsForPlayer(
     paidBefore: yuanOf(window.paidBefore),
     currentAmount: yuanOf(window.currentAmount),
     amountApplied: yuanOf(window.amountApplied),
+    ...(window.heldBack != null ? { heldBack: yuanOf(window.heldBack) } : {}),
     priceCapReached: window.paidBefore + window.amountApplied >= window.priceCap,
-    contributions: window.contributions.map((contribution) => ({ ...contribution, amount: yuanOf(contribution.amount) })),
+    contributions: window.contributions.map((contribution) => ({
+      ...contribution,
+      amount: yuanOf(contribution.amount),
+    })),
   }));
 }

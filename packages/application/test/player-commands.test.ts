@@ -49,6 +49,7 @@ describe("createPlayerCommandService", () => {
       startedAt: new Date("2026-06-07T10:00:00.000Z"),
       status: "active",
       pricingConfigIds: ["config-1"],
+      pricingConfigId: "config-1",
       paymentStatus: "unpaid",
     });
     expect(sessions.saved).toEqual([result]);

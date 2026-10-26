@@ -89,3 +89,62 @@ test("closed gaps do not extend a charged period to the preview clock", async ()
   expect(timeline.events[0]?.at).toBe(at.toISOString());
   expect(timeline.events[0]?.entries[0]?.amount).toBeNull();
 });
+
+test("a full cap ends the stretch that charged, and the tracks it holds are capped until its window ends", async () => {
+  const at = date("02:00");
+  const start = new Date("2026-09-12T22:00:00Z");
+  const night = (id: string, unitPrice: number) => createPriorityTimePricingProvider({
+    id, name: id, timeZone: "UTC",
+    rules: [{ id: "night", label: "夜场", priority: 1, timeRange: { start: "22:00", end: "10:00" }, pricing: { unitPrice, unitMinutes: 60, roundGraceMinutes: 0, priceCap: 0 } }],
+  });
+  const sessions = await Promise.all([["entry", 6], ["rhythm", 3]].map(async ([id, price]) => {
+    const s = { ...session(id as string, "00:00", null), startedAt: start };
+    return { sessionId: s.id, label: s.label ?? null, startedAt: start, endedAt: null, chargeItems: await night(id as string, price as number).quote({ session: s, now: at, assetHoldings: [] }) };
+  }));
+  const chargeItems = sessions.flatMap(s => s.chargeItems.map(item => ({ ...item, sessionId: s.sessionId })));
+  // 10.00 was settled in this window earlier: 20 left under the 30 cap. 22:00 and 23:00 take 18; at 00:00 entry takes the last 2.
+  const config = { id: "cap", name: "分段封顶", includedPricingConfigIds: ["entry", "rhythm"], timeZone: "UTC",
+    paidHistory: { "cap@night@2026-09-12T22:00:00.000Z": integerFixture(1000) },
+    rules: [{ id: "night", label: "夜间", priority: 1, timeRange: { start: "22:00", end: "10:00" }, priceCap: 30 }] };
+  const timeline = buildBillTimeline({ at, sessions, adjustments: applyTimeCapPricing({ config, chargeItems }), globalCapWindows: explainTimeCapPricing({ config, chargeItems }) });
+  const entries = timeline.events.flatMap(e => e.entries);
+  expect(entries.find(e => e.kind === "full" && e.trackId == null)).toMatchObject({
+    name: "分段封顶（夜间）", trackIds: ["entry:entry", "rhythm:rhythm"], until: "2026-09-13T10:00:00.000Z",
+  });
+  expect(timeline.events.find(e => e.at === date("00:00").toISOString())?.entries.filter(e => e.trackId)
+    .map(e => [e.trackId, e.kind, e.amount, e.unitFills?.map(f => Math.round(f * 100) / 100)])).toEqual([
+    ["entry:entry", "full", 14, [1, 1, 0.33]],
+    ["rhythm:rhythm", "full", 6, [1, 1]],
+  ]);
+  expect(timeline.events[0]?.entries.map(e => [e.trackId, e.kind, e.capped, e.amount])).toEqual([
+    ["entry:entry", "current", true, null],
+    ["rhythm:rhythm", "current", true, null],
+  ]);
+  expect(timeline.tracks.map(t => t.capped)).toEqual([
+    [{ startedAt: date("00:00").toISOString(), endedAt: at.toISOString() }],
+    [{ startedAt: date("00:00").toISOString(), endedAt: at.toISOString() }],
+  ]);
+  expect(timeline.totals).toEqual([{ name: "entry", amount: 14 }, { name: "rhythm", amount: 6 }]);
+});
+
+test("a charge running past a cap window is capped only inside it, and charges again after", async () => {
+  const start = new Date("2026-09-13T00:00:00Z"), at = new Date("2026-09-13T12:18:00Z");
+  const s = { ...session("rhythm", "00:00", null), startedAt: start };
+  const items = (await createPriorityTimePricingProvider({ id: "rhythm", name: "音游差价", timeZone: "UTC",
+    rules: [{ id: "all", label: "全天", priority: 1, timeRange: { start: "00:00", end: "00:00" }, pricing: { unitPrice: 3, unitMinutes: 60, roundGraceMinutes: 5, priceCap: 0 } }],
+  }).quote({ session: s, now: at, assetHoldings: [] })).map(item => ({ ...item, sessionId: "rhythm" }));
+  const config = { id: "split", name: "分段封顶", includedPricingConfigIds: ["rhythm"], timeZone: "UTC", rules: [
+    { id: "night", label: "夜间", priority: 1, timeRange: { start: "22:00", end: "10:00" }, priceCap: 20 },
+    { id: "day", label: "日间", priority: 1, timeRange: { start: "10:00", end: "22:00" }, priceCap: 40 },
+  ] };
+  const sessions = [{ sessionId: "rhythm", label: null, startedAt: start, endedAt: null, chargeItems: items }];
+  const timeline = buildBillTimeline({ at, sessions, adjustments: applyTimeCapPricing({ config, chargeItems: items }), globalCapWindows: explainTimeCapPricing({ config, chargeItems: items }) });
+  const rows = timeline.events.flatMap(e => e.entries).filter(e => e.trackId && e.kind !== "start");
+  // 00:00–06:00 charges the night's 20 (the 06:00 unit only 2), capped until 10:00, then the day charges 9.
+  expect(rows.map(e => [e.kind, e.endedAt, e.amount, e.capped ?? false])).toEqual([
+    ["current", at.toISOString(), 9, false],
+    ["over", null, null, true],
+    ["full", "2026-09-13T06:00:00.000Z", 20, false],
+  ]);
+  expect(timeline.tracks[0]?.capped).toEqual([{ startedAt: "2026-09-13T06:00:00.000Z", endedAt: "2026-09-13T10:00:00.000Z" }]);
+});
