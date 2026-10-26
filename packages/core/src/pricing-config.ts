@@ -93,16 +93,21 @@ export function quantizePricingProvider(
     return { ...provider, amount: quantizeMoney(provider.amount) };
   }
 
-  if ("includedPricingConfigIds" in provider) {
-    for (const rule of provider.rules) assertNonNegativePrice(rule.priceCap);
+  // A cap's periods state only a cap amount; a time plan's state a price. The
+  // stored `includedPricingConfigIds` no longer names plans (a cap holds every
+  // time plan), so the periods are what tells the two apart.
+  if (provider.rules.some((rule) => !("pricing" in rule))) {
+    const cap = provider as TimeCapPricingProviderConfig;
+    for (const rule of cap.rules) assertNonNegativePrice(rule.priceCap);
     return {
-      ...provider,
-      rules: provider.rules.map((rule) => ({ ...rule, priceCap: quantizeMoney(rule.priceCap) })),
-      paidHistory: provider.paidHistory,
+      ...cap,
+      rules: cap.rules.map((rule) => ({ ...rule, priceCap: quantizeMoney(rule.priceCap) })),
+      paidHistory: cap.paidHistory,
     };
   }
 
-  for (const rule of provider.rules) {
+  const time = provider as PriorityTimePricingProviderConfig;
+  for (const rule of time.rules) {
     // A negative unit price is legitimate: the rule subtracts from the bill,
     // which is how a stacking discount is expressed. The cap itself still has
     // to be a real upper bound.
@@ -110,8 +115,8 @@ export function quantizePricingProvider(
     assertNonNegativePrice(rule.pricing.priceCap);
   }
   return {
-    ...provider,
-    rules: provider.rules.map((rule) => ({
+    ...time,
+    rules: time.rules.map((rule) => ({
       ...rule,
       pricing: {
         ...rule.pricing,

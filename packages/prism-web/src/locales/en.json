@@ -1810,5 +1810,6 @@
   "轮换后旧凭据立即失效，需要把新凭据重新填入 Koishi。": "Rotating voids the old credential at once; put the new one into Koishi.",
   "签发 Bot 凭据": "Issue a bot credential",
   "轮换 Bot 凭据": "Rotate the bot credential",
-  "接入凭据": "Credential"
+  "接入凭据": "Credential",
+  "封顶规则的每个时段只需要封顶金额，不能带单价。": "A cap rule's periods need only a cap amount, never a unit price."
 }
