@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { convertPrismNeoSnapshot, normalizePrismNeoTimestamp } from "./prism-neo-convert";
 import { pricingPreview } from "./ui/merchant/pricing-preview";
@@ -243,10 +244,23 @@ describe("convertPrismNeoSnapshot", () => {
     ]);
   });
 
-  it("emits a v3 header with shopProfile and no extra keys", () => {
-    expect(backup.shopProfile).toMatchObject({ name: "云谷", heroData: null, radiusMeters: 80 });
+  it("matches the server's import fixture, so its end-to-end restore test covers what this writes", () => {
+    const converted = convertPrismNeoSnapshot({
+      exportedAt: "2026-06-01T00:00:00Z",
+      users: [{ id: 7, createdAt: "2026-01-01T00:00:00Z", isBanned: false }],
+      billingRules: [{ id: 2, name: "Night", priority: 20, matchDate: { weekdays: [5, 6] }, timeRange: { start: "20:00", end: "04:00" },
+        pricing: { unitMinutes: 30, unitPrice: 40, priceCap: 160, roundGraceMinutes: 5 } }],
+    } as never, { shopName: "云谷店", timeZone: "Asia/Shanghai" });
+    const { counts: _counts, ...file } = converted;
+    const fixture = JSON.parse(readFileSync(new URL("../../server/test/fixtures/prism-neo-converted.json", import.meta.url), "utf8"));
+    expect(JSON.parse(JSON.stringify(file))).toEqual(fixture);
+  });
+
+  it("emits a partial v3 header that leaves the importing shop's profile alone", () => {
+    expect(backup.partial).toBe(true);
+    expect(backup).not.toHaveProperty("shopProfile");
     expect(Object.keys(backup).sort()).toEqual(
-      ["counts", "exportedAt", "format", "scope", "settings", "shopProfile", "source", "storage", "tables", "version"].sort(),
+      ["counts", "exportedAt", "format", "partial", "scope", "settings", "source", "storage", "tables", "version"].sort(),
     );
   });
 

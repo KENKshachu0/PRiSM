@@ -192,8 +192,13 @@ export type PrismNeoBackup = {
     coinCooldownMs: 60_000;
     defaultPresentId: null;
   };
-  /** Restores the importing shop's profile; hero data is not carried over. */
-  shopProfile: { name: string; latitude: number; longitude: number; radiusMeters: number; heroData: null };
+  /**
+   * prism-neo has players, balances, pricing and history but no shop profile,
+   * resources, bots or settings, so the import replaces only the former and
+   * keeps the importing shop's own name, cover, location, time zone, settings,
+   * resources and staff.
+   */
+  partial: true;
   counts: Record<string, number>;
   tables: NeoTables;
 };
@@ -761,15 +766,7 @@ export function convertPrismNeoSnapshot(
       coinCooldownMs: 60_000,
       defaultPresentId: null,
     },
-    shopProfile: {
-      // The paged importer overwrites the shop profile from this block; keep
-      // the target's identity by reusing its name and coordinates.
-      name: options.shopName || "prism-neo",
-      latitude: 0,
-      longitude: 0,
-      radiusMeters: 80,
-      heroData: null,
-    },
+    partial: true,
     counts: Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length])),
     tables,
   };

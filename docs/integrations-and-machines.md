@@ -47,7 +47,7 @@ Integration 适合 Koishi、AstrBot、自助 Web 入场页、扫码入口等“�
 
 Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTTP 请求；HTTP 接口原样保留给旧插件和其它集成。
 
-- 连接：`GET /integration/ws`，一个固定路径，和机台的 `/io/ws` 一样：`Authorization: Bearer <Bot 凭据>`，凭据在握手前解析出店铺，地址里不出现店铺编号或 Bot 标识。凭据不对返回 403，请求不会到店铺的 Hub；不要求店铺启用计费（每个请求仍按自己的路由校验）。旧地址 `/api/v1/shops/:shop/integration/ws` 仍可连接。连接交给店铺 Hub（`ShopHub`），连进来的 WebSocket 可以休眠。
+- 连接：`GET /integration/ws`，一个固定路径，和机台的 `/io/ws` 一样：`Authorization: Bearer <Bot 凭据>`，凭据在握手前解析出店铺，地址里不出现店铺编号或 Bot 标识。凭据不对返回 403，请求不会到店铺的 Hub；不要求店铺启用计费（每个请求仍按自己的路由校验）。旧地址 `/api/v1/shops/:shop/integration/ws` 仍可连接。连接交给店铺 Hub（`ShopHub`），连进来的 WebSocket 可以休眠。部署时 `wrangler.jsonc` 的 `assets.run_worker_first` 必须包含 `/integration/*`（以及 `/rpc*`、`/health*`、`/version*` 等 Worker 自己处理的路径，与 `isAssetEligiblePath` 一致）：否则静态资源的单页应用回退会先接住握手，返回网页 `index.html`，插件报 `Unexpected server response: 200`。`platform-routes.test.ts` 检查两者一致。
 - 设备动作失败时，Bot 只告诉玩家关于设备本身、他能理解的事：没有这个设备、设备未连接、设备已关机、设备没有响应。其余原因（配置、通信细节、TTLock 错误码等）只写日志，回复「操作没有完成，请找店员」。超时（请求发出去但没等到应答）按「设备没有响应」处理，不再只有「请稍后再试」。`action.status` 为 `pending`（未确认）时也带 `payload.executorFailure.message`，但仅供 Bot 判断，不直接展示。
 - 请求：`{"type":"request","id":"<唯一 ID>","method":"GET|POST|PUT","path":"integration/players/by-identity/wallet","query":{},"body":{}}`；回复 `{"type":"response","id":…,"status":200,"body":{"data":…}}`，`body` 与 HTTP 响应完全相同（含 `{error:{code,message}}`）。Hub 带着 Bot 凭据在进程内调用同一套路由，所以鉴权、校验、灵动岛推送（`waitUntil`）都和 HTTP 一样；吊销凭据后下一个请求就会 403，Hub 随即以 4003 关闭连接。只能访问本店的 `integration/…` 和 `version`，其它路径（包括 `..`）返回 404。
 - 去重：写请求（POST/PUT）的回复按 `id` 保存 10 分钟；同一 `id` 再发一次直接返回保存的回复，不会重复执行；还在执行中的同一 `id` 不再执行。断线后插件不重发、不排队，命令直接失败（「暂时连不上服务器」），避免结账、加钱被重复执行或延后执行。

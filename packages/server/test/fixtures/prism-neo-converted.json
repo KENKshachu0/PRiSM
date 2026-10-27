@@ -1,0 +1,136 @@
+{
+  "format": "prism-shop-data",
+  "version": 3,
+  "scope": "business",
+  "exportedAt": "2026-06-01T00:00:00.000Z",
+  "source": {
+    "publicId": "prism-neo",
+    "name": "云谷店",
+    "timeZone": "Asia/Shanghai"
+  },
+  "storage": {
+    "timeZone": "UTC",
+    "money": "minor-units"
+  },
+  "settings": {
+    "cashierEnabled": false,
+    "autoRegister": true,
+    "identityBindingRequired": false,
+    "checkinGeo": false,
+    "checkoutGeo": false,
+    "machineGeo": false,
+    "entryPricingIds": [
+      "legacy:pricing-config:time-priority"
+    ],
+    "botContact": "",
+    "coinCooldownMs": 60000,
+    "defaultPresentId": null
+  },
+  "partial": true,
+  "tables": {
+    "staff_users": [],
+    "pricing_effects": [],
+    "asset_definitions": [
+      {
+        "type": "currency",
+        "code": "paid",
+        "name": "余额",
+        "stackable": 1,
+        "status": "active",
+        "pricing_effect_id": null,
+        "active_at": null,
+        "expires_at": null,
+        "metadata_json": "{\"legacy\":{\"type\":\"CURRENCY\",\"assetId\":10001},\"valid\":true,\"synthesized\":true}"
+      },
+      {
+        "type": "currency",
+        "code": "free",
+        "name": "赠送余额",
+        "stackable": 1,
+        "status": "active",
+        "pricing_effect_id": null,
+        "active_at": null,
+        "expires_at": null,
+        "metadata_json": "{\"legacy\":{\"type\":\"CURRENCY\",\"assetId\":10002},\"valid\":true,\"synthesized\":true}"
+      }
+    ],
+    "pricing_configs": [
+      {
+        "id": "legacy:pricing-config:time-priority",
+        "kind": "time.priority",
+        "name": "Legacy time priority pricing",
+        "enabled": 1,
+        "status": "active",
+        "provider_json": "{\"id\":\"legacy.time-priority\",\"timeZone\":\"UTC\",\"rules\":[{\"id\":\"legacy.rule.2\",\"label\":\"Night\",\"priority\":20,\"weekdays\":[5,6],\"timeRange\":{\"start\":\"12:00\",\"end\":\"20:00\"},\"pricing\":{\"unitMinutes\":30,\"unitPrice\":4000,\"priceCap\":16000,\"roundGraceMinutes\":5}}]}",
+        "created_at": "2026-06-01T00:00:00.000Z",
+        "updated_at": "2026-06-01T00:00:00.000Z"
+      }
+    ],
+    "presents": [],
+    "business_items": [],
+    "pricing_config_versions": [
+      {
+        "version_id": "legacy:pricing-version:time-priority",
+        "config_id": "legacy:pricing-config:time-priority",
+        "version": 1,
+        "kind": "time.priority",
+        "name": "Legacy time priority pricing",
+        "enabled": 1,
+        "status": "active",
+        "provider_json": "{\"id\":\"legacy.time-priority\",\"timeZone\":\"UTC\",\"rules\":[{\"id\":\"legacy.rule.2\",\"label\":\"Night\",\"priority\":20,\"weekdays\":[5,6],\"timeRange\":{\"start\":\"12:00\",\"end\":\"20:00\"},\"pricing\":{\"unitMinutes\":30,\"unitPrice\":4000,\"priceCap\":16000,\"roundGraceMinutes\":5}}]}",
+        "created_at": "2026-06-01T00:00:00.000Z",
+        "updated_at": "2026-06-01T00:00:00.000Z"
+      }
+    ],
+    "pricing_releases": [
+      {
+        "id": "legacy:pricing-release:time-priority",
+        "version_ids_json": "[\"legacy:pricing-version:time-priority\"]",
+        "time_zone": "UTC",
+        "created_at": "2026-06-01T00:00:00.000Z"
+      }
+    ],
+    "pricing_release_heads": [
+      {
+        "release_id": "legacy:pricing-release:time-priority"
+      }
+    ],
+    "players": [
+      {
+        "id": "legacy:user:7",
+        "display_name": "Player 7",
+        "status": "active",
+        "created_at": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "player_identities": [],
+    "cashier_profiles": [],
+    "sessions": [],
+    "session_pricing_releases": [],
+    "asset_holdings": [],
+    "asset_transactions": [],
+    "asset_ledger_entries": [],
+    "redeem_codes": [],
+    "redeem_records": [],
+    "player_checkouts": [],
+    "checkout_timelines": [],
+    "settlements": [],
+    "settlement_charge_items": [],
+    "settlement_adjustments": [],
+    "pricing_history_entries": [],
+    "pricing_cap_history_entries": [],
+    "business_item_orders": [],
+    "cashier_payments": [],
+    "app_settings": [],
+    "shop_billing_settings": [],
+    "api_tokens": [],
+    "machines": [],
+    "device_capabilities": [],
+    "mahjong_seats": [],
+    "device_operations": [],
+    "device_events": [],
+    "device_state": [],
+    "account_links": [],
+    "checkout_report_states": []
+  }
+}

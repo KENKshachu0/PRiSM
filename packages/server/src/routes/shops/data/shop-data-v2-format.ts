@@ -256,9 +256,17 @@ export const fullHeaderSchema = backupSchema
       })
       .strict()
       .optional(),
+    /**
+     * A file converted from another system (prism-neo) that carries business
+     * data only: players, balances, pricing and history. Importing it replaces
+     * those and keeps everything the file knows nothing about: the shop's name,
+     * cover, location and time zone, its settings, resources, resource groups,
+     * bots, staff and device configuration.
+     */
+    partial: z.literal(true).optional(),
   })
   .strict()
-  .refine((value) => value.version === 1 || !!value.shopProfile, "v2 and later require shopProfile");
+  .refine((value) => value.version === 1 || value.partial || !!value.shopProfile, "v2 and later require shopProfile");
 export type FullHeader = z.infer<typeof fullHeaderSchema>;
 export const uploadBytes = 2 * 1024 * 1024 - 8192;
 export function fullTables(header: FullHeader): readonly FullTable[] {

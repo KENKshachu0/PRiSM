@@ -1004,7 +1004,6 @@
   "备份来源": "Backup source",
   "PRiSM 备份（v1／v2／v3 JSON）": "PRiSM backup (v1/v2/v3 JSON)",
   "prism-neo 导出（pg_dump 文本或 JSON 快照）": "prism-neo export (pg_dump text or JSON snapshot)",
-  "支持 prism-neo 的 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照，上传前在浏览器转换为 PRiSM 备份；旧计费规则将以停用状态导入，请先在计费设置中核对时区再启用。": "Supports prism-neo pg_dump backups (.sql) or CLI JSON snapshots, converted to a PRiSM backup in the browser before upload. Legacy billing rules import as disabled; review their time zones in billing settings before enabling.",
   "导入完成，请核对玩家、余额、账单及资源设置后再营业。": "Import complete. Verify players, balances, bills and resource settings before reopening.",
   "导出文件没有玩家，请核对来源环境和店铺。": "No players were exported. Check the source environment and shop.",
   "已导出记录": "Exported records",
@@ -1809,5 +1808,7 @@
   "规则决定玩家什么时段、按什么价格付费。给资源组选上规则后，组里的资源才开始计费。": "Rules decide when and at what price players pay. Resources start billing once their resource group has a rule.",
   "新建的规则要被资源组、资源或其他规则的「依赖」引用才会计费。": "A new rule bills only once a resource group, a resource or another rule's requirement uses it.",
   "按前台资源所在资源组的方案开始计时。": "Timing starts on the plan of the front desk resource's group.",
-  "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的方案，再加上它依赖的方案。": "When a player scans a resource it is timed on that resource's plan: its own, otherwise its resource group's, plus the plans it requires."
+  "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的方案，再加上它依赖的方案。": "When a player scans a resource it is timed on that resource's plan: its own, otherwise its resource group's, plus the plans it requires.",
+  "支持 prism-neo 的 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照，上传前在浏览器转换为 PRiSM 备份。只导入玩家、余额、计费规则和历史记录；店铺资料、时区、设置、资源、资源组、Bot 与店员保留不变。旧计费规则按本店时区换算，成为默认资源组的方案。": "Accepts a prism-neo pg_dump backup (.sql) or a CLI JSON snapshot, converted to a PRiSM backup in your browser before upload. Only players, balances, pricing rules and history are imported; the shop's profile, time zone, settings, resources, resource groups, bot and staff stay as they are. Old pricing rules are converted from this shop's time zone and become the default resource group's plan.",
+  "将替换玩家、余额、计费方案和历史记录；店铺资料、设置、资源、资源组、Bot 与店员保留。": "Replaces players, balances, pricing plans and history; the shop's profile, settings, resources, resource groups, bot and staff are kept."
 }

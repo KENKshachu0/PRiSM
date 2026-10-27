@@ -345,6 +345,46 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
     expect(applied.status).toBe(200);
   }
 
+  it("imports a prism-neo file as business data only, keeping the shop's own profile, settings and resources",async()=>{
+    const {sqlite,env,app,headers}=await transferFixture();
+    const now=new Date().toISOString();
+    // A configured shop: its own name, cover, place and time zone, settings, a bot,
+    // a door in a priced group, and plans of its own.
+    sqlite.run("UPDATE shops SET name='云谷店',latitude=22.54,longitude=114.06,radius_meters=120,hero_data='data:image/png;base64,AAAA' WHERE id='destination'");
+    sqlite.run("INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES ('destination','store.profile',?,?)",[JSON.stringify({name:"云谷店",timeZone:"Asia/Shanghai"}),now]);
+    sqlite.run("INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES ('destination','devices.ttlock_connection',?,?)",[JSON.stringify({clientId:"lock"}),now]);
+    sqlite.run("INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required,bot_contact) VALUES ('destination',0,1,'发送 {code}')");
+    sqlite.run("INSERT INTO api_tokens(shop_id,id,label,role,token_prefix,token_hash,status,created_at) VALUES ('destination','bot-token','Bot','integration','prism_integration','hash','active',?)",[now]);
+    sqlite.run(`INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
+      VALUES ('destination','old-plan','time.priority','旧方案',1,'active',?,?,?)`,
+      [JSON.stringify({id:"old-plan",timeZone:"UTC",rules:[{id:"r",label:"全天",priority:0,timeRange:{start:"00:00",end:"00:00"},pricing:{unitMinutes:60,unitPrice:100,roundGraceMinutes:0,priceCap:0}}]}),now,now]);
+    sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('destination','default','默认资源组',1,'old-plan',?,?),('destination','rest','休息区',1,'old-plan',?,?)",[now,now,now,now]);
+    sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted,resource_group_id) VALUES ('door','door-pub','destination','大门','','rest')");
+
+    // What the web's prism-neo converter (prism-web/src/prism-neo-convert.ts) writes
+    // for one player and one night rule; the browser drops `counts` before upload.
+    const file=JSON.parse(readFileSync(resolve(import.meta.dir,"fixtures/prism-neo-converted.json"),"utf8")) as {tables:Tables;[key:string]:unknown};
+    expect(file.partial).toBe(true);
+    await restore(app,env,headers,"destination",file);
+
+    // The file's business data replaced the shop's.
+    expect(sqlite.query("SELECT id FROM players WHERE shop_id='destination'").all()).toEqual([{id:"legacy:user:7"}]);
+    expect(sqlite.query("SELECT id FROM pricing_configs WHERE shop_id='destination'").all()).toEqual([{id:"legacy:pricing-config:time-priority"}]);
+    // Everything prism-neo knows nothing about is kept.
+    expect(sqlite.query("SELECT name,latitude,longitude,radius_meters,hero_data IS NOT NULL AS hero FROM shops WHERE id='destination'").get())
+      .toEqual({name:"云谷店",latitude:22.54,longitude:114.06,radius_meters:120,hero:1});
+    const setting=(key:string)=>JSON.parse((sqlite.query("SELECT value_json FROM app_settings WHERE shop_id='destination' AND key=?").get(key) as {value_json:string}).value_json);
+    expect(setting("store.profile")).toEqual({name:"云谷店",timeZone:"Asia/Shanghai"});
+    expect(setting("devices.ttlock_connection")).toEqual({clientId:"lock"});
+    expect(sqlite.query("SELECT identity_binding_required AS binding,bot_contact AS contact FROM shop_billing_settings WHERE shop_id='destination'").get())
+      .toEqual({binding:1,contact:"发送 {code}"});
+    expect(sqlite.query("SELECT id FROM api_tokens WHERE shop_id='destination'").all()).toEqual([{id:"bot-token"}]);
+    expect(sqlite.query("SELECT id,resource_group_id AS groupId FROM machines WHERE shop_id='destination'").all()).toEqual([{id:"door",groupId:"rest"}]);
+    // The shop's old plan is gone: its group turns free, and the default group bills the imported plan.
+    expect(sqlite.query("SELECT id,default_pricing_config_id AS plan FROM resource_groups WHERE shop_id='destination' ORDER BY id").all())
+      .toEqual([{id:"default",plan:"legacy:pricing-config:time-priority"},{id:"rest",plan:null}]);
+  });
+
   it("carries device capabilities, secrets and history, and gives a copy its own relay identity",async()=>{
     const {sqlite,env,app,headers}=await transferFixture();
     const now=new Date().toISOString();

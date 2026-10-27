@@ -12,6 +12,7 @@ import { requireUser } from "../../../middleware/auth.js";
 import { type BillingShop } from "./compat.js";
 import { freeShopStatements } from "../../../resources/billed-sql.js";
 import { ensureDefaultGroupStatement } from "../../../resources/repository.js";
+import { DEFAULT_RESOURCE_GROUP_ID } from "../../../resources/billing.js";
 import { missingFrontDeskStatements } from "../../platform/shops.js";
 import { notifyBotsChangedAfter } from "../../../durable-objects/shop-hub-client.js";
 import { encryptSecret, sha256 } from "../../../crypto.js";
@@ -554,6 +555,27 @@ function v2DeviceStatements(db: D1Database, shopId: string, jobId: string, merge
   return { capabilities, history };
 }
 
+/**
+ * A partial import replaced the shop's plans but kept its resource groups and
+ * resources, so their plan references may point at plans that are gone: those
+ * become free. The file's own plan, if it names one, bills the default group,
+ * as the shop it came from billed every visit by it.
+ */
+function partialPricingStatements(db: D1Database, shopId: string, planId: string | null) {
+  const gone = (column: string) =>
+    `${column} IS NOT NULL AND ${column} NOT IN (SELECT id FROM pricing_configs WHERE shop_id=?)`;
+  return [
+    db.prepare(`UPDATE resource_groups SET default_pricing_config_id=NULL WHERE shop_id=? AND ${gone("default_pricing_config_id")}`)
+      .bind(shopId, shopId),
+    db.prepare(`UPDATE machines SET pricing_config_override_id=NULL WHERE shop_id=? AND ${gone("pricing_config_override_id")}`)
+      .bind(shopId, shopId),
+    ...(planId
+      ? [db.prepare("UPDATE resource_groups SET default_pricing_config_id=?,updated_at=? WHERE shop_id=? AND id=?")
+          .bind(planId, new Date().toISOString(), shopId, DEFAULT_RESOURCE_GROUP_ID)]
+      : []),
+  ];
+}
+
 async function applyJob(
   c: C,
   shop: BillingShop,
@@ -621,7 +643,9 @@ async function applyJob(
   if (header.scope === "business" && triggers.length !== restoreTriggerNames.length)
     jsonError(409, "计费数据库结构不完整，无法恢复历史版本", "IMPORT_SCHEMA_MISMATCH");
   statements.push(...triggers.map((t) => db.prepare(`DROP TRIGGER ${t.name}`)));
-  if (header.scope === "business") statements.push(...replaceBusinessStatements(db, shop.id, requireUser(c).id, header.version >= 2));
+  // A partial file replaces business data only; a full one restores the whole shop.
+  const partial = header.partial === true;
+  if (header.scope === "business") statements.push(...replaceBusinessStatements(db, shop.id, requireUser(c).id, header.version >= 2 && !partial));
   // Machines have global IDs. The preflight stores collision mappings in D1, not Worker memory.
   if (rowsCount.machines) {
     const cols = sourceColumns("machines"),
@@ -741,7 +765,7 @@ async function applyJob(
           shop.id,
         ),
     );
-  statements.push(
+  if (!partial) statements.push(
     db
       .prepare(
         `INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,'store.profile',?,?)
@@ -786,6 +810,7 @@ async function applyJob(
   // The default group: stored by newer files, otherwise made here with the plan
   // older files kept as the shop's default plan.
   statements.push(ensureDefaultGroupStatement(db, shop.id, header.settings.entryPricingIds?.[0] ?? null));
+  if (partial) statements.push(...partialPricingStatements(db, shop.id, header.settings.entryPricingIds?.[0] ?? null));
   statements.push(...missingFrontDeskStatements(db, shop.id));
   if (header.settings.billingEnabled === false) statements.push(...freeShopStatements(db, shop.id));
   if (rowsCount.account_links) {
