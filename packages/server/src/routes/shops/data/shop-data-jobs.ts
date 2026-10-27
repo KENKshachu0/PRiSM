@@ -11,6 +11,7 @@ import { withOperationLease } from "@prism/application";
 import { requireUser } from "../../../middleware/auth.js";
 import { type BillingShop } from "./compat.js";
 import { freeShopStatements } from "../../../resources/billed-sql.js";
+import { notifyBotsChangedAfter } from "../../../durable-objects/shop-hub-client.js";
 import { encryptSecret, sha256 } from "../../../crypto.js";
 import { jsonError } from "../../../http.js";
 import { owner, targetState, snapshotSql, snapshotBindings, snapshotKey } from "./shop-data.js";
@@ -813,6 +814,8 @@ async function applyJob(
       jsonError(409, "数据校验失败，导入已全部回滚，请重试", "IMPORT_CONSTRAINT_FAILED");
     throw error;
   }
+  // Restored resources, groups and plans change what entering through each bot starts.
+  notifyBotsChangedAfter(c, shop.id);
   return result;
 }
 

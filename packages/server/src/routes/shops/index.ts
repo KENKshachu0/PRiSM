@@ -1,5 +1,5 @@
 import { errorResponse } from "../../http-errors.js";
-import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
+import { notifyBotsChangedAfter, touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -519,6 +519,8 @@ shopRouter.put("/settings", async (c) => {
           new Date().toISOString(),
         ),
       ]);
+      // The default plan is what bots in the default group start.
+      if (planChanged) notifyBotsChangedAfter(c, initialShop.id);
 
       return c.json({
         ...body,

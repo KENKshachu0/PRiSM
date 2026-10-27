@@ -7,6 +7,7 @@ import { requireUser } from "../../middleware/auth.js";
 import { DEFAULT_RESOURCE_GROUP_ID } from "../../resources/billing.js";
 import { defaultResourceGroup, findResourceGroup, listResourceGroups } from "../../resources/repository.js";
 import { assertResourceShop, canConfigureResource } from "./merchant-resources.js";
+import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 
 /**
  * Resource groups: a name and a default plan for the resources in them. The
@@ -133,6 +134,8 @@ merchantResourceGroupRouter.patch("/resource-groups/:id", async (c) => {
       id,
     ).run();
   }
+  // A bot in this group may now bill on entry, or no longer.
+  notifyBotsChangedAfter(c, body.shopId);
   return c.json({ resourceGroup: (await view(c, body.shopId)).find((group) => group.id === id) });
 });
 

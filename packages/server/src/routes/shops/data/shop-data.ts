@@ -10,6 +10,7 @@ import { requireUser } from "../../../middleware/auth.js";
 import { getBillingShop, staffPrincipal, type BillingShop } from "./compat.js";
 import { sha256 } from "../../../crypto.js";
 import { freeShopStatements } from "../../../resources/billed-sql.js";
+import { notifyBotsChangedAfter } from "../../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../../http.js";
 import { enforceRateLimits } from "./compat.js";
 import type { AppBindings } from "./compat.js";
@@ -207,6 +208,7 @@ export function registerShopDataRoutes(app: Hono<AppBindings>) {
           jsonError(409, "数据关联或约束校验失败，导入已全部回滚", "IMPORT_CONSTRAINT_FAILED");
         throw error;
       }
+      notifyBotsChangedAfter(c, shop.id);
       return c.json(result);
     });
   });

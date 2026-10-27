@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withOperationLease } from "@prism/application";
 import type { AppBindings } from "../../bindings.js";
 import { sha256 } from "../../crypto.js";
+import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../http.js";
 import { requireUser, staffPrincipal } from "../../middleware/auth.js";
 import { getShop, getShopDeps } from "../../middleware/tenant.js";
@@ -132,6 +133,8 @@ billingCompatRouter.post("/billing/setup", async (c) => {
           "UPDATE player_operations SET status='completed',result_json=? WHERE shop_id=? AND user_id=? AND id=? AND kind='billing/setup' AND request_hash=?",
         ).bind(JSON.stringify({ status: 200, body: result }), shop.id, user.id, operationId, requestHash),
       ]);
+      // The default group bills now, and so do its bots.
+      notifyBotsChangedAfter(c, shop.id);
       return c.json(result);
     },
   );

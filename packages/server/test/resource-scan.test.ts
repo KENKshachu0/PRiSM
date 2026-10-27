@@ -91,7 +91,7 @@ async function fixture() {
   const active = () => (sqlite.query(
     "SELECT json_extract(pricing_config_ids_json,'$[0]') AS plan, started_at AS startedAt FROM sessions WHERE status='active' ORDER BY plan",
   ).all() as { plan: string; startedAt: string }[]);
-  return { sqlite, call, scan, active };
+  return { sqlite, call, scan, active, app, env };
 }
 
 describe("scanning a resource", () => {
@@ -244,6 +244,23 @@ describe("scanning a resource", () => {
 describe("resource groups", () => {
   beforeEach(() => clearShopDependenciesCache());
   afterEach(() => clearShopDependenciesCache());
+
+  it("tells connected bots to reread their settings when a group's or the default plan changes", async () => {
+    const { app, env } = await fixture();
+    let told = 0;
+    (env as unknown as Record<string, unknown>).SHOP_HUB = { getByName: () => ({ botsChanged: async () => { told++; } }) };
+    const pending: Promise<unknown>[] = [];
+    const patch = async (path: string, body: unknown) => {
+      await app.fetch(new Request(`https://prism.test${path}`, {
+        method: "PATCH", headers: { authorization: `Bearer ${OWNER}`, "content-type": "application/json" }, body: JSON.stringify(body),
+      }), env, { waitUntil: (promise: Promise<unknown>) => pending.push(promise), passThroughOnException() {} } as never);
+      await Promise.all(pending.splice(0));
+    };
+    await patch("/api/v1/merchant/resource-groups/game", { shopId: "shop", defaultPricingConfigId: null });
+    await patch("/api/v1/merchant/resource-groups/default", { shopId: "shop", defaultPricingConfigId: "special" });
+    // A bot's cached billingEnabled would otherwise keep refusing or admitting entry.
+    expect(told).toBe(2);
+  });
 
   it("lists the default group with the shop's default plan, and edits it there", async () => {
     const { call, sqlite } = await fixture();
