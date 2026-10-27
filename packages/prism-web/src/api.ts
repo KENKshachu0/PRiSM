@@ -51,10 +51,10 @@ export type PublicResource = {
 export type MachineLoginResult = {
   ok: true;
   /**
-   * Direct-connect machines report what the game did with the card: signed in,
-   * turned away, taken without a verdict, or never taken. Others only say sent.
+   * Direct-connect machines report whether the game took the card or never
+   * read it. Others only say sent.
    */
-  card?: "ok" | "failed" | "read" | "not_read" | "sent";
+  card?: "read" | "not_read" | "sent";
   /** What to show: inline ones on the card row, dialogs only when something went wrong. */
   notices?: Notice[];
   coin?: {

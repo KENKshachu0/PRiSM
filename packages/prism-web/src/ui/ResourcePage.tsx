@@ -12,8 +12,6 @@ import { useAuth } from "./AuthContext";
 
 type CardOutcome = NonNullable<MachineLoginResult["card"]>;
 const CARD_TEXT: Record<CardOutcome, string> = {
-  ok: "登录成功",
-  failed: "登录失败",
   not_read: "登录失败",
   read: "已刷卡",
   sent: "已刷卡",
@@ -265,7 +263,7 @@ function ResourceSessionPage({
   /** For a server that predates notices: the card result alone. */
   const fallbackNotices = (card: CardOutcome): Notice[] => [{
     code: card, display: "inline", flow: "none", title: null, actions: [],
-    level: card === "failed" ? "error" : card === "not_read" ? "warning" : "success",
+    level: card === "not_read" ? "warning" : "success",
     body: t(CARD_TEXT[card]),
   }];
 

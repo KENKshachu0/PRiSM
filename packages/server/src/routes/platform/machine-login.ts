@@ -24,12 +24,12 @@ export const machineLoginRouter = new Hono<AppBindings>();
 type C = Context<AppBindings, any, any>;
 
 /**
- * What the player is told about a card: signed in, turned away, taken without a
- * verdict, never taken, or — through a relay that reports nothing — just sent.
+ * What the player is told about a card: taken by the game, never taken, or —
+ * through a relay that reports nothing — just sent.
  */
 type CardOutcome = CardLoginResult | "sent";
 const isCardLoginResult = (value: unknown): value is CardLoginResult =>
-  value === "ok" || value === "failed" || value === "read" || value === "not_read";
+  value === "read" || value === "not_read";
 
 const machineLoginSchema = z.object({
   cardId: z.string().min(1, "请选择卡片"),
@@ -222,10 +222,8 @@ async function handleLogin(c:C,routePublicId?:string) {
     const coinId=crypto.randomUUID();
     response.coin={operationId:coinId,status:"unknown"};
     try {
-      // Coins for a game that never took the card, or turned it away, are lost.
-      if(cardResult==="not_read"||cardResult==="failed")response.coin={
-        operationId:coinId,status:"skipped",reason:cardResult==="not_read"?"CARD_NOT_READ":"LOGIN_FAILED",
-      };
+      // Coins for a game that never took the card are lost.
+      if(cardResult==="not_read")response.coin={operationId:coinId,status:"skipped",reason:"CARD_NOT_READ"};
       else if(!await claimCoin(c,shop.id,machine.id,coinId))response.coin={
         operationId:coinId,status:"skipped",reason:"COIN_COOLDOWN",
       };
@@ -242,7 +240,7 @@ async function handleLogin(c:C,routePublicId?:string) {
   // What the card row shows: the card's outcome, then the coin's.
   const locale=requestLocale(c.req.header("accept-language"));
   const notices=[
-    ...(cardResult?[notice({ok:"CARD_OK",failed:"CARD_FAILED",not_read:"CARD_NOT_READ",read:"CARD_SENT",sent:"CARD_SENT"}[cardResult],locale)]:[]),
+    ...(cardResult?[notice({not_read:"CARD_NOT_READ",read:"CARD_SENT",sent:"CARD_SENT"}[cardResult],locale)]:[]),
     ...(response.coin?.status==="sent"?[notice("COIN_SENT",locale)]
       :response.coin?.status==="skipped"&&response.coin.reason==="COIN_COOLDOWN"?[notice("COIN_SKIPPED",locale)]
       :response.coin?.status==="failed"?[notice("COIN_FAILED",locale)]

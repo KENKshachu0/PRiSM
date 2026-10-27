@@ -23,9 +23,11 @@ export type IdleMemory = {
   reminded: Record<string, number>;
   lastAutoOff: Record<string, number>;
   wakeAt: number | null;
+  /** When the last check expected each device to be switched off; see `IdlePlan.powerOffAt`. */
+  powerOffAt?: Record<string, number>;
 };
 
-export const emptyIdleMemory = (): IdleMemory => ({ emptySince: null, emptyHandled: null, reminded: {}, lastAutoOff: {}, wakeAt: null });
+export const emptyIdleMemory = (): IdleMemory => ({ emptySince: null, emptyHandled: null, reminded: {}, lastAutoOff: {}, wakeAt: null, powerOffAt: {} });
 
 /** A reminder for the bot, with device names so it can be shown as is. */
 export type IdleNotice = Omit<Reminder, "deviceIds" | "key"> & { devices: Array<{ id: string; name: string }> };
@@ -169,6 +171,7 @@ export async function runIdleCheck(input: {
     reminded: Object.fromEntries(Object.entries(input.memory.reminded).filter(([, at]) => at > now)),
     lastAutoOff: { ...input.memory.lastAutoOff },
     wakeAt: plan.nextWake,
+    powerOffAt: plan.powerOffAt,
   };
   const act = async (id: string, action: "power.off" | "climate.off") => {
     const target = await loadResource(db, shopId, id);

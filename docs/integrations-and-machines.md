@@ -185,7 +185,7 @@ await client.requestScanByIdentity(
 | --- | --- | --- | --- | --- | --- |
 | `power` | `connectionId`、`entityId`（`switch.*`/`input_boolean.*`） | —（旧绑定：`binding`，见下文「店铺 Home Assistant 连接」） | `power.on`、`power.off` | — | `power`，外部权威（事件驱动读存储，无状态现查） |
 | `climate` | `connectionId`、`entityId`（`climate.*`） | —（同上） | `climate.on`、`climate.off`、`climate.set_mode`、`climate.set_temperature`、`climate.set_fan_mode` | — | `climate`，外部权威（同上） |
-| `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`card.login`（由读卡器灯光推出）、`led.set`（不存） | `link`，平台权威 |
+| `hinata_io` | `transport`（`external`/`embedded`）、`coinKey`、`coinAfterSwipe`、`channel` | `url`、`password`（仅外部中继） | `aime.scan`、`coin` | `card.state`、`card.consumed`、`led.set`（不存） | `link`，平台权威 |
 | `door` | `lockId` | — | `door.open` | — | — |
 | `mahjong` | `capacity`、`pricingConfigIds`（最多一个方案） | — | —（上下桌走麻将流程） | — | — |
 
@@ -286,14 +286,15 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 
 #### 扫码刷卡的结果
 
-玩家在扫码页刷卡（`POST /api/v1/machines/login`）时，直连机台会等到游戏给出结果再返回：
+玩家在扫码页刷卡（`POST /api/v1/machines/login`）时，直连机台会等到游戏取走卡再返回，**不等读卡器灯光**：
 
 1. 发卡前先在 `MachineRelay` 内存里登记等待，再下发 `SET_CARD`；等待期间请求未返回，对象不会休眠。
-2. 约 4.5 秒内收到 `source` 一致的 `event.cardConsumed`，记下是哪个读卡器（`unit_no`）取走的；收不到就是 `not_read`（游戏不在读卡，卡已作废）。
-3. 之后约 15 秒内，**同一个读卡器**的 `event.ledSet` 变成 `0000FF` 记为登录成功（`ok`），变成 `FF0000` 或 `FFFF00` 记为被拒（`failed`），并存一条 `card.login` 信号（`payload.result`）。等不到这三种颜色就是 `read`：游戏拿到了卡，但没有给出结论。
-4. 新卡会顶掉机台上还没被取走的旧卡，旧卡的等待随即以 `not_read` 结束。
+2. 约 4.5 秒内收到 `source` 一致的 `event.cardConsumed` 就是 `read`（游戏拿到了卡），立即返回；收不到就是 `not_read`（游戏不在读卡，卡已作废）。
+3. 新卡会顶掉机台上还没被取走的旧卡，旧卡的等待随即以 `not_read` 结束。
 
-响应新增 `card` 字段：`ok`、`failed`、`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 和 `failed` 不投币，`coin` 返回 `skipped`，`reason` 分别为 `CARD_NOT_READ`、`LOGIN_FAILED`。扫码页在卡片行的说明文字里显示「登录成功」「登录失败」（`failed` 和 `not_read` 都显示这个）「已刷卡」，投币结果接在后面（如「登录成功 · 投币失败」）；结果停留几秒，期间其它卡片和投币按钮照常可用。`card.consumed` 只说明游戏从读卡接口拿到了卡号，灯光颜色才反映游戏服务器的结论。
+游戏服务器是否接受了这张卡不再判断：以前要再等最多 15 秒读卡器的结果灯（`event.ledSet`），等待期间操作一直显示「结果待确认」，现在 `event.ledSet` 一律忽略、不再记 `card.login`。设备日志里以前记下的 `card.login` 照常显示。
+
+响应的 `card` 字段：`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 不投币，`coin` 返回 `skipped`，`reason` 为 `CARD_NOT_READ`。扫码页在卡片行的说明文字里显示「已刷卡」或「登录失败」（`not_read`），投币结果接在后面（如「已刷卡 · 已投币」）；结果停留几秒，期间其它卡片和投币按钮照常可用。
 
 ### 店铺 Hub：谁替店里盯着 Home Assistant，以及设备状态的两种模式
 
@@ -354,6 +355,8 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 **设备状态未知时规则照样执行**（连接是无状态模式，或 HA 报告不可用）：自动关机不依赖设备的实际状态。「店里没人」规则对每台没有明确关着的设备都下发关机，空调同理，往已经关着的设备再发一次关机没有害处。「单台设备闲置」规则没有开机时刻，只能以设备自己的最近活动为时钟：没有任何活动就没有起点，不处理；超时后关一次，之后只要它在上次关机之后没有新的活动就不再重复，因为没有状态能证明那次关机生效了。已知状态只来自事件驱动的连接，无状态连接上存着的旧值不会被采信。
 
 **执行**由店铺 Hub 负责：只记最后活动时间，不逐秒倒数；alarm 设在最早的截止时间。刷卡信号、扫码操作、刷卡登录、店铺接口的任何写操作（入场、结账等）和设置保存都会「碰一下」Hub，2 秒内的多次合并成一次检查。检查时从 D1 读设置、进行中的场次、事件驱动连接上设备的电源与空调状态和最近 24 小时的活动，交给 `planIdle` 决定，然后以**系统身份**（`{type:"system"}`）执行 `power.off` / `climate.off`——不算任何人的活动，也不刷新自己的倒计时。自动关机失败的设备 10 分钟内不再重试。关掉的若是正在监听 Home Assistant 的那台机台，Hub 同时把它标为下线并补位。闲置标记是电源能力的平台状态 `idle`（`true`/`false`），变化记 `change` 事件，设备日志显示「已闲置 / 恢复使用」。
+
+**关机时间**：每次检查时 `planIdle` 同时算出 `powerOffAt`——已经开始倒计时、到点会被关机的设备各自的关机时间：店里没人且「店里没人」规则开着时，是这条规则的截止时间；否则是设备不忙之后、闲置判定时长到期的时间，且只在这时会直接关机（店里没人，或店里有人时选了「直接关机」）的情况下才有。只标记闲置或只提醒的设备没有关机时间，还在占用时长内的设备倒计时还没开始，也没有。Hub 把它存进闲置记录，`GET /api/v1/merchant/machines/occupancy` 的响应带上 `powerOffAt`（设备 ID → 时间，已过去的不列）。后台资源卡片在电源状态旁显示「HH:MM 自动关机（N 分钟后）」，随占用每 30 秒刷新一次；看板知道设备已关机时不显示。
 
 **延迟关机**：`power.keep`（电源能力的动作，要求已入场、算作「玩过」）。它不调用 HA，设备开着才成功，关着返回「设备已关机」，所以延迟永远不会把设备开起来。玩家在扫码页点「开机」效果相同。
 

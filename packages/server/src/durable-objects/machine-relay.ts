@@ -54,38 +54,22 @@ export type HaWatch = {
 };
 
 /**
- * What became of a card sent to a waiting game: the reader turned blue (signed
- * in) or red/yellow (rejected), the game took it but showed no verdict, or it
- * expired unread because the game was not polling the reader.
+ * What became of a card sent to a waiting game: the game took it from the
+ * reader, or it expired unread because the game was not polling the reader.
+ * Whether the game's server then accepted the card is not waited for.
  */
-export type CardLoginResult = "ok" | "failed" | "read" | "not_read";
+export type CardLoginResult = "read" | "not_read";
 
-/** How long to wait for each step of a card login. */
-export type CardWaitLimits = { readMs: number; resultMs: number };
+/** How long a card may wait for the game to take it. */
+export type CardWaitLimits = { readMs: number };
 
 /** A stored card is only worth replaying while the IO would still hold it. */
 type StoredCard = { message: RelayMessage; expiresAt: number; source?: string };
 
-/** `unit` stays null until the game takes the card from one of its readers. */
 type CardWait = {
-  unit: number | null;
-  resultMs: number;
   timer: ReturnType<typeof setTimeout>;
   settle: (result: CardLoginResult) => void;
 };
-
-/** A consumed event without a reader number matches a colour on any reader. */
-const ANY_UNIT = -1;
-
-/** Reader colours a waiting game shows once its server has answered for the card. */
-export function loginVerdict(r: unknown, g: unknown, b: unknown): "ok" | "failed" | null {
-  if (r === 0 && g === 0 && b === 255) return "ok";
-  if (r === 255 && b === 0 && (g === 0 || g === 255)) return "failed";
-  return null;
-}
-
-const unitOf = (params: Record<string, unknown>) =>
-  typeof params.unit_no === "number" && Number.isInteger(params.unit_no) ? params.unit_no : null;
 
 let BaseDurableObject: typeof DurableObject;
 try {
@@ -225,7 +209,7 @@ export class MachineRelay extends BaseDurableObject<Env> {
    *
    * `source` rides along so a later `event.cardConsumed` can be tied back to the
    * exact operation that sent the card. With `wait`, the call returns only once
-   * the game has taken the card and its reader showed a verdict, or a limit ran out.
+   * the game has taken the card, or the read limit ran out.
    */
   async sendCard(input: {
     accessCode: string;
@@ -235,7 +219,7 @@ export class MachineRelay extends BaseDurableObject<Env> {
     wait?: CardWaitLimits;
   }): Promise<{ ok: boolean; error?: string; login?: CardLoginResult }> {
     // The IO holds one card at a time, so a newer card ends any older wait.
-    for (const [source, wait] of this.waits) if (wait.unit === null) this.finish(source, "not_read");
+    for (const source of this.waits.keys()) this.finish(source, "not_read");
     const waiting = input.wait && input.source ? this.waitFor(input.source, input.wait) : null;
     const lifetime = input.duration ?? CARD_LIFETIME_MS;
     const sent = await this.deliver(
@@ -262,8 +246,6 @@ export class MachineRelay extends BaseDurableObject<Env> {
   private waitFor(source: string, limits: CardWaitLimits): Promise<CardLoginResult> {
     return new Promise((resolve) => {
       this.waits.set(source, {
-        unit: null,
-        resultMs: limits.resultMs,
         timer: setTimeout(() => this.finish(source, "not_read"), limits.readMs),
         settle: resolve,
       });
@@ -276,29 +258,6 @@ export class MachineRelay extends BaseDurableObject<Env> {
     clearTimeout(wait.timer);
     this.waits.delete(source);
     if (settle) wait.settle(result);
-  }
-
-  /** The game took the card: now wait for that reader's colour. */
-  private cardTaken(source: string, unit: number | null) {
-    const wait = this.waits.get(source);
-    if (!wait || wait.unit !== null) return;
-    clearTimeout(wait.timer);
-    wait.unit = unit ?? ANY_UNIT;
-    wait.timer = setTimeout(() => this.finish(source, "read"), wait.resultMs);
-  }
-
-  private readerColour(params: Record<string, unknown>) {
-    const verdict = loginVerdict(params.r, params.g, params.b);
-    if (!verdict) return;
-    const unit = unitOf(params);
-    for (const [source, wait] of this.waits) {
-      // A cabinet has a reader per player; only the one that took the card counts.
-      if (wait.unit === null || (wait.unit !== ANY_UNIT && wait.unit !== unit)) continue;
-      this.finish(source, verdict);
-      void this.record("card.login", (bus, channel) =>
-        this.signal(bus, channel, "card.login", source, { result: verdict, unit_no: unit }, null),
-      );
-    }
   }
 
   /**
@@ -398,15 +357,13 @@ export class MachineRelay extends BaseDurableObject<Env> {
 
     const event = parseIoEvent(message);
     if (!event) return;
-    if (event.method === "event.ledSet") {
-      // Never stored, but a waiting card login reads its verdict from it.
-      this.readerColour(event.params);
-      return;
-    }
+    // Reader colours come every frame and are never stored.
+    if (event.method === "event.ledSet") return;
     const name = SIGNAL_NAMES[event.method];
     const source = ioEventSource(event.params);
     if (event.method === "event.cardConsumed" && source) {
-      this.cardTaken(source, unitOf(event.params));
+      // The game took the card: that is all a waiting login needs.
+      this.finish(source, "read");
       // The game has the card, so a reconnect must not hand it over again.
       const stored = await this.ctx.storage.get<Partial<StoredCard>>(STATE_KEY);
       if (stored?.source === source) await this.ctx.storage.delete(STATE_KEY);

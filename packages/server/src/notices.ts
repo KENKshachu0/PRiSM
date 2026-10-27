@@ -94,8 +94,6 @@ const CATALOG: Record<string, Entry> = {
   // Outcomes of a swipe, sent with a successful response and shown on the card
   // row, one short part each. The coin after a swipe is a side effect: whatever
   // happens to it, it never interrupts the swipe.
-  CARD_OK: { body: t("登录成功", "Signed in"), level: "success", display: "inline" },
-  CARD_FAILED: { body: t("登录失败", "Sign-in failed"), level: "error", display: "inline" },
   CARD_NOT_READ: { body: t("登录失败", "Sign-in failed"), level: "warning", display: "inline" },
   CARD_SENT: { body: t("已刷卡", "Card sent"), level: "success", display: "inline" },
   COIN_SENT: { body: t("已投币", "Coin added"), level: "success", display: "inline" },

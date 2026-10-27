@@ -92,38 +92,23 @@ const consumed = (source: string, unit?: number) =>
   });
 const led = (unit: number, r: number, g: number, b: number) =>
   JSON.stringify({ jsonrpc: "2.0", method: "event.ledSet", params: { interface: "aimeio", unit_no: unit, r, g, b } });
-const LIMITS = { readMs: 30, resultMs: 60 };
+const LIMITS = { readMs: 30 };
 
 describe("MachineRelay card login", () => {
-  it("reports a sign-in when the reader that took the card turns blue", async () => {
+  it("settles as soon as the game takes the card, without waiting for the reader light", async () => {
     const { relay, sockets, sqlite } = fixture();
     const ws = attachAgent(sockets);
     await relay.fetch(upgradeRequest());
-    const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
+    const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: { readMs: 5000 } });
     await relay.webSocketMessage(ws as any, consumed(OP, 1));
-    // The other player's reader changing colour is not this card's verdict.
-    await relay.webSocketMessage(ws as any, led(0, 0, 0, 255));
+    expect(await result).toEqual({ ok: true, login: "read" });
+    // A later reader colour is not recorded as a verdict.
     await relay.webSocketMessage(ws as any, led(1, 0, 0, 255));
-    expect(await result).toEqual({ ok: true, login: "ok" });
     await Bun.sleep(5);
-    const signal = sqlite.query<{ operation_id: string; result: string }, []>(
-      "SELECT operation_id, json_extract(payload_json,'$.result') AS result FROM device_events WHERE name='card.login'",
-    ).all();
-    expect(signal).toEqual([{ operation_id: OP, result: "ok" }]);
+    expect(sqlite.query("SELECT COUNT(*) AS n FROM device_events WHERE name='card.login'").get()).toEqual({ n: 0 });
   });
 
-  it("reports a rejection for a red or a yellow reader", async () => {
-    for (const [r, g, b] of [[255, 0, 0], [255, 255, 0]] as const) {
-      const { relay, sockets } = fixture();
-      const ws = attachAgent(sockets);
-      const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
-      await relay.webSocketMessage(ws as any, consumed(OP, 0));
-      await relay.webSocketMessage(ws as any, led(0, r, g, b));
-      expect((await result).login).toBe("failed");
-    }
-  });
-
-  it("ignores reader colours seen before the game took the card", async () => {
+  it("ignores reader colours while the game has not taken the card", async () => {
     const { relay, sockets } = fixture();
     const ws = attachAgent(sockets);
     const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
@@ -131,19 +116,10 @@ describe("MachineRelay card login", () => {
     expect((await result).login).toBe("not_read");
   });
 
-  it("says the card was taken when the reader shows no verdict in time", async () => {
-    const { relay, sockets } = fixture();
-    const ws = attachAgent(sockets);
-    const result = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: LIMITS });
-    await relay.webSocketMessage(ws as any, consumed(OP, 0));
-    await relay.webSocketMessage(ws as any, led(0, 10, 20, 30));
-    expect((await result).login).toBe("read");
-  });
-
   it("ends an older wait when a newer card replaces it on the IO", async () => {
     const { relay, sockets } = fixture();
     attachAgent(sockets);
-    const first = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: { readMs: 5000, resultMs: 5000 } });
+    const first = relay.sendCard({ accessCode: "01234567890123456789", source: OP, wait: { readMs: 5000 } });
     await relay.sendCard({ accessCode: "99887766554433221100" });
     expect((await first).login).toBe("not_read");
   });

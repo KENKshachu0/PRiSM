@@ -163,8 +163,6 @@ export const hinataIo: CapabilitySpec<HinataConfig> = {
   signals: {
     "card.state": { activity: true, store: true },
     "card.consumed": { activity: true, store: true },
-    // Derived by the relay from the reader turning blue (signed in) or red/yellow.
-    "card.login": { activity: true, store: true },
     // Games call the LED API every frame; idle attract screens do too.
     "led.set": { activity: false, store: false },
   },

@@ -10,7 +10,7 @@ import { loadResource, loadResources, can, hinataConfigOf, doorConfigOf, mahjong
 import { createOccupancy } from "../../resources/occupancy/service.js";
 import { capabilityWrites, storedCapabilities, type StoredCapability } from "../../resources/capabilities/configure.js";
 import { capabilities, type BotConfig, type CapabilityId, type HaEntityConfig, type HinataConfig } from "../../resources/capabilities/catalog.js";
-import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
+import { idleSchedule, notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 import {
   getHaConnection,
   normalizeHaUrl,
@@ -275,8 +275,13 @@ merchantResourceRouter.get("/machines/occupancy", async (c) => {
   if (!shopId) jsonError(400, "请选择店铺", "SHOP_REQUIRED");
   await assertResourceShop(c, user, shopId);
   await shopTimes(c, shopId);
-  const resources = await createOccupancy({ db: c.env.DB, shopId }).current();
+  const [resources, offAt] = await Promise.all([
+    createOccupancy({ db: c.env.DB, shopId }).current(),
+    idleSchedule(c.env, shopId),
+  ]);
   return c.json({
+    // When the idle rules will switch a device off, for devices counting down.
+    powerOffAt: Object.fromEntries(Object.entries(offAt).map(([id, at]) => [id, new Date(at).toISOString()])),
     resources: resources.map((resource) => ({
       resourceId: resource.resourceId,
       capacity: resource.capacity,

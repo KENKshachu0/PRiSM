@@ -17,11 +17,22 @@ type ShopHubNamespace = {
     notifyUser(userId: string, frame: Record<string, unknown>): Promise<void>;
     botsChanged(): Promise<void>;
     shopEvent(event: Record<string, unknown>): Promise<void>;
+    idleSchedule(): Promise<Record<string, number>>;
   };
 };
 
 export function shopHub(env: Env, shopId: string) {
   return (env.SHOP_HUB as unknown as ShopHubNamespace | undefined)?.getByName(shopId) ?? null;
+}
+
+/** When the idle rules will switch each device off. Empty when the hub cannot be asked. */
+export async function idleSchedule(env: Env, shopId: string): Promise<Record<string, number>> {
+  try {
+    return (await shopHub(env, shopId)?.idleSchedule()) ?? {};
+  } catch (error) {
+    console.error("Shop hub idle schedule failed", error);
+    return {};
+  }
 }
 
 /** Ask the hub to rebuild what is watched. Failures only cost freshness, so they are logged. */

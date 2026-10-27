@@ -145,26 +145,24 @@ describe("direct-connect card login result",()=>{
     return {res,reply:reply.data,cards,presses};
   }
 
-  it("waits for the game and reports how its reader answered",async()=>{
-    const {res,reply,cards,presses}=await embedded("ok");
+  it("waits for the game to take the card, not for its reader light",async()=>{
+    const {res,reply,cards,presses}=await embedded("read");
     expect(res.status).toBe(200);
-    expect(reply.card).toBe("ok");
+    expect(reply.card).toBe("read");
     // The row shows both outcomes; neither interrupts.
     expect((reply as any).notices.map((n:any)=>[n.code,n.display,n.body])).toEqual([
-      ["CARD_OK","inline","登录成功"],["COIN_SENT","inline","已投币"],
+      ["CARD_SENT","inline","已刷卡"],["COIN_SENT","inline","已投币"],
     ]);
-    expect(cards[0]?.wait).toEqual({readMs:4500,resultMs:15_000});
-    // Coins follow a confirmed sign-in.
+    expect(cards[0]?.wait).toEqual({readMs:4500});
+    // Coins follow a card the game took.
     expect(reply.coin?.status).toBe("sent");
     expect(presses).toHaveLength(1);
   });
 
-  it("does not insert coins for a card the game never took or turned away",async()=>{
-    for(const [login,reason] of [["not_read","CARD_NOT_READ"],["failed","LOGIN_FAILED"]]){
-      const {reply,presses}=await embedded(login!);
-      expect(reply.card).toBe(login!);
-      expect(reply.coin).toMatchObject({status:"skipped",reason});
-      expect(presses).toEqual([]);
-    }
+  it("does not insert coins for a card the game never took",async()=>{
+    const {reply,presses}=await embedded("not_read");
+    expect(reply.card).toBe("not_read");
+    expect(reply.coin).toMatchObject({status:"skipped",reason:"CARD_NOT_READ"});
+    expect(presses).toEqual([]);
   });
 });

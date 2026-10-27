@@ -5,8 +5,6 @@
  *   cabinet, for physical cards on its reader and cards the platform sent
  *   alike. A card nobody bound here tells nothing: the cabinet stays as it is,
  *   and a coin from its holder through the platform tells who it was.
- * - The game signed a card in (`card.login` with `ok`): its owner is still
- *   there.
  * - A swipe or a coin requested through the platform for a player: that player
  *   occupies it, which is all a relay that reports nothing back tells.
  *
@@ -22,10 +20,9 @@ export const hinataOccupancy: OccupancyProvider = {
     if (!playerId) return null;
     return action === "coin" || action === "aime.scan" ? { kind: "occupy", playerId } : null;
   },
-  fromSignal({ name, payload, playerId }) {
+  fromSignal({ name, playerId }) {
     if (!playerId) return null;
     if (name === "card.consumed") return { kind: "occupy", playerId };
-    if (name === "card.login" && payload.result === "ok") return { kind: "refresh", playerId };
     return null;
   },
 };

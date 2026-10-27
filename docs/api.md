@@ -34,7 +34,7 @@ API 由 `packages/server-hono` 提供实现，本文档和服务端路由是客�
 - **`actions`**：只在 `dialog` 时出现，`dismiss`（关闭）和 `retry`（重试，客户端能重试时才显示）。客户端不认识的动作当作关闭处理。
 - **`level`**：`success` / `info` / `warning` / `error`，决定颜色。
 - 表里没有的错误码：路由自己写的中文文案原样使用；英文开发者文本和服务器内部错误一律显示「操作失败，请稍后重试」，不让内部措辞出现在玩家面前。
-- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_OK` / `CARD_FAILED` / `CARD_NOT_READ` / `CARD_SENT` 和投币结果（含投币失败、未确认）全部是 `inline`：投币是刷卡的附带动作，不打断刷卡。客户端把每条提示按各自的 `level` 着色（success 用项目强调色蓝，warning 橙，error 红，info 灰）、用「 · 」拼在卡片那一行的说明文字里，并在行尾显示对应图标；不给整行染色，提示显示期间也不锁定任何操作，成功 3 秒、其它 5 秒后恢复原样。投币按钮的结果直接显示在按钮上（「已投币」「请稍后再投币」），同样几秒后恢复「投币」。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
+- 成功响应也可以带提示：扫码刷卡（`/machines/login`）返回 `notices` 数组，`CARD_NOT_READ` / `CARD_SENT` 和投币结果（含投币失败、未确认）全部是 `inline`：投币是刷卡的附带动作，不打断刷卡。客户端把每条提示按各自的 `level` 着色（success 用项目强调色蓝，warning 橙，error 红，info 灰）、用「 · 」拼在卡片那一行的说明文字里，并在行尾显示对应图标；不给整行染色，提示显示期间也不锁定任何操作，成功 3 秒、其它 5 秒后恢复原样。投币按钮的结果直接显示在按钮上（「已投币」「请稍后再投币」），同样几秒后恢复「投币」。入场顺便开门时门锁失败，`door.notice` 为 `DOOR_CODE_FAILED`。
 - 错误码与状态码由一个共享的处理函数映射（`http-errors.ts`），所有路由一致。封号为 `ACCOUNT_BANNED`，封禁表限制为 `ACCESS_RESTRICTED`，玩家资格停用统一为 403 `PLAYER_DISABLED`。
 
 ## 身份认证 (Authentication)
@@ -441,7 +441,7 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/devic
 
 ## 机台直连 (`/io/ws`)
 
-HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`。令牌在设备看板把 HINATA IO 设为直连后签发、只显示一次；令牌无效或设备停用返回 401。平台通过这条连接下发 `SET_CARD`、`KEY_PRESS`，机台回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`。扫码刷卡在直连机台上会等到游戏取走卡并亮出结果灯再返回，响应的 `card` 字段为 `ok`／`failed`／`read`／`not_read`（外部中继为 `sent`）。协议、能力模型和设备日志见 [集成与设备](integrations-and-machines.md)。
+HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请求带 `Authorization: Bearer <deviceToken>`。令牌在设备看板把 HINATA IO 设为直连后签发、只显示一次；令牌无效或设备停用返回 401。平台通过这条连接下发 `SET_CARD`、`KEY_PRESS`，机台回报 `event.cardStateChanged`、`event.cardConsumed`、`event.ledSet`。扫码刷卡在直连机台上会等到游戏取走卡再返回（不等读卡器结果灯），响应的 `card` 字段为 `read`／`not_read`（外部中继为 `sent`）。协议、能力模型和设备日志见 [集成与设备](integrations-and-machines.md)。
 
 机台回报的卡片事件不保存卡号：平台认出卡主人后记在事件的玩家上，日志里只留卡类型和来源。扫码页可以在直连机台的读卡器上添加卡片：`POST /api/v1/devices/session/cards/capture`（`{ticket, location?}`）打开 60 秒的窗口，`GET /api/v1/devices/session/cards/capture/:id?ticket=` 读取结果（`waiting`、`added`、`bound`、`exists`、`taken`、`unsupported`、`expired`）。扫码确认页（`state.gate` 为 `entry`）的 `state.billing.rules.caps` 给出未结账账单到现在的金额 `unsettled`、每个方案当前时段的封顶（封顶为 0 的时段不封顶，不列出）和包含这些方案的跨方案封顶，各带 `priceCap` 与此前已计的 `paidBefore`，见 [资源与资源组](resources.md)。资源的 `capacity`（容量）与 `occupancyMinutes`（占用时长）在商户资源接口里读写；麻将桌的开桌人数就是 `capacity`（2–8，否则 `MAHJONG_CAPACITY_INVALID`；有人在座时修改返回 `MAHJONG_IN_USE`），麻将能力的配置只剩 `pricingConfigIds`；当前占用 `GET /api/v1/merchant/machines/occupancy?shopId=`，占用记录 `GET /api/v1/merchant/machines/:id/occupancy`。见 [卡片、占用与查人](occupancy.md)。
 

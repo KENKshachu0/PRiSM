@@ -120,6 +120,12 @@ export type IdlePlan = {
   emptySince: number | null;
   emptyHandled: number | null;
   nextWake: number | null;
+  /**
+   * When each device is due to be switched off, in ms, once its countdown has
+   * started: the shop is empty, or the device is free and the rule switches it
+   * off. A device that is only marked idle has none.
+   */
+  powerOffAt: Record<string, number>;
 };
 
 /** Whether the device rule looks at this device at all. */
@@ -138,6 +144,7 @@ export function planIdle(input: IdleInputs): IdlePlan {
     emptySince: null,
     emptyHandled: null,
     nextWake: null,
+    powerOffAt: {},
   };
   const wake = (at: number) => {
     if (at > now && (plan.nextWake === null || at < plan.nextWake)) plan.nextWake = at;
@@ -168,6 +175,7 @@ export function planIdle(input: IdleInputs): IdlePlan {
         plan.emptyHandled = since;
       } else {
         wake(deadline);
+        for (const d of powered) plan.powerOffAt[d.id] = deadline;
         remindBefore(`empty:${since}`, "shop_empty", [...new Set([...powered, ...cooling].map((d) => d.id))], deadline);
       }
     }
@@ -196,6 +204,9 @@ export function planIdle(input: IdleInputs): IdlePlan {
     if (now < deadline) {
       if (device.idle) plan.clearIdle.push(device.id);
       wake(deadline);
+      // Counting down once nothing keeps it busy, where the rule would switch it off.
+      const switchesOff = empty ? !settings.shopEmpty.enabled : settings.device.whileOccupied === "off";
+      if (now >= free && switchesOff) plan.powerOffAt[device.id] = deadline;
       if (!empty && settings.device.whileOccupied !== "mark")
         remindBefore(`device:${device.id}`, "device_idle", [device.id], deadline);
       continue;

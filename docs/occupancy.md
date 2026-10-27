@@ -68,13 +68,12 @@ HINATA IO 的判断：
 | 事件 | 结论 |
 | --- | --- |
 | 游戏取走了卡（`card.consumed`） | 卡主人开始占用。机台上直接刷的实体卡和平台下发的卡都算；本店认不出主人的卡不产生占用，资源仍是空闲 |
-| 读卡器亮出登录成功的灯（`card.login` 为 `ok`） | 这位玩家还在，延长占用 |
 | 经平台为某位玩家投币或刷卡 | 这位玩家开始占用。外部中继不回报任何事件，只能这样判断 |
 | 开机、延迟关机、店员不指定玩家的操作 | 不算占用 |
 
 认不出主人的卡不在任何地方出现：没有「未知玩家」，占用记录、查人和资源卡片都不显示它。同一个人之后经平台投币或刷卡时，就会以他的身份开始占用。
 
-更复杂的推断（比如按灯光变化推测一局是否结束）只需要改 HINATA IO 自己的判断模块。
+读卡器灯光不参与判断。更复杂的推断（比如按灯光变化推测一局是否结束）只需要改 HINATA IO 自己的判断模块。
 
 ### 占用时长什么时候不适用
 
@@ -144,7 +143,7 @@ HINATA IO 的判断：
 | `GET /rpc/staff/roster`、`GET /rpc/integration/roster` | `{total, groups}`。每组有 `kind`（`resource` 或 `plan`）、`id`、`name`、`members`，资源组另有 `capacity`。带 `?name=` 时按资源名、别名或方案名只列一项：资源列出上面的所有人，方案列出所有在计费这个方案的人；找不到返回 404 `ROSTER_TARGET_NOT_FOUND` |
 | `POST /rpc/integration/players/by-identity/presence` | 一位玩家：`{inShop, plans, occupying}` |
 | `GET /rpc/staff/live-players` | 额外带 `roster`，网页「在店」页的「按位置分组」使用它 |
-| `GET /api/v1/merchant/machines/occupancy?shopId=` | 每个可占用资源当前的占用者、人数和容量；资源页的卡片显示这些，点玩家名打开他在「在店」页的详情和账单（`/merchant/:shop/live?player=`） |
+| `GET /api/v1/merchant/machines/occupancy?shopId=` | 每个可占用资源当前的占用者、人数和容量；资源页的卡片显示这些，点玩家名打开他在「在店」页的详情和账单（`/merchant/:shop/live?player=`）。另带 `powerOffAt`：正在闲置倒计时的设备何时自动关机，卡片上显示为「HH:MM 自动关机（N 分钟后）」，见 [集成与设备](integrations-and-machines.md#闲置自动关机) |
 | `GET /api/v1/merchant/machines/:id/occupancy` | 一个资源的占用记录，最新的在前，可带 `limit`、`before`；资源卡片「操作记录」里与设备操作记录一起显示 |
 
 Bot 的 `list` 直接按 `roster` 输出，`list <资源或方案>` 只列这一项。

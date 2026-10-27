@@ -30,10 +30,9 @@ const KEY_PRESS_TTL_MS = 30_000;
 const HA_TIMEOUT_MS = 10_000;
 /**
  * A game waiting for a card polls its reader continuously, so an unread card
- * means it is busy elsewhere; the IO drops the card after 3 s. The verdict needs
- * the game's server, which can take several seconds.
+ * means it is busy elsewhere; the IO drops the card after 3 s.
  */
-const CARD_LOGIN_WAIT = { readMs: 4500, resultMs: 15_000 };
+const CARD_LOGIN_WAIT = { readMs: 4500 };
 
 type HaBinding = { url: string; token: string; entityId: string };
 

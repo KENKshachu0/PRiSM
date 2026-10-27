@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
+import { timestampDisplayParts } from "@prism/core";
 import {
   AirVent,
   ChevronRight,
@@ -16,6 +17,7 @@ import {
   Ungroup,
   Bot,
   Users,
+  Timer,
 } from "lucide-react";
 import { Api, api, playerOperation, type DeviceEvent, type OccupancyHistoryEntry, type Resource, type ResourceGroup, type ResourceOccupancyView } from "../../api";
 import { ClimateControls, climateModeName, climateSummary, type ClimateState } from "../ClimateControls";
@@ -142,18 +144,22 @@ export function ResourcesPage() {
   }, [shopId]);
   /** Who is on each resource now; read with the states and every half minute. */
   const [occupancy, setOccupancy] = useState<Record<string, ResourceOccupancyView>>({});
+  /** When the idle rules will switch each device off, for devices counting down. */
+  const [powerOffAt, setPowerOffAt] = useState<Record<string, string>>({});
   const readOccupancy = useCallback(async () => {
     try {
-      const r = await api<{ resources: ResourceOccupancyView[] }>(
+      const r = await api<{ resources: ResourceOccupancyView[]; powerOffAt?: Record<string, string> }>(
         `/api/v1/merchant/machines/occupancy?shopId=${encodeURIComponent(shopId)}`,
       );
       setOccupancy(Object.fromEntries(r.resources.map((resource) => [resource.resourceId, resource])));
+      setPowerOffAt(r.powerOffAt ?? {});
     } catch {
       // The cards simply show no occupancy until the next read.
     }
   }, [shopId]);
   useEffect(() => {
     setOccupancy({});
+    setPowerOffAt({});
     void readOccupancy();
     const timer = setInterval(() => void readOccupancy(), 30_000);
     return () => clearInterval(timer);
@@ -370,6 +376,7 @@ export function ResourcesPage() {
                         canWrite={canWrite}
                         state={states?.[device.id] ?? null}
                         occupancy={occupancy[device.id]}
+                        powerOffAt={powerOffAt[device.id]}
                         stateFailed={statesFailed && states === null}
                         // The first read of a device with no state of its own is still on its way.
                         pending={!firstRead && !!states?.[device.id] && !states[device.id]!.watching}
@@ -504,6 +511,26 @@ function ResourceQR({ device }: { device: Resource }) {
   );
 }
 
+/** The idle power-off ahead: the time it happens and how long until then. */
+function IdleCountdown({ at }: { at: string }) {
+  const { t } = useI18n();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  const minutes = Math.max(0, Math.ceil((Date.parse(at) - now) / 60_000));
+  const time = timestampDisplayParts(at)?.time ?? "";
+  return (
+    <span className="flex items-center gap-1.5 tabular-nums text-amber-600" title={t("闲置自动关机")}>
+      <Timer size={13} aria-hidden="true" />
+      {minutes > 0
+        ? t("{time} 自动关机（{minutes} 分钟后）", { time, minutes })
+        : t("{time} 自动关机", { time })}
+    </span>
+  );
+}
+
 /**
  * A card states what the device is for, what it can do, and its live power
  * state. Secondary actions live behind an overflow menu: three equal-weight
@@ -514,6 +541,7 @@ function ResourceCard({
   canWrite,
   state,
   occupancy,
+  powerOffAt,
   stateFailed,
   pending,
   playerHref,
@@ -528,6 +556,8 @@ function ResourceCard({
   state: BoardState | null;
   /** Who is on it now; absent for a resource nobody occupies (capacity 0). */
   occupancy?: ResourceOccupancyView;
+  /** When the idle rules will switch it off; absent unless it is counting down. */
+  powerOffAt?: string;
   stateFailed: boolean;
   /** A device with no state of its own whose first read has not come back yet. */
   pending: boolean;
@@ -635,6 +665,7 @@ function ResourceCard({
           {(caps.power || caps.climate) && (
             <LiveStatus state={state} failed={stateFailed} pending={pending} power={caps.power} climate={caps.climate} />
           )}
+          {caps.power && powerOffAt && state?.power !== "off" && <IdleCountdown at={powerOffAt} />}
           {isDirectConnect(device) && (
             <span className="flex items-center gap-1.5 text-ink/60">
               <span

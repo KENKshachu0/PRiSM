@@ -82,6 +82,21 @@ describe("idle power planning", () => {
     expect(planIdle(inputs({ settings, activeEntries: 1, devices: [device(stale)] })).powerOff).toEqual(["m1"]);
   });
 
+  it("says when a device will be switched off once its countdown has started", () => {
+    const settings = { device: { enabled: true, whileOccupied: "off" } };
+    // Free since 5 minutes ago (20 busy after switching on 25 minutes ago): off in 5.
+    const free = planIdle(inputs({ settings, activeEntries: 1, devices: [device({ poweredOnAt: NOW - 25 * MIN })] }));
+    expect(free.powerOffAt).toEqual({ m1: NOW + 5 * MIN });
+    // Still busy: the countdown has not started.
+    expect(planIdle(inputs({ settings, activeEntries: 1, devices: [device()] })).powerOffAt).toEqual({});
+    // Only marked idle while players are in: never switched off.
+    const marked = planIdle(inputs({ settings: { device: { enabled: true } }, activeEntries: 1, devices: [device({ poweredOnAt: NOW - 25 * MIN })] }));
+    expect(marked.powerOffAt).toEqual({});
+    // An empty shop switches everything off on its own deadline.
+    const empty = planIdle(inputs({ settings: { shopEmpty: { enabled: true, minutes: 15 } }, emptySince: NOW - 10 * MIN }));
+    expect(empty.powerOffAt).toEqual({ m1: NOW + 5 * MIN });
+  });
+
   it("reads a device idle time from before idle times moved onto resources as the rule being on", () => {
     expect(parseIdleSettings({ device: { defaultMinutes: 20, whileOccupied: "remind" } }).device).toEqual({ enabled: true, minutes: 20, whileOccupied: "remind" });
     expect(parseIdleSettings({ device: { defaultMinutes: 0 } }).device.enabled).toBe(false);

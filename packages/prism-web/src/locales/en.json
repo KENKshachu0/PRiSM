@@ -1818,5 +1818,7 @@
   "刷卡同时上机时只发一条：开了「上机」就按上机播报，否则按刷卡播报。通过这个 Bot 自己的命令做的操作不会再播报一遍。": "A swipe that also starts someone sends one message: a start when starts are announced, otherwise a swipe. What this bot's own commands did is not announced again.",
   "建议改为直连": "Switch to a direct connection",
   "这些刷卡机台还在用外部中继，建议改为直连本平台": "These card cabinets still use an external relay; switch them to connect directly to this platform",
-  "直连不用另外部署和维护中继服务，刷卡、投币和在线状态都由平台直接处理。在资源的「刷卡 · HINATA IO」里选「直连本平台」，签发设备令牌后把它填进机台。": "A direct connection needs no relay service to deploy or maintain: the platform handles cards, coins and online status itself. In the resource's HINATA IO card section choose the direct connection, issue a device token and enter it on the cabinet."
+  "直连不用另外部署和维护中继服务，刷卡、投币和在线状态都由平台直接处理。在资源的「刷卡 · HINATA IO」里选「直连本平台」，签发设备令牌后把它填进机台。": "A direct connection needs no relay service to deploy or maintain: the platform handles cards, coins and online status itself. In the resource's HINATA IO card section choose the direct connection, issue a device token and enter it on the cabinet.",
+  "{time} 自动关机（{minutes} 分钟后）": "Off at {time} (in {minutes} min)",
+  "{time} 自动关机": "Off at {time}"
 }

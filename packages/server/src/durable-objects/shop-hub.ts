@@ -771,6 +771,13 @@ export class ShopHub extends BaseDurableObject<Env> {
     await this.schedule();
   }
 
+  /** When the idle rules will switch devices off, by device, for the board. Times already past are left out. */
+  async idleSchedule(): Promise<Record<string, number>> {
+    const now = Date.now();
+    const { powerOffAt = {} } = await this.load<IdleMemory>("idle", emptyIdleMemory());
+    return Object.fromEntries(Object.entries(powerOffAt).filter(([, at]) => at > now));
+  }
+
   private async checkIdle(memory: IdleMemory) {
     const shopId = await this.shopId();
     if (!shopId) return;
