@@ -792,6 +792,29 @@ describe("Platform & System Routes", () => {
       expect(isAssetEligiblePath("/t/shop1/mach1")).toBe(false);
     });
 
+    it("has Cloudflare run the Worker first on every path it answers itself", async () => {
+      // Static assets with an SPA fallback answer before the Worker unless the path is
+      // listed: a bot's /integration/ws upgrade otherwise got index.html with a 200.
+      const config = await Bun.file(new URL("../../../wrangler.jsonc", import.meta.url)).json() as {
+        assets: { run_worker_first: string[] };
+      };
+      // A glob's `*` matches anything; every other character matches itself.
+      const literal = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, (char) => `\\${char}`);
+      const patterns = config.assets.run_worker_first.map((glob) =>
+        new RegExp(`^${glob.split("*").map(literal).join(".*")}$`));
+      const workerPaths = [
+        "/api/v1/shops/x", "/rpc/integration/bot", "/io/ws", "/integration/ws", "/.well-known/assetlinks.json",
+        "/callback", "/health", "/version", "/t/shop/resource",
+      ];
+      for (const path of workerPaths) {
+        expect(isAssetEligiblePath(path)).toBe(false);
+        expect(patterns.some((pattern) => pattern.test(path))).toBe(true);
+      }
+      // The web app's own pages still come from the assets.
+      for (const path of ["/", "/merchant/shop", "/t/shop", "/assets/app.js"])
+        expect(patterns.some((pattern) => pattern.test(path))).toBe(false);
+    });
+
     it("serves static assets via Fetcher when ASSETS is configured", async () => {
       const assetApp = new Hono<AppBindings>();
       assetApp.use("*", serveWebAssets());
