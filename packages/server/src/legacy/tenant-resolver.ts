@@ -18,7 +18,6 @@ export function normalizeShop(shopRow: TenantShop): TenantShop {
 }
 
 const SHOP_QUERY = `SELECT s.id, s.public_id, s.name, s.latitude, s.longitude, s.radius_meters,
-  COALESCE(b.billing_enabled, 0) AS billing_enabled,
   COALESCE(b.auto_register, 0) AS auto_register,
   COALESCE(b.identity_binding_required, 1) AS identity_binding_required,
   COALESCE((SELECT json_extract(value_json, '$.enabled') FROM app_settings WHERE shop_id = s.id AND key = 'cashier.settings'), 0) AS cashier_enabled,

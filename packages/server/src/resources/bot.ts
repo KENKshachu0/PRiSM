@@ -8,6 +8,7 @@
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
 import { randomToken } from "../crypto.js";
+import { shopBillsSql } from "./billed-sql.js";
 import { capabilities, type BotConfig } from "./capabilities/catalog.js";
 
 export type BotResource = { id: string; name: string; enabled: boolean; config: BotConfig };
@@ -84,8 +85,7 @@ export async function botConfigView(db: D1DatabaseLike, shopId: string, bot: Bot
       `SELECT m.id, m.name FROM device_capabilities c JOIN machines m ON m.shop_id = c.shop_id AND m.id = c.device_id
        WHERE c.shop_id = ? AND c.capability = 'door' AND m.enabled = 1 ORDER BY m.name`,
     ).bind(shopId).all<{ id: string; name: string }>(),
-    db.prepare("SELECT COALESCE(billing_enabled, 0) AS billing FROM shop_billing_settings WHERE shop_id = ?")
-      .bind(shopId).first<{ billing: number }>(),
+    db.prepare(`SELECT ${shopBillsSql("?")} AS billing`).bind(shopId).first<{ billing: number }>(),
   ]);
   const { tokenId: _token, doorResourceId, ...settings } = bot.config;
   // The chosen door, or the only door the shop has.
@@ -93,6 +93,7 @@ export async function botConfigView(db: D1DatabaseLike, shopId: string, bot: Bot
   return {
     bot: { id: bot.id, name: bot.name },
     settings,
+    // Whether any resource bills; there is no shop-wide switch any more.
     billingEnabled: !!shop?.billing,
     currencyName: currency?.name ?? "余额",
     staff: staff.results,

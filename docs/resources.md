@@ -30,22 +30,25 @@
 
 资源组只是逻辑分组，不是物理空间，也不是独立账单：结账仍是玩家级统一结算。
 
-默认计费方案还用于没有扫码对象的入场：前台开单、收银台入场。机器人 `/login` 开始的是这个 Bot 资源的方案，Bot 在默认资源组时也就是默认计费方案。店铺没有设置默认方案时，若只有一个可开始的计时方案就用它，否则返回 `ENTRY_PRICING_REQUIRED`。从未建过资源组的店铺，计费行为与改造前完全一致。
+默认计费方案还用于没有扫码对象的入场：前台开单、收银台入场。机器人 `/login` 开始的是这个 Bot 资源的方案，Bot 在默认资源组时也就是默认计费方案。没有扫码对象的入场在店铺没有设置默认方案时，若只有一个可开始的计时方案就用它，否则返回 `ENTRY_PRICING_REQUIRED`；资源本身不做这种猜测，见下一节。
+
+店铺没有「计费店 / 不计费店」开关。哪里计费只看方案设在哪里：给资源组或资源设置方案，那里就计费；都没有设置的资源免费使用。原 `shop_billing_settings.billing_enabled` 列已停用，不再读写（迁移 `0044_retire_shop_billing_switch.sql`，见下文「停用店铺计费开关」）。
 
 资源组停用后，组内资源不能开始新的计费，已在进行的计费不受影响。组内还有资源时不能删除（`RESOURCE_GROUP_IN_USE`）。
 
 ## 3. 资源计费哪个方案
 
-规则只有一条：资源专属方案优先，否则用资源组的方案。代码见 `packages/server/src/resources/billing.ts`。
+规则只有一条：资源专属方案优先，否则用资源组的方案；默认资源组的方案只取店铺设置里的默认计费方案。代码见 `packages/server/src/resources/billing.ts`（`resolveResourcePlanId`、`defaultGroupPlanId`）。
 
 - 专属方案**替换**资源组的方案，不会把两者叠加。需要叠加时，在计费页让专属方案 `requires` 另一个方案。
-- 普通资源组没有设置方案、资源也没有专属方案时，返回 `RESOURCE_PRICING_NOT_CONFIGURED`，不会退回店铺默认方案。
+- 资源组（含默认资源组）没有设置方案、资源也没有专属方案时，资源**免费使用**：扫码页 `gate` 直接为 `ready`、`billing` 为 `null`，玩家无需确认，也不会开始任何计费。普通资源组不会退回店铺默认方案；默认资源组也不会自动挑选「唯一的计时方案」。对免费资源调用开始计费（`session/start` 等）返回 `RESOURCE_NOT_BILLED`。
+- 给资源组或资源设置方案时（`assertBillablePlan`），方案须为有效的可开始方案，且店铺须有有效的余额货币，否则分别返回 `RESOURCE_PRICING_INVALID`、`BILLING_CONFIGURATION_REQUIRED`。清空方案总是允许，未结账单仍按已锁定的计费版本结账。
 - 资源所属的资源组已删除时返回 `RESOURCE_GROUP_NOT_FOUND`，停用时返回 `RESOURCE_GROUP_DISABLED`。
 - 方案必须属于玩家当前计费版本里的计时方案，由编排器校验。
 
 ## 4. 扫码流程
 
-在启用计费的店铺里，每个资源的方案都必须在玩家这里处于计费中，才能使用该资源，无论有没有硬件。
+设置了方案的资源，其方案必须在玩家这里处于计费中，才能使用该资源，无论有没有硬件；免费资源直接可用（门锁、麻将桌仍要求是本店玩家）。设备动作的同一校验是 `resourceBilling.admits`：免费，或方案正在计费。
 
 1. 玩家扫码，页面读取 `GET /api/v1/devices/session/bootstrap`。只读，不会开始任何计费。
 2. 方案未在计费时，`state.gate` 为 `entry`，`state.billing.preview` 给出确认后会开始、结束和继续的方案，以及 `revision`。资源无法计费时，`state.billing.error` 给出原因，页面不提供确认。页面标题为「计费规则」，下面是一张卡片，内容见下文「扫码页的计费规则」。没有 `rules` 时（旧接口）按「新增方案」「结束方案」「保留方案」三行显示。无法计费时标题为「暂时无法使用」。确认按钮统一为「确认」。计费已开始后的操作页面不再显示计费规则。
@@ -136,3 +139,14 @@ bun test packages/server/test/roster.test.ts packages/server/test/occupancy.test
 bun test packages/server/test/mahjong-pricing-sessions.test.ts
 bun test packages/server/test/shop-data-transfer.test.ts
 ```
+
+## 停用店铺计费开关
+
+原来店铺有一个「启用入场计费」开关（`billingEnabled` / `shop_billing_settings.billing_enabled`），它决定整店是否计费。计费方案下放到资源组和资源后，这个开关被移除：
+
+- 服务端所有入口（扫码页、设备动作、刷卡登录、门锁、麻将桌、玩家钱包与账单、前台收银、Bot 接口）只看资源是否解析到方案，不再返回 `BILLING_DISABLED`。前台收银只看「启用前台收银」设置。
+- 设置接口 `GET/PUT /settings` 不再含 `billingEnabled`；旧客户端提交该字段会被忽略。Bot 配置 `botConfigView` 仍返回只读的 `billingEnabled`，表示是否有任一资源计费（`shopBillsSql`），供尚未更新的插件使用。
+- 扫码票据的资源视图新增 `billed`（该资源是否计费），`shop.billingEnabled` 已移除。查询里的判定见 `packages/server/src/resources/billed-sql.ts`。
+- 迁移 `0044_retire_shop_billing_switch.sql` 清空所有未启用计费店铺的默认方案、资源组方案和资源专属方案，让它们保持免费，而不会因残留的方案（例如以停用状态导入的 prism-neo 规则）突然开始计费。`billing_enabled` 列保留但不再读写，因为 D1 结构变更在 `deploy:beta` 中先于数据转换执行，不能简单删列。
+- 备份文件的 `settings.billingEnabled` 改为可选并已停用：新导出不再写入；导入旧文件时若为 `false`，会同样清空该店所有方案设置（`freeShopStatements`）。
+

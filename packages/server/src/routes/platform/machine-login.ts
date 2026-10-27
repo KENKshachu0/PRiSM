@@ -57,9 +57,8 @@ export async function getShopForMachine(c:C, shopCode:string): Promise<TenantSho
   return shop;
 }
 
-export async function requireShopPlayer(c:C,shop:TenantShop,deviceOnly=false):Promise<{id:string,status:string}> {
+export async function requireShopPlayer(c:C,shop:TenantShop):Promise<{id:string,status:string}> {
   const user=requireUser(c);
-  if (!shop.billing_enabled && !deviceOnly) jsonError(409,"店铺未启用计费","BILLING_DISABLED");
   const find=()=>c.env.DB.prepare(
     `SELECT p.id,p.status FROM shop_player_accounts a
       JOIN players p ON p.shop_id=a.shop_id AND p.id=a.player_id
@@ -97,12 +96,13 @@ export async function requireShopPlayer(c:C,shop:TenantShop,deviceOnly=false):Pr
 
 /**
  * The player, once the scanned resource's plan is running for them. Using any
- * resource of a billing shop needs that, hardware or not; the page asks the
- * player to confirm first.
+ * resource with a plan needs that, hardware or not; the page asks the player to
+ * confirm first. Null for a free resource, which needs no player for billing.
  */
-export async function requireResourcePlan(c:C,shop:TenantShop,resourceId:string):Promise<{playerId:string;session:Session}> {
-  const player=await requireShopPlayer(c,shop);
+export async function requireResourcePlan(c:C,shop:TenantShop,resourceId:string):Promise<{playerId:string;session:Session}|null> {
   const deps=getOrCreateShopDependencies(c.env.DB,shop,c.env.URL_ENCRYPTION_KEY,c.env);
+  if(!await deps.resourceBilling.planOf(resourceId))return null;
+  const player=await requireShopPlayer(c,shop);
   const session=await deps.resourceBilling.activeSession({resourceId,playerId:player.id});
   if(!session)jsonError(403,"请先确认开始计费","CHECKIN_REQUIRED");
   return {playerId:player.id,session};
@@ -159,11 +159,12 @@ async function handleLogin(c:C,routePublicId?:string) {
 
   const shop=await getShopForMachine(c,machine.shop_public_id);
   checkShopLocation(shop,"machine",body);
-  const playerId=shop.billing_enabled?(await requireResourcePlan(c,shop,machine.id)).playerId:null;
+  const billed=await requireResourcePlan(c,shop,machine.id);
+  const playerId=billed?.playerId??null;
   const device=await loadResource(c.env.DB,shop.id,machine.id);
   if(!device||!can(device,"aime.scan"))jsonError(409,"这里不支持此操作","DEVICE_ACTION_UNSUPPORTED");
-  // A door on the same device means the shop gates entry even without billing.
-  if(!shop.billing_enabled&&device.capabilities.has("door"))await requireShopPlayer(c,shop,true);
+  // A door on the same device means the shop gates entry even when it is free.
+  if(!billed&&device.capabilities.has("door"))await requireShopPlayer(c,shop);
   const runtime={db:c.env.DB,env:c.env,shopId:shop.id};
   // Only an explicit "off" blocks: an unreadable switch must not lock players out.
   if(device.capabilities.has("power")&&await readPower(runtime,device)==="off")

@@ -93,7 +93,6 @@ export function publicSettings(shop: TenantShop) {
     entryPricingIds = [];
   }
   return {
-    billingEnabled: !!shop.billing_enabled,
     cashierEnabled: !!shop.cashier_enabled,
     autoRegister: !!shop.auto_register,
     identityBindingRequired: !!shop.identity_binding_required,
@@ -114,7 +113,6 @@ export function publicSettings(shop: TenantShop) {
 export const bindingPromptSchema = z.string().trim().max(500);
 
 const settingsSchema = z.object({
-  billingEnabled: z.boolean(),
   cashierEnabled: z.boolean().optional(),
   autoRegister: z.boolean(),
   identityBindingRequired: z.boolean().optional(),
@@ -240,13 +238,11 @@ shopRouter.get("/", async (c) => {
         .first<{ playerId: string; identityBound: number }>()
     : null;
 
-  const pricing = shop.billing_enabled
-    ? await c.env.DB.prepare(
-        "SELECT id,name,kind,enabled,status,provider_json,created_at,updated_at FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active' AND (id IN (SELECT value FROM json_each(?)) OR kind='time.cap')",
-      )
-        .bind(shop.id, shop.entry_pricing_ids_json)
-        .all<PricingConfigRow>()
-    : { results: [] };
+  const pricing = await c.env.DB.prepare(
+    "SELECT id,name,kind,enabled,status,provider_json,created_at,updated_at FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active' AND (id IN (SELECT value FROM json_each(?)) OR kind='time.cap')",
+  )
+    .bind(shop.id, shop.entry_pricing_ids_json)
+    .all<PricingConfigRow>();
 
   const localDate =
     c.req.query("date") ?? formatLocalDate(new Date(), shop.time_zone);
@@ -463,10 +459,6 @@ shopRouter.put("/settings", async (c) => {
         jsonError(400, "绑定提示需要包含 {code}，用来显示绑定码", "BINDING_PROMPT_CODE_REQUIRED");
       }
 
-      if (cashierEnabled && !body.billingEnabled) {
-        jsonError(409, "请先启用入场计费", "BILLING_DISABLED");
-      }
-
       if (initialShop.cashier_enabled && !cashierEnabled) {
         const unpaid = await c.env.DB.prepare(`SELECT 1 FROM sessions s JOIN cashier_profiles cp
           ON cp.shop_id=s.shop_id AND cp.player_id=s.player_id
@@ -476,42 +468,32 @@ shopRouter.put("/settings", async (c) => {
       }
 
       const configuration = await billingConfiguration(c.env.DB, initialShop.id, body.entryPricingIds);
-      const billingChanged = !initialShop.billing_enabled ||
-        (!initialShop.cashier_enabled && cashierEnabled) ||
-        JSON.stringify(body.entryPricingIds) !== JSON.stringify(publicSettings(initialShop).entryPricingIds);
-      // Existing invalid pricing must not prevent editing unrelated settings.
-      if (body.billingEnabled && billingChanged && !configuration.ready) {
+      // A default plan bills the default group, so choosing one needs it usable
+      // and a balance to pay from. Leaving it empty keeps that group free, and
+      // existing invalid pricing must not prevent editing unrelated settings.
+      const planChanged = JSON.stringify(body.entryPricingIds) !== JSON.stringify(publicSettings(initialShop).entryPricingIds);
+      if (body.entryPricingIds.length && planChanged && !configuration.ready) {
         jsonError(
           409,
           !configuration.balanceAssetsReady
             ? "请先配置有效的余额资产"
-            : !body.entryPricingIds.length
-            ? "请先在「资源组与计费」中设置默认计费方案"
             : "默认计费方案已停用或归档，请在「资源组与计费」中重新选择",
           "BILLING_CONFIGURATION_REQUIRED",
           configuration,
         );
       }
 
-      if (initialShop.billing_enabled && !body.billingEnabled) {
-        const unpaid = await c.env.DB.prepare(
-          "SELECT 1 FROM sessions WHERE shop_id=? AND payment_status='unpaid' LIMIT 1",
-        ).bind(initialShop.id).first();
-        if (unpaid) jsonError(409, "存在未结消费，不能停用计费", "UNSETTLED_SESSIONS");
-      }
-
       await c.env.DB.batch([
         c.env.DB.prepare(
-          `INSERT INTO shop_billing_settings (shop_id, billing_enabled, auto_register, checkin_geo, checkout_geo, machine_geo, entry_pricing_ids_json, bot_contact, identity_binding_required)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO shop_billing_settings (shop_id, auto_register, checkin_geo, checkout_geo, machine_geo, entry_pricing_ids_json, bot_contact, identity_binding_required)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(shop_id) DO UPDATE SET
-             billing_enabled=excluded.billing_enabled, auto_register=excluded.auto_register,
+             auto_register=excluded.auto_register,
              checkin_geo=excluded.checkin_geo, checkout_geo=excluded.checkout_geo, machine_geo=excluded.machine_geo,
              entry_pricing_ids_json=excluded.entry_pricing_ids_json, bot_contact=excluded.bot_contact,
              identity_binding_required=excluded.identity_binding_required`,
         ).bind(
           initialShop.id,
-          +body.billingEnabled,
           +body.autoRegister,
           +checkinGeo,
           +checkoutGeo,

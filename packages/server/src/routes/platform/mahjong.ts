@@ -76,7 +76,7 @@ export async function operateMahjong(
     ? await staffTargetPlayer(c, shop.id, options.bot.playerId)
     : options.staff
       ? await staffTargetPlayer(c, shop.id, targetPlayerId)
-      : await requireShopPlayer(c,shop,true);
+      : await requireShopPlayer(c,shop);
   const confirmedForPlayer = !!options.staff || !!options.bot;
   const joining = body.action === "mahjong.join" || body.action === "mahjong.seat";
   const repos = createD1Repositories({db:c.env.DB,shopId:shop.id,id:()=>crypto.randomUUID(),now:()=>new Date()});
@@ -88,7 +88,9 @@ export async function operateMahjong(
   const tablePlanId = config.pricingConfigIds.length === 1 ? config.pricingConfigIds[0]! : null;
   let entryId:string|null = null;
   let entryOwned = false;
-  if (joining && shop.billing_enabled) {
+  // A table without a plan seats players for free.
+  const billed = !!(await deps.resourceBilling.planOf(machine.id));
+  if (joining && billed) {
     // Sitting at the table needs the table's own plan running, as using any
     // resource does: that plan is what a seat bills while the table waits to
     // fill. A player confirmed it on the table's page; staff seating someone
@@ -135,7 +137,7 @@ export async function operateMahjong(
       const seat=await db.prepare("SELECT machine_id FROM mahjong_seats WHERE shop_id=? AND player_id=?").bind(shop.id,player.id).first<{machine_id:string}>();
       if (!seat) jsonError(409,"已满桌","MAHJONG_TABLE_FULL");
       if (seat.machine_id!==machine.id) jsonError(409,"请先从当前麻将桌下桌","MAHJONG_ALREADY_SEATED");
-      if (shop.billing_enabled && tablePlanId) {
+      if (billed && tablePlanId) {
         try { await openTable(db, shop.id, machine, config.capacity, tablePlanId, at, pricingSessions); }
         catch (error) {
           // A table that cannot bill everyone does not seat the newcomer either.
@@ -184,7 +186,7 @@ export async function operateMahjong(
       .catch(error => console.error("Mahjong live bill sync failed", error));
     try { c.executionCtx.waitUntil(sync); } catch { void sync; }
     // What still bills after getting up, so the player knows leaving the shop is checking out.
-    const remaining = joining || !shop.billing_enabled ? undefined
+    const remaining = joining || !billed ? undefined
       : (await pricingSessions.getActive(player.id)).active.map(plan => plan.planName);
     return c.json({mahjong:await mahjongState(c,machine,options.bot),...(remaining ? { billing: { remaining } } : {})});
     });

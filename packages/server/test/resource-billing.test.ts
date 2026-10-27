@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { PricingConfig } from "@prism/core";
-import { resolveResourcePlanId, shopDefaultPlanId, type ResourceGroup } from "../src/resources/billing.js";
+import { defaultGroupPlanId, resolveResourcePlanId, shopDefaultPlanId, type ResourceGroup } from "../src/resources/billing.js";
 
 const group = (patch: Partial<ResourceGroup> = {}): ResourceGroup => ({
   id: "g", shopId: "s", name: "g", enabled: true, defaultPricingConfigId: "group-plan", isDefault: false, ...patch,
@@ -15,9 +15,15 @@ describe("resource billing resolution", () => {
     expect(resolveResourcePlanId({ resource: resource(null), group: null, defaultPlanId: "shop" })).toBe("shop");
   });
 
-  it("never falls back to the shop default for a group that has no plan", () => {
-    expect(() => resolveResourcePlanId({ resource: resource("g"), group: group({ defaultPricingConfigId: null }), defaultPlanId: "shop" }))
-      .toThrow(expect.objectContaining({ code: "RESOURCE_PRICING_NOT_CONFIGURED" }));
+  it("leaves a resource free when neither it nor its group has a plan, never falling back to the shop default", () => {
+    expect(resolveResourcePlanId({ resource: resource("g"), group: group({ defaultPricingConfigId: null }), defaultPlanId: "shop" })).toBeNull();
+    expect(resolveResourcePlanId({ resource: resource(null), group: null, defaultPlanId: null })).toBeNull();
+  });
+
+  it("takes the default group's plan only from the shop setting", () => {
+    expect(defaultGroupPlanId(["set"])).toBe("set");
+    expect(defaultGroupPlanId([])).toBeNull();
+    expect(() => defaultGroupPlanId(["a", "b"])).toThrow(expect.objectContaining({ code: "DEFAULT_PRICING_AMBIGUOUS" }));
   });
 
   it("refuses a disabled or missing group even with an override", () => {

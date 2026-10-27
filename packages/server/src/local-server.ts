@@ -13,7 +13,6 @@ import type { AppBindings, Env, TenantShop } from "./bindings.js";
 import app from "./app.js";
 
 export const SHOP_QUERY = `SELECT s.id, s.public_id, s.name, s.latitude, s.longitude, s.radius_meters,
-  COALESCE(b.billing_enabled, 0) AS billing_enabled,
   COALESCE(b.auto_register, 0) AS auto_register,
   COALESCE(b.identity_binding_required, 1) AS identity_binding_required,
   COALESCE((SELECT json_extract(value_json, '$.enabled') FROM app_settings WHERE shop_id = s.id AND key = 'cashier.settings'), 0) AS cashier_enabled,
@@ -452,9 +451,9 @@ export function initializeLocalDatabase(
       ],
     );
     db.run(
-      `INSERT INTO shop_billing_settings(shop_id, billing_enabled, auto_register, identity_binding_required, checkin_geo, checkout_geo, machine_geo, entry_pricing_ids_json, bot_contact)
-       VALUES (?, 1, 1, 0, 0, 0, 0, ?, '')
-       ON CONFLICT(shop_id) DO UPDATE SET billing_enabled = 1, auto_register = excluded.auto_register, entry_pricing_ids_json = excluded.entry_pricing_ids_json;`,
+      `INSERT INTO shop_billing_settings(shop_id, auto_register, identity_binding_required, checkin_geo, checkout_geo, machine_geo, entry_pricing_ids_json, bot_contact)
+       VALUES (?, 1, 0, 0, 0, 0, ?, '')
+       ON CONFLICT(shop_id) DO UPDATE SET auto_register = excluded.auto_register, entry_pricing_ids_json = excluded.entry_pricing_ids_json;`,
       [shopId, JSON.stringify([ruleId])],
     );
     db.run(

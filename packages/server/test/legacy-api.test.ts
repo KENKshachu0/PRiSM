@@ -69,6 +69,11 @@ function createTestContext(): { db: D1DatabaseLike; sqlite: Database; env: Env }
     resource_group_id TEXT, pricing_config_override_id TEXT, capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15,
     PRIMARY KEY(shop_id,id)
   )`);
+  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_groups (
+    shop_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+    default_pricing_config_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY(shop_id,id)
+  )`);
 
   sqlite.run(`
     CREATE TABLE IF NOT EXISTS users (

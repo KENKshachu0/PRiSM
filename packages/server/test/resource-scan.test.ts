@@ -41,8 +41,9 @@ async function fixture() {
   }
   sqlite.run("INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop','shop-code','Arcade',0,0,80,'owner-user')");
   sqlite.run("INSERT INTO shop_members(id,shop_id,user_id,role) VALUES ('m1','shop','owner-user','owner')");
-  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required,entry_pricing_ids_json)
-    VALUES ('shop',1,1,0,'["base"]')`);
+  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required,entry_pricing_ids_json)
+    VALUES ('shop',1,0,'["base"]')`);
+  sqlite.run("INSERT INTO asset_definitions(shop_id,type,code,name,stackable,status) VALUES ('shop','currency','paid','余额',1,'active')");
   sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES ('shop','p1','P1','active',?)", [NOW]);
   sqlite.run("INSERT INTO shop_player_accounts(shop_id,user_id,player_id,verified_at) VALUES ('shop','player-user','p1',?)", [NOW]);
 
@@ -201,13 +202,21 @@ describe("scanning a resource", () => {
     expect(active().map((s) => s.plan)).toEqual(["base"]);
   });
 
-  it("shows an unpriced group instead of failing the page, and refuses to start it", async () => {
+  it("lets a player use a resource of a group without a plan for free, with nothing to confirm or start", async () => {
     const { scan, active } = await fixture();
     const { state, confirm } = await scan("loose");
-    expect(state.gate).toBe("entry");
-    expect(state.billing.error.code).toBe("RESOURCE_PRICING_NOT_CONFIGURED");
-    expect((await confirm()).body.error.code).toBe("RESOURCE_PRICING_NOT_CONFIGURED");
+    expect(state.gate).toBe("ready");
+    expect(state.billing).toBeNull();
+    expect((await confirm()).body.error.code).toBe("RESOURCE_NOT_BILLED");
     expect(active()).toEqual([]);
+  });
+
+  it("leaves the default group free once the shop's default plan is cleared", async () => {
+    const { scan, sqlite } = await fixture();
+    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]'");
+    expect((await scan("front-desk")).state.gate).toBe("ready");
+    // Other groups keep billing by their own plans.
+    expect((await scan("cabinet")).state.gate).toBe("entry");
   });
 
   it("tells the player, in their words, when a plan this resource needs is disabled", async () => {

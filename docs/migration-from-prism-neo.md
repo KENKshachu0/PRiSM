@@ -5,7 +5,7 @@ PRiSM Next 提供了完整的历史数据平滑过渡方案。数据迁移过程
 1. **导出数据**：将旧版 `prism-neo` 数据库的数据导出为一个符合标准定义的 JSON 快照文件。
 2. **转换并导入**：通过 `@prism/migration` 包将 JSON 快照中的旧实体字段映射为 PRiSM Next 领域记录，并通过兼容的 SQL 执行器写入目标 SQLite 或远程 D1 数据库中。
 
-除了命令行流程，后台「店铺设置 → 数据管理 → 从 JSON 导入」也支持直接选择 prism-neo 的 `pg_dump` 备份（`.sql`）或 CLI 导出的 JSON 快照：浏览器会先在本地将其转换为 PRiSM v3 备份，再走与普通备份完全相同的分片上传和覆盖导入流程（见 [店铺 JSON 数据备份与迁移](shop-data-transfer.md)）。网页导入同样遵守每月额度；旧计费规则以「Legacy time priority pricing」停用状态导入，启用前须在计费设置中核对时区（见下文第 E 节）。
+除了命令行流程，后台「店铺设置 → 数据管理 → 从 JSON 导入」也支持直接选择 prism-neo 的 `pg_dump` 备份（`.sql`）或 CLI 导出的 JSON 快照：浏览器会先在本地将其转换为 PRiSM v3 备份，再走与普通备份完全相同的分片上传和覆盖导入流程（见 [店铺 JSON 数据备份与迁移](shop-data-transfer.md)）。网页导入同样遵守每月额度；快照带有旧计费规则时，「Legacy time priority pricing」直接启用并作为默认资源组的方案（默认资源组里的资源因此计费，前台收银关闭），`paid` / `free` 余额货币缺失时自动补齐（见下文第 E 节）。没有计费规则的快照不设方案，资源免费使用。
 
 ---
 
@@ -114,9 +114,9 @@ PRISM_SQLITE_PATH=./data/prism-next-staging.sqlite bun run dev:local
 - 旧 `BillingRecord` 数据全部平移至 `pricing_history_entries`。由于计费引擎会根据玩家的“消费封顶限额锚点（`ruleAnchorAt`）”判断是否达到了每天的扣费上限，这些历史数据的完整平移能够保证迁移后玩家的封顶限额继续生效。
 
 ### E. 计费方案映射
-- 旧的 `BillingRule` 计费配置会被合并导入为一个名为 `Legacy time priority pricing`（历史优先级计费方案）的配置中，且该方案**默认处于关闭状态（`enabled: false`）**。
-- 这可以防止未经验收的旧计费配置立刻在生产环境中错误扣费。店主应当在 `/admin` 后台仔细比对 24 小时时间轴，调整其优先级和跨天规则后，再行激活该配置，或者直接在后台新建中文的可视化规则。
-- 当前 Neo 快照不包含规则源时区，导入器原样复制裸时钟，新存储将其视为 UTC，无法自动判断原来是否是店铺当地时间。启用前须按旧部署实际时区核对并转换区间、星期和日期，例如上海的 `10:00–次日 03:00` 应存为 UTC `02:00–19:00`；不能仅依据目标库的 UTC 标签判断正确。该入口仍需要补充明确的源时区转换，和现有 PRiSM stable 的 UTC 升级是两条不同链路，详见 [计费时区字段审计](pricing-time-zone-audit.md#独立的-prism-neo-导入缺口)。
+- 旧的 `BillingRule` 计费配置会被合并导入为一个名为 `Legacy time priority pricing`（历史优先级计费方案）的配置中。
+- **网页导入**（`packages/prism-web/src/prism-neo-convert.ts`）：方案以启用状态导入并设为默认资源组的方案，`cashierEnabled: false`（自助结账），与 prism-neo 原本的运营方式一致；导入后无需重新创建货币或计费方案。旧规则的裸时钟按**导入目标店铺的时区**解释，并用 `migrateCurrentPricingRules` 转为 UTC 存储（区间、星期与指定日期一并平移），例如上海的 `20:00–次日 04:00` 存为 UTC `12:00–20:00`；`isDateTimeRange` 节假日规则本身是绝对时间，不做转换。导入前请确认目标店铺的时区与旧部署一致，导入后仍建议在 `/admin` 后台比对 24 小时时间轴。
+- **命令行导入**（`packages/migration`）没有店铺时区来源，仍原样复制裸时钟并以停用状态（`enabled: false`）导入；启用前须按旧部署实际时区核对并转换区间、星期和日期，例如上海的 `10:00–次日 03:00` 应存为 UTC `02:00–19:00`，详见 [计费时区字段审计](pricing-time-zone-audit.md#独立的-prism-neo-导入缺口)。
 
 ### F. CDK 与出币记录映射
 - 礼物（`Present`）与 CDK（`Redeem`）正常平移，历史合并发放策略自动转化为 `stack` / `extend-time` / `replace`。礼物授予里的 `activeAt` / `expiresAt` 会在 PRiSM Next 仓储层恢复为 `Date | null`，兼容旧 JSON 快照和 pg_dump 导入后的字符串日期。礼物授予的货币数量按资产持有同样的存储单位（分）写入，网页导入与命令行导入结果一致，不会再在显示时被缩小 100 倍；`extend-time` 的 `durationMs` 会保留。旧礼物内容上的 `oncePerUser`（该内容只在首次兑换时发放）会转为该内容的 `maxPerPlayer: 1`。

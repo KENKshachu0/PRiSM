@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppBindings } from "../../bindings.js";
 import { decryptSecret, encryptSecret, sha256 } from "../../crypto.js";
 import { jsonError } from "../../http.js";
+import { resourceBilledSql } from "../../resources/billed-sql.js";
 import { hinataConfigOf, loadResource, publicCapabilities } from "../../resources/resource.js";
 
 export const resourceTicketRouter = new Hono<AppBindings>();
@@ -23,7 +24,8 @@ export type ScannedResource = {
   name: string;
   kind: string;
   enabled: number;
-  billing_enabled: number;
+  /** 1 when the resource resolves to a plan. */
+  billed: number;
   machine_geo: number;
   latitude: number;
   longitude: number;
@@ -35,7 +37,7 @@ const machineSelect = `SELECT machines.*, shops.name AS shop_name,
     ELSE '/api/v1/shops/' || shops.public_id || '/hero?v=' || COALESCE(shops.hero_hash,'original') END AS shop_hero_url,
   shops.latitude, shops.longitude, shops.radius_meters, shops.public_id AS shop_public_id,
   (COALESCE(b.machine_geo,0) OR COALESCE(b.checkin_geo,0) OR COALESCE(b.checkout_geo,0)) AS machine_geo,
-  COALESCE(b.billing_enabled,0) AS billing_enabled
+  ${resourceBilledSql("machines", "b")} AS billed
   FROM machines JOIN shops ON shops.id=machines.shop_id
   LEFT JOIN shop_billing_settings b ON b.shop_id=shops.id`;
 
@@ -107,15 +109,17 @@ export async function publicResource(c: Context<AppBindings>, m: ScannedResource
   return {
     publicId: m.public_id, name: m.name, kind: m.kind, coinAfterSwipe: !!io?.coinAfterSwipe,
     capabilities,
+    // Using it needs its plan running for the player; a free resource needs nothing.
+    billed: !!m.billed,
     // Only a cabinet connected directly reports the cards on its reader.
     cardCapture: capabilities.card && io?.transport === "embedded" && !!io.channel,
     // Native apps render the full device flow only for a plain card cabinet.
-    webOnly: !!io?.coinAfterSwipe || !!m.billing_enabled || !capabilities.card ||
+    webOnly: !!io?.coinAfterSwipe || !!m.billed || !capabilities.card ||
       capabilities.door || capabilities.power || capabilities.climate,
     shop: {
       name: m.shop_name, publicId: m.shop_public_id,
       locationEnabled: !!m.machine_geo, machineGeo: !!m.machine_geo,
-      billingEnabled: !!m.billing_enabled, heroUrl: m.shop_hero_url,
+      heroUrl: m.shop_hero_url,
       latitude: m.latitude, longitude: m.longitude, radiusMeters: m.radius_meters,
     },
   };

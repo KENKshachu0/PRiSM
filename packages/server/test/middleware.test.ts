@@ -618,7 +618,6 @@ describe("Middleware Test Suite", () => {
           latitude: 0,
           longitude: 0,
           radius_meters: 80,
-          billing_enabled: 1,
           cashier_enabled: 0,
          
           auto_register: 1,

@@ -42,12 +42,21 @@ async function configurable(c: C, shopId: string) {
  * shop's default plan times every visit with nothing else running, so it is a
  * time plan.
  */
+/**
+ * A plan given to a group or resource starts billing it, so it must be usable
+ * and players need a balance to pay from. Clearing the plan (null) makes it free.
+ */
 export async function assertBillablePlan(c: C, shopId: string, planId: string | null | undefined, timeOnly = false) {
   if (!planId) return;
-  const plan = await c.env.DB.prepare("SELECT kind, status FROM pricing_configs WHERE shop_id = ? AND id = ?")
-    .bind(shopId, planId).first<{ kind: PricingConfigKind; status: string }>();
+  const [plan, currency] = await Promise.all([
+    c.env.DB.prepare("SELECT kind, status FROM pricing_configs WHERE shop_id = ? AND id = ?")
+      .bind(shopId, planId).first<{ kind: PricingConfigKind; status: string }>(),
+    c.env.DB.prepare("SELECT 1 FROM asset_definitions WHERE shop_id = ? AND type = 'currency' AND status = 'active' LIMIT 1")
+      .bind(shopId).first(),
+  ]);
   if (!plan || plan.status !== "active" || !isStartablePricingKind(plan.kind) || (timeOnly && plan.kind !== "time.priority"))
     jsonError(400, timeOnly ? "请选择有效的按时计费规则" : "请选择有效的计费规则", "RESOURCE_PRICING_INVALID");
+  if (!currency) jsonError(409, "请先配置有效的余额资产", "BILLING_CONFIGURATION_REQUIRED");
 }
 
 async function shopDefaultGroup(c: C, shopId: string) {
@@ -105,8 +114,8 @@ merchantResourceGroupRouter.patch("/resource-groups/:id", async (c) => {
       jsonError(400, "默认资源组只能修改计费方案", "RESOURCE_GROUP_DEFAULT_FIXED");
     if (body.defaultPricingConfigId !== undefined) {
       await c.env.DB.prepare(
-        `INSERT INTO shop_billing_settings(shop_id, billing_enabled, auto_register, entry_pricing_ids_json, bot_contact)
-         VALUES (?, 0, 0, ?, '') ON CONFLICT(shop_id) DO UPDATE SET entry_pricing_ids_json = excluded.entry_pricing_ids_json`,
+        `INSERT INTO shop_billing_settings(shop_id, auto_register, entry_pricing_ids_json, bot_contact)
+         VALUES (?, 0, ?, '') ON CONFLICT(shop_id) DO UPDATE SET entry_pricing_ids_json = excluded.entry_pricing_ids_json`,
       ).bind(body.shopId, JSON.stringify(body.defaultPricingConfigId ? [body.defaultPricingConfigId] : [])).run();
     }
   } else {

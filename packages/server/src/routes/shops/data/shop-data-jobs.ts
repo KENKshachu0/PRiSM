@@ -10,6 +10,7 @@ import { createD1Repositories } from "@prism/adapter-d1";
 import { withOperationLease } from "@prism/application";
 import { requireUser } from "../../../middleware/auth.js";
 import { type BillingShop } from "./compat.js";
+import { freeShopStatements } from "../../../resources/billed-sql.js";
 import { encryptSecret, sha256 } from "../../../crypto.js";
 import { jsonError } from "../../../http.js";
 import { owner, targetState, snapshotSql, snapshotBindings, snapshotKey } from "./shop-data.js";
@@ -289,7 +290,8 @@ async function previewJob(
   const configs = new Map(configRows.map((r) => [r.id, r] as const));
   const settings = header.settings;
   if (settings.entryPricingIds.some((id) => !configs.has(id))) errors.push("入场规则引用了不存在的计费方案");
-  if (settings.billingEnabled) {
+  // A default plan bills the default group; a retired non-billing file drops it on import.
+  if (settings.billingEnabled !== false && settings.entryPricingIds.length) {
     const assets = (
       await (c.env.DB as LegacyD1Database).prepare(
         `SELECT json_extract(payload_json,'$.type') AS type,json_extract(payload_json,'$.code') AS code,json_extract(payload_json,'$.status') AS status
@@ -303,17 +305,15 @@ async function previewJob(
         (code) => !assets.some((a) => a.type === "currency" && a.code === code && a.status === "active"),
       )
     )
-      errors.push("已启用计费但缺少有效余额资产");
+      errors.push("默认计费方案需要有效余额资产");
     if (
-      !settings.entryPricingIds.length ||
       settings.entryPricingIds.some((id) => {
         const row = configs.get(id);
         return !row || row.enabled !== 1 || row.status !== "active" || row.kind === "time.cap";
       })
     )
-      errors.push("已启用计费但入场规则不可用");
+      errors.push("默认计费方案不可用");
   }
-  if (settings.cashierEnabled && !settings.billingEnabled) errors.push("前台收银要求启用入场计费");
   if (
     settings.defaultPresentId &&
     !(await (c.env.DB as LegacyD1Database).prepare(
@@ -356,8 +356,8 @@ async function previewJob(
         .bind(job.id)
         .all<DataRow>()
     ).results;
+    // The retired billing switch is not compared: a file may carry it or not.
     const expected = {
-      billingEnabled: !!raw.billing_enabled,
       autoRegister: !!raw.auto_register,
       identityBindingRequired:
         raw.identity_binding_required === undefined ? true : !!raw.identity_binding_required,
@@ -747,13 +747,12 @@ async function applyJob(
     statements.push(
       db
         .prepare(
-          `INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,checkin_geo,checkout_geo,machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)
-      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET billing_enabled=excluded.billing_enabled,auto_register=excluded.auto_register,checkin_geo=excluded.checkin_geo,
+          `INSERT INTO shop_billing_settings(shop_id,auto_register,checkin_geo,checkout_geo,machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)
+      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,checkin_geo=excluded.checkin_geo,
       checkout_geo=excluded.checkout_geo,machine_geo=excluded.machine_geo,entry_pricing_ids_json=excluded.entry_pricing_ids_json,bot_contact=excluded.bot_contact,identity_binding_required=excluded.identity_binding_required`,
         )
         .bind(
           shop.id,
-          +s.billingEnabled,
           +s.autoRegister,
           +s.checkinGeo,
           +s.checkoutGeo,
@@ -777,6 +776,7 @@ async function applyJob(
           .bind(shop.id, key, JSON.stringify(value), now),
       );
   }
+  if (header.settings.billingEnabled === false) statements.push(...freeShopStatements(db, shop.id));
   if (rowsCount.account_links) {
     const cols = schemas.account_links.columns.map((c) => c.name);
     statements.push(

@@ -46,13 +46,9 @@ export async function hasPlatformBinding(
 export async function requireShopPlayer(
   c: Context<AppBindings>,
   shop: TenantShop,
-  deviceOnly = false,
   enforceBinding = true,
 ): Promise<{ id: string; status: string }> {
   const user = requireUser(c);
-  if (!shop.billing_enabled && !deviceOnly) {
-    jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
-  }
 
   const playerIdHeader = c.req.header("X-PRiSM-Player-Id");
   if (playerIdHeader) {
@@ -260,7 +256,7 @@ playerRouter.get("/sessions/:sessionId/history", async (c) => {
 // (the player can ask for the code again as an entered player).
 playerRouter.post("/session/start", async (c) => {
   const shop = getShop(c);
-  const player = await requireShopPlayer(c, shop, false, true);
+  const player = await requireShopPlayer(c, shop, true);
   const body = (await c.req.json<SessionStartBody>().catch(() => ({}))) as SessionStartBody;
   const machine = await resolveResourceTicket(c, body.ticket ?? "");
   if (machine.shop_id !== shop.id) {

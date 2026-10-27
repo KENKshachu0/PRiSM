@@ -66,9 +66,6 @@ cashierRouter.use("*", async (c, next) => {
   if (staff.staffRole === "viewer" && c.req.method !== "GET" && !c.req.path.endsWith("/lookup")) {
     jsonError(403, "只读账号不能操作前台收银", "FORBIDDEN");
   }
-  if (!shop.billing_enabled) {
-    jsonError(409, "店铺未启用计费", "BILLING_DISABLED");
-  }
   if (!shop.cashier_enabled) {
     jsonError(409, "店铺未启用前台收银", "CASHIER_DISABLED");
   }

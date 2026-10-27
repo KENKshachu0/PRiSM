@@ -53,7 +53,6 @@ export type TenantShop = {
   latitude: number;
   longitude: number;
   radius_meters: number;
-  billing_enabled: number;
   cashier_enabled: number;
   auto_register: number;
   identity_binding_required: number;

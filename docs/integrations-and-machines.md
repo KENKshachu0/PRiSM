@@ -68,7 +68,7 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 | `currencyName` | 自动推导：店铺余额资产的名称 |
 | `door` | 资源上选择的门锁；没选时若店里只有一个门锁就用它 |
 | `mahjongTables` | 自动推导：带麻将能力的资源，含名称、别名和开桌人数（即资源的容量） |
-| `billingEnabled` | 店铺是否启用计费 |
+| `billingEnabled` | 只读、自动推导：是否有任一资源（资源组或专属方案）计费；店铺已没有计费开关，保留此字段供旧插件使用 |
 
 机器人连上 WebSocket 后先读取这份配置，再发送 hello（名称和闲置提醒提前量取自配置）。**监听 Home Assistant 不是店家的开关**：能连上 Home Assistant 的 Bot 一律在 hello 里声明，由平台按店铺的监听名额自己挑谁在听、听哪些连接；换人、断线、停用都由平台调度，店家不用管。商家保存任何资源、员工通过机器人绑定平台身份后，Hub 会向所有在线机器人推送 `{"type":"config.changed"}`，机器人重新读取并再发一次 hello；不再允许监听时，它正在监听的 Home Assistant 会交给下一个监听者。Bot 资源被停用时该接口返回 `403 BOT_DISABLED`。
 
@@ -192,7 +192,7 @@ await client.requestScanByIdentity(
 
 - 动作对应 Home Assistant 的 `climate/turn_on`、`turn_off`、`set_hvac_mode`（`mode`）、`set_temperature`（`temperature`）、`set_fan_mode`（`fanMode`）。可选的模式、风速、温度范围和步长不写死，每次从实体的 `hvac_modes`、`fan_modes`、`min_temp`、`max_temp`、`target_temp_step` 读取；实体不接受的值由 Home Assistant 拒绝，操作记为失败。
 - 状态读取：`GET /api/v1/merchant/machines/:id/state`、玩家页首屏接口 `GET /api/v1/devices/session/bootstrap`（`state.device.climate`）和 `GET /api/v1/devices/session/device` 都返回 `climate`（`{ mode, modes, temperature, currentTemperature, minTemperature, maxTemperature, temperatureStep, fanMode, fanModes }`，未知为 `null`）。事件驱动时读存储，无状态时现读 HA（后台看板的两个接口都是这样，没有开关）。只把**设定**（模式、目标温度、风速）记为 `change` 事件；室温会自己漂移，完整视图另存为不记事件的 `climate/view`。
-- 玩家扫码后能做全部空调操作（含关空调）；计费店铺要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。开启位置校验后，每个空调动作都和机台操作一样要求在店内（`checkShopLocation(…, "machine")`），后台店员操作不校验。
+- 玩家扫码后能做全部空调操作（含关空调）；空调所在资源设置了计费方案时要求先入场，和其它设备动作一样。`power.off` 仍然仅限店员。开启位置校验后，每个空调动作都和机台操作一样要求在店内（`checkShopLocation(…, "machine")`），后台店员操作不校验。
 - 玩家页是独立的空调卡片（`PlayerClimate`）：关着时只有「开空调」；开着时中间是大号设定温度和 −/+，下面是带图标的模式分段和风速分段，卡片颜色随模式变化（制冷蓝、制热橙等）。其它按钮实时发送；−/+ 在停下 1 秒后合并成一次 `climate.set_temperature`，连按会重新计时，避免每一步都重新定位、都调用一次 Home Assistant。选择立即显示：事件驱动时以推来的实际状态为准，6 秒内未回报则回到实际状态；无状态时 HA 回 200 就算完成，页面保留所选的值，不再核对。后台操作面板沿用同一套逻辑，样式更紧凑。
 - **「全部开/关机」（`target.ref: "all"` 的 `power.on/off`）同时开/关所有空调**，每台空调记一条 `climate.on/off` 操作，与电源操作共用一个父操作 ID。Bot 的 `off all` 与 Koishi 的无人自动关机都走这条路径，因此也会关空调。
 - 保存设备时 `climate` 与电源的 `homeAssistant` 形状相同（见下一节），实体必须是 `climate.*`。
@@ -239,7 +239,7 @@ Home Assistant 的地址和令牌是**店铺级**的：一个 Home Assistant 一
 - 编辑器分两段：**设备身份**（名称、别名、启用）和**设备能力**。每项能力是一张带开关的卡片——电源、空调、刷卡（外部中继或直连）、开门密码、麻将桌；关闭的能力不渲染其表单，避免四种凭据同时铺开。提交按钮吸底，长表单无需滚到末尾才能保存。
 - 直连模式（`transport: "embedded"`）的令牌是**显式签发的**：面板里只有「签发设备令牌 / 轮换设备令牌」按钮，普通保存不会顺手创建凭据；未签发就保存会被拒绝并提示先签发或改用外部中继。签发成功后弹窗切换为一次性交付步骤，显示令牌、可复制的两行 INI 片段（`serverUrl=` / `deviceToken=`），在点击「我已写入机台」之前关闭按钮禁用。轮换前明确提示机台现有令牌会立即失效。
 - 空资源页说明「资源」是店里玩家扫码就能用的东西（机台、门、麻将桌，或没有硬件、只用来开始计费的二维码）；`/merchant/:shop/resources?add=1` 直接打开添加资源弹窗（开店指引使用；旧地址 `/devices` 会跳转过来）。二维码弹窗提供「打印」（新窗口只含二维码和资源名）、带「已复制」反馈的复制链接和测试扫码入口。NFC 入口就是把同一个链接写进标签的 NDEF URI 记录：iPhone 碰一下会唤起 hinata_go 里的 PRiSM Link App Clip（免安装），其它手机用浏览器或 HINATA Go 打开；弹窗下方写明了这一点。
-- 编辑器里开门密码能力会检查店铺 TTLock 账号：未连接时红字提示并链接到「设置 → 位置与设备」；麻将桌没有可选计费规则时链接到「计费」页（未启用计费时链接到转换向导）；外部中继缺连接密码时说明投币为何不可设置。
+- 编辑器里开门密码能力会检查店铺 TTLock 账号：未连接时红字提示并链接到「设置 → 位置与设备」；麻将桌没有可选计费规则时链接到「计费」页；麻将桌所在资源没有计费方案时不要求选择对局方案，入座免费；外部中继缺连接密码时说明投币为何不可设置。
 - 能力判定集中在前端适配层 `packages/prism-web/src/ui/merchant/resource-capabilities.ts`（`resourceCapabilities`、`canOperateCoin`、`deviceActions`、`deviceSummaryKey`）。卡片徽章、操作记录里的可用动作、编辑器里的开关都读这一处，不再各自从 `ttlockLockId`/`homeAssistant`/`hasHinata` 推导。
 - 提交仍使用商户 API 的扁平字段（`homeAssistant`、`ttlockLockId`、`mahjong`、`hinataUrl`/`hinataPassword`、`relayConnection`、`coinKey`、`coinAfterSwipe`）；关闭某项能力时发送 `null`（刷卡为 `relayConnection: "external"` + `hinataUrl: null`）让服务端删除对应能力行。适配层只是视图模型，不改变接口契约。
 

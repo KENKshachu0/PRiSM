@@ -102,7 +102,7 @@ const newRuleFor = (kind: Pricing["kind"]): Rule => (kind === "time.cap" ? newCa
 
 export function PricingPage() {
   const { t } = useI18n();
-  const { canWrite, shopCode, shopId, billingEnabled, owner } = useMerchant();
+  const { canWrite, shopCode, shopId, owner } = useMerchant();
   const resourceGroups = useResourceGroups(shopId);
   const resource = useResource<{ pricingConfigs: Pricing[] }>(
     "pricing-configs",
@@ -111,13 +111,12 @@ export function PricingPage() {
   // looks live here but never bills anyone.
   const [entryIds, setEntryIds] = useState<string[] | null>(null);
   useEffect(() => {
-    if (!billingEnabled) return;
     let active = true;
     api<{ entryPricingIds: string[] }>(shopApi(shopCode, "settings"))
       .then((settings) => { if (active) setEntryIds(settings.entryPricingIds); })
       .catch(() => {});
     return () => { active = false; };
-  }, [shopCode, billingEnabled]);
+  }, [shopCode]);
   const request = useStaffApi();
   const [edit, setEdit] = useState<Pricing | null>(null);
   const [archive, setArchive] = useState<Pricing | null>(null);

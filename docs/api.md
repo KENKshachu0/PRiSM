@@ -334,8 +334,7 @@ Integration RPC 面向聊天机器人、自助入口、扫码入口等可信外�
 
 所有 Integration 路由共用一道检查（`guardIntegration`）：
 
-- `platform-binding/confirm`（身份绑定）只需要有效的 Bot 凭据，**不要求店铺启用计费**，不使用 PRiSM 计费的店铺也能让玩家通过 Bot 绑定身份（门锁等设备需要）。
-- 其它路由要求店铺启用计费（否则 `409 BILLING_DISABLED`）。
+- 只校验 Bot 凭据。店铺没有整店计费开关，没有资源计费的店铺也能让玩家绑定身份、查询钱包；开始计费等动作是否可行由目标资源或默认计费方案决定（免费资源返回 `RESOURCE_NOT_BILLED`）。
 
 Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后台分不清一条请求是管理员还是玩家发的（管理员白名单只在 Bot 里），而凭据本身就在店家自己的 Bot 里。Koishi 插件的 `playerCommands: "readonly"` 让玩家只能绑定、查询和兑换，见插件 README。
 
@@ -479,7 +478,7 @@ HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请
 
 ## React 店铺计费初始化
 
-已有非计费店铺可由 owner 调用 `POST /api/v1/shops/:shopCode/billing/setup`，通过一次事务补齐余额资产、创建标准入场方案并启用计费。请求带收费标准、可选的 `cashierEnabled` 和 UUID `operationId`，重试不会重复创建规则。新建店铺的 `billingSetup.createBotToken` 默认为 `false`，只有显式选择才创建 Bot 凭据；`billingSetup.cashierEnabled`（默认 `false`）为 `true` 时同时开启前台收银；`billingSetup.autoRegister` 默认 `true`；启用计费的设置校验不要求 Bot 凭据。向导操作、完整参数及数据保留策略见[店铺计费初始化](billing-setup.md)。
+还没有默认计费方案的店铺可由 owner 调用 `POST /api/v1/shops/:shopCode/billing/setup`，通过一次事务补齐余额资产、创建标准入场方案并设为默认资源组的方案（快速创建计费）。请求带收费标准、可选的 `cashierEnabled` 和 UUID `operationId`，重试不会重复创建规则。新建店铺的 `billingSetup.createBotToken` 默认为 `false`，只有显式选择才创建 Bot 凭据；`billingSetup.cashierEnabled`（默认 `false`）为 `true` 时同时开启前台收银；`billingSetup.autoRegister` 默认 `true`；选定计费方案的校验不要求 Bot 凭据。向导操作、完整参数及数据保留策略见[店铺计费初始化](billing-setup.md)。
 
 设备状态接口的身份门控统一为 `gate: "binding"`，业务错误为 `PLATFORM_BINDING_REQUIRED`。React 与 Koishi 已同步采用新契约；其他调用旧 `qq-binding` 或旧门控名的客户端需一起更新。
 

@@ -565,9 +565,10 @@ describe("Platform & System Routes", () => {
         expect(res.status).toBe(201);
         const { shop } = await res.json() as { shop: { id: string } };
         const row = await env.DB.prepare(
-          "SELECT billing_enabled, auto_register, identity_binding_required FROM shop_billing_settings WHERE shop_id=?",
+          "SELECT json_array_length(entry_pricing_ids_json) AS plans, auto_register, identity_binding_required FROM shop_billing_settings WHERE shop_id=?",
         ).bind(shop.id).first();
-        expect(row).toEqual({ billing_enabled: billingSetup ? 1 : 0, auto_register: 1, identity_binding_required: 1 });
+        // Billing setup gives the default group a plan; without it every resource is free.
+        expect(row).toEqual({ plans: billingSetup ? 1 : 0, auto_register: 1, identity_binding_required: 1 });
       }
     });
 

@@ -1639,7 +1639,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     sqlite.close();
   });
 
-  it("lets a bot bind identities for a shop that does not bill through PRiSM", async () => {
+  it("lets a bot bind identities and read wallets for a shop where no resource bills", async () => {
     const { db, sqlite, env } = createTestContext();
     const { publicId, shopId, botToken } = await setupShopFixture(db, sqlite);
     const app = createTestApp();
@@ -1659,9 +1659,10 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         method: "POST", headers, body: JSON.stringify({ code: code.code, provider: "onebot", subject: `qq-${user}` }),
       }), env);
     };
-    sqlite.run("UPDATE shop_billing_settings SET billing_enabled=0 WHERE shop_id=?", [shopId]);
+    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]' WHERE shop_id=?", [shopId]);
     clearShopDependenciesCache();
-    expect((await wallet()).status).toBe(409);
+    // There is no shop-wide billing switch to refuse it.
+    expect((await wallet()).status).toBe(200);
     expect((await bind("user_no_billing")).status).toBe(200);
     sqlite.close();
   });
@@ -1728,19 +1729,17 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       }), env);
       const location = await save({ locationEnabled: false });
       expect(location.status).toBe(200);
-      expect(await location.json()).toMatchObject({ locationEnabled: false, billingEnabled: true, billingConfiguration: { ready: false } });
+      const saved = await location.json() as Record<string, unknown>;
+      expect(saved).toMatchObject({ locationEnabled: false, billingConfiguration: { ready: false } });
+      expect(saved).not.toHaveProperty("billingEnabled");
       const changed = await save({ entryPricingIds: ["missing-rule"] });
       expect(changed.status).toBe(409);
       expect(await changed.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
-      expect((await save({ billingEnabled: false, cashierEnabled: false })).status).toBe(200);
-      const enable = await save({ billingEnabled: true });
-      expect(enable.status).toBe(409);
-      expect(await enable.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
-      // Re-enabling cashier also requires a valid billing configuration.
-      sqlite.run("UPDATE shop_billing_settings SET billing_enabled=1 WHERE shop_id=?", [shopId]);
-      const cashier = await save({ cashierEnabled: true });
-      expect(cashier.status).toBe(409);
-      expect(await cashier.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
+      // Clearing the default plan makes the default group free, which needs nothing.
+      expect((await save({ entryPricingIds: [] })).status).toBe(200);
+      const chosen = await save({ entryPricingIds: current.entryPricingIds });
+      expect(chosen.status).toBe(409);
+      expect(await chosen.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
       sqlite.close();
     });
   }

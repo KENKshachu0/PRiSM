@@ -454,11 +454,10 @@ describe("Worker Entrypoint & Root Application Suite", () => {
       );
       expect(overviewRes.status).toBe(200);
       const overviewData = (await overviewRes.json()) as {
-        data: { shop: { publicId: string; name: string; billingEnabled: boolean } };
+        data: { shop: { publicId: string; name: string } };
       };
       expect(overviewData.data.shop.publicId).toBe(publicId);
       expect(overviewData.data.shop.name).toBe("Wonder Arcade");
-      expect(overviewData.data.shop.billingEnabled).toBe(true);
 
       // Access tenant pricing as shop owner
       const pricingRes = await testApp.request(

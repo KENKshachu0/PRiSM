@@ -62,7 +62,7 @@ const CATALOG: Record<string, Entry> = {
   DEVICE_DISABLED: { body: t("这个资源已停用", "This is disabled.") },
   DEVICE_NOT_FOUND: { body: t("没有找到这个资源", "Not found.") },
   DEVICE_ACTION_UNSUPPORTED: { body: t("这里不支持此操作", "This cannot be done here.") },
-  BILLING_DISABLED: { body: t("店铺未启用计费", "This shop does not bill visits.") },
+  RESOURCE_NOT_BILLED: { body: t("这里不计费，无需确认", "This is free to use; there is nothing to confirm.") },
   LOCATION_REQUIRED: { title: t("需要定位", "Location needed"), body: t("此操作需要获取当前位置，请允许定位", "This needs your location. Please allow location access."), level: "warning", retry: true },
 
   // Expected in normal use: shown by the control the player touched.

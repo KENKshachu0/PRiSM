@@ -147,8 +147,8 @@ export function billingSetupStatements(
       ),
     db
       .prepare(
-        `INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,entry_pricing_ids_json,bot_contact)
-      VALUES (?,1,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET billing_enabled=1,auto_register=excluded.auto_register,
+        `INSERT INTO shop_billing_settings(shop_id,auto_register,entry_pricing_ids_json,bot_contact)
+      VALUES (?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,
       entry_pricing_ids_json=excluded.entry_pricing_ids_json,bot_contact=excluded.bot_contact`,
       )
       .bind(
@@ -257,7 +257,7 @@ shopsRouter.post("/", async (c) => {
     // the player; a shop that never had settings would otherwise refuse newcomers.
     statements.push(
       c.env.DB.prepare(
-        "INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required) VALUES (?,0,1,1)",
+        "INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required) VALUES (?,1,1)",
       ).bind(shopId),
     );
   }

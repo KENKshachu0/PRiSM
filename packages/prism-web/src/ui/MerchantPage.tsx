@@ -121,7 +121,6 @@ function Workspace({
   const navigate = useNavigate();
   const navRef = useScrollFade<HTMLElement>();
   const [state, setState] = useState<{
-    billingEnabled: boolean;
     cashierEnabled: boolean;
     timeZone: string;
     canWrite: boolean;
@@ -130,7 +129,7 @@ function Workspace({
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     const [info, me] = await Promise.all([
-      api<{ shop: { billingEnabled: boolean; cashierEnabled: boolean; timeZone: string } }>(
+      api<{ shop: { cashierEnabled: boolean; timeZone: string } }>(
         shopApi(shop.publicId),
       ),
       api<{ staff: StaffMeView }>(
@@ -157,17 +156,13 @@ function Workspace({
   const setup = useSetupStatus(shop.publicId, shop.id, !!state?.owner);
   if (!state || !setup.loaded) return <State error={error} />;
   // A bare shop URL opens where the owner has work left, otherwise on the
-  // screen used every day: who is in the shop, or the resources.
+  // screen used every day: who is in the shop.
   if (!requested)
     return (
       <Navigate
         replace
         to={`/merchant/${shop.publicId}/${
-          setup.status && !setup.status.complete
-            ? "guide"
-            : state.billingEnabled
-              ? "live"
-              : "resources"
+          setup.status && !setup.status.complete ? "guide" : "live"
         }`}
       />
     );
@@ -179,21 +174,12 @@ function Workspace({
     ...(state.owner && setup.status && (!setup.status.complete || section === "guide")
       ? [["guide", "开店指引"]]
       : []),
-    ...(state.billingEnabled
-      ? [
-          ["live", "在店"],
-          ["players", "玩家"],
-          ["resources", "资源"],
-          ["pricing", "计费"],
-          ["assets", "资产"],
-          ["reports", "记录"],
-        ]
-      : [["resources", "资源"]]),
-    ...(!state.billingEnabled &&
-    state.owner &&
-    ["pricing", "assets"].includes(section)
-      ? [[section, section === "pricing" ? "计费" : "资产"]]
-      : []),
+    ["live", "在店"],
+    ["players", "玩家"],
+    ["resources", "资源"],
+    ["pricing", "计费"],
+    ["assets", "资产"],
+    ["reports", "记录"],
     ...(state.owner ? [["settings", "设置"]] : []),
   ];
   return (
@@ -204,7 +190,6 @@ function Workspace({
         canWrite: state.canWrite,
         owner: state.owner,
         timeZone: state.timeZone,
-        billingEnabled: state.billingEnabled,
         cashierEnabled: state.cashierEnabled,
       }}
     >
@@ -262,17 +247,17 @@ function Workspace({
           </SetupContext.Provider>
         ) : section === "resources" ? (
           <ResourcesPage />
-        ) : state.billingEnabled && section === "cashier" ? (
+        ) : section === "cashier" ? (
           <CashierRedirect shopCode={shop.publicId} />
-        ) : state.billingEnabled && section === "live" ? (
+        ) : section === "live" ? (
           <PlayerWorkspace live />
-        ) : state.billingEnabled && section === "players" ? (
+        ) : section === "players" ? (
           <PlayerWorkspace />
-        ) : (state.billingEnabled || state.owner) && section === "pricing" ? (
+        ) : section === "pricing" ? (
           <PricingPage />
-        ) : (state.billingEnabled || state.owner) && section === "assets" ? (
+        ) : section === "assets" ? (
           <AssetsPage />
-        ) : state.billingEnabled && section === "reports" ? (
+        ) : section === "reports" ? (
           <ReportsPage />
         ) : section === "settings" && state.owner ? (
           <div className="mx-auto w-full max-w-5xl">
@@ -332,7 +317,7 @@ const operatingModes: [OperatingMode, string, string][] = [
   [
     "devices",
     "不使用计费",
-    "只用 PRiSM 的设备功能：扫码或碰 NFC 开机、刷卡、投币、开门。收费在你自己的其它经营平台完成。",
+    "只用 PRiSM 的设备功能：扫码或碰 NFC 开机、刷卡、投币、开门。收费在你自己的其它经营平台完成。以后给哪个资源组设置计费方案，哪里就开始计费。",
   ],
 ];
 function ShopWizard({ done }: { done: (shop: Shop) => Promise<void> }) {

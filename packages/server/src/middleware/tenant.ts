@@ -312,9 +312,7 @@ export function createShopDependencies(input: {
     env: input.env ?? ({ DB: input.db, URL_ENCRYPTION_KEY: input.encryptionKey } as Env),
     shopId,
     sessions: repos.sessions,
-    ...(input.shop.billing_enabled
-      ? { resourcePlanSession: (target: { resourceId: string; playerId: string }) => resourceBilling.activeSession(target) }
-      : {}),
+    resourceAdmits: (target) => resourceBilling.admits(target),
     deviceEvents: repos.deviceEvents,
     playerIdentities: repos.playerIdentities,
     coinCooldownMs: () => coinCooldownMs(input.db, shopId),
@@ -733,7 +731,6 @@ export async function loadTenantShop(
 ): Promise<TenantShop | null> {
   return c.env.DB.prepare(
     `SELECT s.id, s.public_id, s.name, s.latitude, s.longitude, s.radius_meters,
-      COALESCE(b.billing_enabled, 0) AS billing_enabled,
       COALESCE(b.auto_register, 0) AS auto_register,
       COALESCE(b.identity_binding_required, 1) AS identity_binding_required,
       COALESCE((SELECT json_extract(value_json, '$.enabled') FROM app_settings WHERE shop_id = s.id AND key = 'cashier.settings'), 0) AS cashier_enabled,

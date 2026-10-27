@@ -9,6 +9,7 @@ import { withOperationLease } from "@prism/application";
 import { requireUser } from "../../../middleware/auth.js";
 import { getBillingShop, staffPrincipal, type BillingShop } from "./compat.js";
 import { sha256 } from "../../../crypto.js";
+import { freeShopStatements } from "../../../resources/billed-sql.js";
 import { jsonError } from "../../../http.js";
 import { enforceRateLimits } from "./compat.js";
 import type { AppBindings } from "./compat.js";
@@ -103,7 +104,7 @@ async function exportBackup(c: C, shop: BillingShop, scope: ShopBackup["scope"])
       location: { latitude: shop.latitude, longitude: shop.longitude, radiusMeters: shop.radius_meters } },
     storage: { timeZone: "UTC", money: "minor-units" },
     settings: {
-      billingEnabled: flag("billing_enabled", false), cashierEnabled: !!settings.get("cashier.settings")?.enabled,
+      cashierEnabled: !!settings.get("cashier.settings")?.enabled,
       autoRegister: flag("auto_register", false), identityBindingRequired: flag("identity_binding_required", true),
       checkinGeo: flag("checkin_geo", false), checkoutGeo: flag("checkout_geo", false), machineGeo: flag("machine_geo", false),
       entryPricingIds: billing ? JSON.parse(String(billing.entry_pricing_ids_json)) : [], botContact: String(billing?.bot_contact ?? ""),
@@ -186,11 +187,12 @@ export function registerShopDataRoutes(app: Hono<AppBindings>) {
       }
       statements.push(...triggers.map(trigger => (c.env.DB as LegacyD1Database).prepare(trigger.sql)));
       const s = backup.settings;
-      statements.push((c.env.DB as LegacyD1Database).prepare(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,checkin_geo,checkout_geo,machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)
-        VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET billing_enabled=excluded.billing_enabled,auto_register=excluded.auto_register,
+      statements.push((c.env.DB as LegacyD1Database).prepare(`INSERT INTO shop_billing_settings(shop_id,auto_register,checkin_geo,checkout_geo,machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)
+        VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,
         checkin_geo=excluded.checkin_geo,checkout_geo=excluded.checkout_geo,machine_geo=excluded.machine_geo,entry_pricing_ids_json=excluded.entry_pricing_ids_json,
         bot_contact=excluded.bot_contact,identity_binding_required=excluded.identity_binding_required`)
-        .bind(shop.id, +s.billingEnabled, +s.autoRegister, +s.checkinGeo, +s.checkoutGeo, +s.machineGeo, JSON.stringify(s.entryPricingIds), s.botContact, +s.identityBindingRequired));
+        .bind(shop.id, +s.autoRegister, +s.checkinGeo, +s.checkoutGeo, +s.machineGeo, JSON.stringify(s.entryPricingIds), s.botContact, +s.identityBindingRequired));
+      if (s.billingEnabled === false) statements.push(...freeShopStatements(c.env.DB as LegacyD1Database, shop.id));
       for (const [key, value] of [
         ["venue.operations", { timeZone: "UTC", coinCooldownMs: s.coinCooldownMs }],
         ["player.registration", { defaultPresentId: s.defaultPresentId }], ["cashier.settings", { enabled: s.cashierEnabled }],

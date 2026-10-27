@@ -5,6 +5,8 @@
  * sessions as settled) so both entry points produce the same records.
  */
 
+import { migrateCurrentPricingRules, type PriorityTimePricingRule } from "@prism/core";
+
 type NeoSnapshot = {
   exportedAt?: string;
   users?: NeoUser[];
@@ -179,7 +181,6 @@ export type PrismNeoBackup = {
   source: { publicId: string; name: string; timeZone: string };
   storage: { timeZone: "UTC"; money: "minor-units" };
   settings: {
-    billingEnabled: false;
     cashierEnabled: false;
     autoRegister: boolean;
     identityBindingRequired: boolean;
@@ -292,6 +293,9 @@ export function convertPrismNeoSnapshot(
   const versionId = "legacy:pricing-version:time-priority";
   const releaseId = "legacy:pricing-release:time-priority";
   const neoRules = snapshot.billingRules ?? [];
+  // prism-neo billed every visit by its time rules against paid/free wallets,
+  // so a snapshot with rules bills its default resource group by them.
+  const billing = neoRules.length > 0;
 
   // The importer cross-checks the file's table keys against the full v3 list
   // and rejects any missing key, so every table ships even when empty.
@@ -386,7 +390,7 @@ export function convertPrismNeoSnapshot(
       metadata_json: JSON.stringify(metadata),
     });
   }
-  const synthesizeDefinition = (type: string, assetId: number | string) => {
+  const synthesizeDefinition = (type: string, assetId: number | string, name = `Legacy ${type} ${assetId}`) => {
     const key = `${type}:${Number(assetId)}`;
     if (definitionKeys.has(key)) return;
     definitionKeys.add(key);
@@ -394,7 +398,7 @@ export function convertPrismNeoSnapshot(
     tables.asset_definitions.push({
       type: mapped.type,
       code: mapped.code,
-      name: `Legacy ${type} ${assetId}`,
+      name,
       stackable: 1,
       status: "active",
       pricing_effect_id: null,
@@ -404,6 +408,11 @@ export function convertPrismNeoSnapshot(
     });
   };
 
+  // Billing needs both balance currencies, even when no one held one yet.
+  if (billing) {
+    synthesizeDefinition("CURRENCY", 10001, "余额");
+    synthesizeDefinition("CURRENCY", 10002, "赠送余额");
+  }
   for (const asset of snapshot.userAssets ?? []) {
     synthesizeDefinition(asset.assetType, asset.assetDefId);
     const mapped = mapLegacyAsset(asset.assetType, asset.assetDefId);
@@ -456,18 +465,16 @@ export function convertPrismNeoSnapshot(
     });
   }
 
-  // A v3 business import restores releases verbatim, so ship one disabled
-  // release pinning every unpaid session; the legacy rules stay dormant until
-  // the owner reviews their time zones in the pricing editor.
-  if (neoRules.length) {
-    const provider = {
-      id: "legacy.time-priority",
-      timeZone: "UTC",
-      rules: neoRules.map((rule) => {
-        const matchDate = parseLegacyJson(rule.matchDate) as NeoBillingRule["matchDate"];
-        const timeRange = parseLegacyJson(rule.timeRange) as NeoBillingRule["timeRange"];
-        const pricing = parseLegacyJson(rule.pricing) as NeoBillingRule["pricing"];
-        return {
+  // A v3 business import restores releases verbatim, so ship one enabled
+  // release pinning every unpaid session. neo rule clocks ("20:00"-"04:00")
+  // are the shop's wall clock; providers are UTC by platform contract, so
+  // they are moved out of the shop zone like the UTC pricing migration does.
+  if (billing) {
+    const localRules = neoRules.map((rule) => {
+      const matchDate = parseLegacyJson(rule.matchDate) as NeoBillingRule["matchDate"];
+      const timeRange = parseLegacyJson(rule.timeRange) as NeoBillingRule["timeRange"];
+      const pricing = parseLegacyJson(rule.pricing) as NeoBillingRule["pricing"];
+      return {
         id: `legacy.rule.${rule.id}`,
         label: rule.name,
         priority: parseLegacyNumber(rule.priority),
@@ -489,15 +496,24 @@ export function convertPrismNeoSnapshot(
           priceCap: cents(parseLegacyNumber(pricing.priceCap)),
           roundGraceMinutes: parseLegacyNumber(pricing.roundGraceMinutes),
         },
-        };
-      }),
+      };
+    });
+    const provider = {
+      id: "legacy.time-priority",
+      timeZone: "UTC",
+      // dateTimeRange stays ISO text here; the migration only moves clocks.
+      rules: migrateCurrentPricingRules(
+        localRules as unknown as PriorityTimePricingRule[],
+        timeZone,
+        new Date(exportedAt),
+      ),
     };
     const providerJson = JSON.stringify(provider);
     tables.pricing_configs.push({
       id: configId,
       kind: "time.priority",
       name: "Legacy time priority pricing",
-      enabled: 0,
+      enabled: 1,
       status: "active",
       provider_json: providerJson,
       created_at: exportedAt,
@@ -509,7 +525,7 @@ export function convertPrismNeoSnapshot(
       version: 1,
       kind: "time.priority",
       name: "Legacy time priority pricing",
-      enabled: 0,
+      enabled: 1,
       status: "active",
       provider_json: providerJson,
       created_at: exportedAt,
@@ -519,7 +535,7 @@ export function convertPrismNeoSnapshot(
       id: releaseId,
       version_ids_json: JSON.stringify([versionId]),
       // Release zones are UTC by platform contract (the deployment check
-      // rejects anything else); the legacy clocks were stored as UTC above.
+      // rejects anything else); the rule clocks were moved to UTC above.
       time_zone: "UTC",
       created_at: exportedAt,
     });
@@ -734,14 +750,13 @@ export function convertPrismNeoSnapshot(
     source: { publicId: "prism-neo", name: options.shopName || "prism-neo", timeZone },
     storage: { timeZone: "UTC", money: "minor-units" },
     settings: {
-      billingEnabled: false,
       cashierEnabled: false,
       autoRegister: true,
       identityBindingRequired: false,
       checkinGeo: false,
       checkoutGeo: false,
       machineGeo: false,
-      entryPricingIds: neoRules.length ? [configId] : [],
+      entryPricingIds: billing ? [configId] : [],
       botContact: "",
       coinCooldownMs: 60_000,
       defaultPresentId: null,

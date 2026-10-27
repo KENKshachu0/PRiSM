@@ -96,12 +96,13 @@ billingCompatRouter.post("/billing/setup", async (c) => {
         return Response.json(result.body, { status: result.status });
       }
       const current = await c.env.DB.prepare(
-        `SELECT COALESCE(b.billing_enabled,0) AS billing_enabled,
+        `SELECT COALESCE(b.entry_pricing_ids_json,'[]') AS entry_pricing_ids_json,
         COALESCE(b.auto_register,0) AS auto_register, COALESCE(b.bot_contact,'') AS bot_contact
         FROM shops s LEFT JOIN shop_billing_settings b ON b.shop_id=s.id WHERE s.id=?`,
-      ).bind(shop.id).first<{ billing_enabled: number; auto_register: number; bot_contact: string }>();
+      ).bind(shop.id).first<{ entry_pricing_ids_json: string; auto_register: number; bot_contact: string }>();
       if (!current) jsonError(404, "店铺不存在", "SHOP_NOT_FOUND");
-      if (current.billing_enabled) jsonError(409, "店铺已启用计费，请在计费页面调整规则", "BILLING_ALREADY_ENABLED");
+      // Quick setup names the default plan; a shop that has one adjusts it on the pricing page.
+      if (current.entry_pricing_ids_json !== "[]") jsonError(409, "已设置默认计费方案，请在计费页面调整规则", "BILLING_ALREADY_ENABLED");
       const archived = await c.env.DB.prepare(
         "SELECT 1 FROM asset_definitions WHERE shop_id=? AND type='currency' AND code IN ('paid','free') AND status='archived' LIMIT 1",
       ).bind(shop.id).first();
@@ -110,7 +111,7 @@ billingCompatRouter.post("/billing/setup", async (c) => {
         ...body, autoRegister: !!current.auto_register, botContact: current.bot_contact,
       });
       const result = {
-        ...publicSettings(shop), billingEnabled: true, cashierEnabled: body.cashierEnabled,
+        ...publicSettings(shop), cashierEnabled: body.cashierEnabled,
         entryPricingIds: [setup.ruleId], pricingConfigId: setup.ruleId,
         billingConfiguration: { ready: true, balanceAssetsReady: true, entryPricingReady: true, invalidEntryPricingIds: [] },
       };

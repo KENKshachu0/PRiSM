@@ -53,8 +53,8 @@ type C=Context<AppBindings,any,any>;
 /**
  * What the page needs before it can show anything: whether the player must
  * bind an identity or confirm billing first, mahjong seats, and the device's
- * stored facts. In a shop that bills, every resource, hardware or not, needs
- * its plan running for the player; `billing` then says what confirming would
+ * stored facts. Every resource with a plan, hardware or not, needs that plan
+ * running for the player; `billing` then says what confirming would
  * start, keep and end. Reading this never starts anything. The facts are only
  * what is already known (`device.watching` says whether they are current);
  * nothing here asks Home Assistant. `includePower` and `includeClimate` keep the
@@ -79,7 +79,10 @@ async function sessionState(c:C,machine:ScannedResource,options:{includePower:bo
       return undefined;
     }
   };
-  if(shop.billing_enabled||bound("door")||bound("mahjong")){
+  // Undefined when the resource's binding cannot be read; `billing.error` says why.
+  const planId=await billingRead(()=>resourceBilling.planOf(machine.id));
+  const bills=planId!==null;
+  if(bills||bound("door")||bound("mahjong")){
     const player=await c.env.DB.prepare(
       `SELECT a.player_id AS playerId,p.status,
        EXISTS(SELECT 1 FROM shop_platform_bindings b WHERE b.shop_id=? AND b.user_id=?) AS identityBound
@@ -88,14 +91,14 @@ async function sessionState(c:C,machine:ScannedResource,options:{includePower:bo
        LEFT JOIN players p ON p.shop_id=a.shop_id AND p.id=a.player_id`,
     ).bind(shop.id,user.id,shop.id,user.id).first<{playerId:string|null;status:string|null;identityBound:number}>();
     if(shop.identity_binding_required&&!player?.identityBound)gate="binding";
-    else if(!player?.playerId)gate=shop.billing_enabled?"entry":"ready";
+    else if(!player?.playerId)gate=bills?"entry":"ready";
     else if(player.status!=="active")jsonError(403,"店铺玩家资格已停用","PLAYER_DISABLED");
-    else if(shop.billing_enabled){
+    else if(bills){
       const running=await billingRead(()=>resourceBilling.activeSession({resourceId:machine.id,playerId:player.playerId!}));
       // A seat here is billed for already, by the plan the seat runs on.
       if(!running&&!await createOccupancy({db:c.env.DB,shopId:shop.id}).holds(machine.id,player.playerId))gate="entry";
     }
-    if(gate==="entry"&&shop.billing_enabled&&!billing){
+    if(gate==="entry"&&bills&&!billing){
       // A player not yet registered here has nothing running, so the preview is
       // simply everything the plan needs.
       const preview=await billingRead(()=>resourceBilling.preview({resourceId:machine.id,playerId:player?.playerId??""}));
@@ -103,7 +106,7 @@ async function sessionState(c:C,machine:ScannedResource,options:{includePower:bo
     }
     // What the page shows as this resource's pricing: its own plan and every
     // plan that bills with it, as the player's locked release defines them.
-    if(shop.billing_enabled&&gate!=="binding"&&!billing?.error){
+    if(planId&&gate!=="binding"&&!billing?.error){
       // Caps only matter where the rules are read before confirming.
       const rules=await billingRead(()=>resourceBilling.rulesOf({resourceId:machine.id,playerId:player?.playerId??"",withCaps:gate==="entry"}));
       if(rules)billing={...billing,rules:{
@@ -185,7 +188,7 @@ resourceSessionRouter.post("/session/cards/capture",async c=>{
   if(!io||io.transport!=="embedded"||!io.channel)jsonError(409,"这台机器不能添加卡片","CARD_CAPTURE_UNSUPPORTED");
   const relay=machineRelayNamespace(c.env);
   if(!relay||!c.env.URL_ENCRYPTION_KEY)jsonError(503,"添加卡片服务尚未配置","CARD_CAPTURE_UNAVAILABLE");
-  const player=await requireShopPlayer(c,shop,true);
+  const player=await requireShopPlayer(c,shop);
   const id=crypto.randomUUID(),expiresAt=Date.now()+CARD_CAPTURE_MS;
   const started=await relay.getByName(io.channel).startCardCapture({id,shopId:shop.id,userId:user.id,playerId:player.id,expiresAt});
   if(!started.ok)jsonError(409,"机台未在线，请联系店员","DEVICE_UNAVAILABLE");

@@ -228,13 +228,13 @@ export function ResourceControls({
   }, [code, state?.gate, failed]);
   useEffect(() => {
     let cancelled = false;
-    if (info?.shop.billingEnabled && info.membership) {
+    if (info?.membership) {
       api<Summary>(shopApi(code, "player/me")).then((current) => {
         if (!cancelled) setBillingActive(code, !!current.activeSession);
       }).catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [code, state?.gate, info?.shop.billingEnabled, info?.membership?.playerId, setBillingActive]);
+  }, [code, state?.gate, info?.membership?.playerId, setBillingActive]);
   /**
    * Runs a player action. The page is read again afterwards in the background, so the
    * controls come back as soon as the action answers; only entry and mahjong seats, which
@@ -351,7 +351,7 @@ export function ResourceControls({
   const billingError = state?.billing?.error ?? null;
   const rules = state?.billing?.rules ?? null;
   // A resource without hardware still has to be confirmed before it bills.
-  if (!Object.values(cap).some(Boolean) && !machine.shop.billingEnabled) return <p className="session-subtitle text-center">{t("这里没有可操作的设备")}</p>;
+  if (!Object.values(cap).some(Boolean) && !machine.billed) return <p className="session-subtitle text-center">{t("这里没有可操作的设备")}</p>;
   const powerBlocked = cap.power && power === "off";
   const hasReadyAction = cap.door || cap.climate || powerBlocked
     || (!powerBlocked && (cap.card || (cap.coin && !machine.coinAfterSwipe)

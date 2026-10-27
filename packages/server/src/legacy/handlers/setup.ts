@@ -59,7 +59,6 @@ legacySetupRouter.post("/install", async (c) => {
       latitude: 0,
       longitude: 0,
       radius_meters: 80,
-      billing_enabled: 0,
       auto_register: 0,
       identity_binding_required: 1,
       cashier_enabled: 0,

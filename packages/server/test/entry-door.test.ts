@@ -24,9 +24,17 @@ async function fixture() {
   sqlite.run(
     "INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop-id','shop-code','Arcade',0,0,80,'player-one')",
   );
+  // The door bills through the shop's default plan, which its default group uses.
   sqlite.run(
-    `INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required)
-     VALUES ('shop-id',1,1,0)`,
+    `INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required,entry_pricing_ids_json)
+     VALUES ('shop-id',1,0,'["entry"]')`,
+  );
+  sqlite.run("INSERT INTO asset_definitions(shop_id,type,code,name,stackable,status) VALUES ('shop-id','currency','paid','余额',1,'active')");
+  sqlite.run(
+    `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)
+     VALUES ('shop-id','entry','time.priority','入场',1,'active',?,?,?)`,
+    [JSON.stringify({ id: "entry", timeZone: "UTC", rules: [{ id: "all-day", label: "全天", priority: 0,
+      timeRange: { start: "00:00", end: "00:00" }, pricing: { unitMinutes: 60, unitPrice: 100, roundGraceMinutes: 0, priceCap: 100000 } }] }), now, now],
   );
   sqlite.run("INSERT INTO machines(id,public_id,shop_id,name,hinata_url_encrypted) VALUES ('door-id','front','shop-id','Door','')");
   sqlite.run(
