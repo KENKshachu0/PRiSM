@@ -37,8 +37,11 @@ async function fixture_() {
     [await sha256(OWNER), new Date(Date.now() + 86_400_000).toISOString()]);
   sqlite.run("INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop','shop-code','Arcade',0,0,80,'owner-user')");
   sqlite.run("INSERT INTO shop_members(id,shop_id,user_id,role) VALUES ('m1','shop','owner-user','owner')");
-  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required,entry_pricing_ids_json)
-    VALUES ('shop',1,1,0,'["base"]')`);
+  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required)
+    VALUES ('shop',1,0)`);
+  // Every resource without a group of its own bills through the default group.
+  sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('shop','default','默认资源组',1,'base',?,?)", [NOW, NOW]);
+  sqlite.run("INSERT INTO asset_definitions(shop_id,type,code,name,stackable,status) VALUES ('shop','currency','paid','余额',1,'active')");
   plan(sqlite, "base");
   plan(sqlite, "rhythm", { requires: ["base"] });
   plan(sqlite, "night", { conflicts: ["base"] });
@@ -118,6 +121,21 @@ describe("one way to start a plan", () => {
       .toMatchObject({ created: true, planName: "night", billing: { started: ["night"] } });
     await call("PATCH", "/api/v1/merchant/resource-groups/rhythm-zone", OWNER, { shopId: "shop", enabled: false });
     expect((await rhythmBot.post("players/by-identity/session/start", bob)).body.error.code).toBe("RESOURCE_GROUP_DISABLED");
+  });
+
+  it("tells each bot whether entering through it bills, by its own resource group", async () => {
+    const { call, bot, rhythmBot, sqlite } = await fixture_();
+    const flag = async (target: typeof bot) => (await target.get("bot")).body.billingEnabled;
+    expect(await flag(bot)).toBe(true);
+    expect(await flag(rhythmBot)).toBe(true);
+    // The default group turns free: its bot no longer bills, the other group's still does.
+    sqlite.run("UPDATE resource_groups SET default_pricing_config_id=NULL WHERE id='default'");
+    expect(await flag(bot)).toBe(false);
+    expect(await flag(rhythmBot)).toBe(true);
+    expect((await bot.post("players/by-identity/session/start", alice)).body.error.code).toBe("RESOURCE_NOT_BILLED");
+    // Its own plan bills even in a free group.
+    await call("PATCH", `/api/v1/merchant/machines/${bot.id}`, OWNER, { shopId: "shop", pricingConfigOverrideId: "night" });
+    expect(await flag(bot)).toBe(true);
   });
 
   it("lets staff preview what a plan stops, and refuses a start previewed against another state", async () => {

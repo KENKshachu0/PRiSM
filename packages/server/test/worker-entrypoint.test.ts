@@ -216,7 +216,13 @@ function createTestEnvironment(): {
     CREATE TABLE IF NOT EXISTS machines (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
-      name TEXT NOT NULL, capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15
+      name TEXT NOT NULL, capacity INTEGER NOT NULL DEFAULT 0, occupancy_minutes INTEGER NOT NULL DEFAULT 15,
+      resource_group_id TEXT, pricing_config_override_id TEXT
+    );
+    CREATE TABLE IF NOT EXISTS resource_groups (
+      shop_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+      default_pricing_config_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY(shop_id, id)
     );
     CREATE TABLE IF NOT EXISTS players (
       id TEXT PRIMARY KEY,
@@ -454,11 +460,10 @@ describe("Worker Entrypoint & Root Application Suite", () => {
       );
       expect(overviewRes.status).toBe(200);
       const overviewData = (await overviewRes.json()) as {
-        data: { shop: { publicId: string; name: string; billingEnabled: boolean } };
+        data: { shop: { publicId: string; name: string } };
       };
       expect(overviewData.data.shop.publicId).toBe(publicId);
       expect(overviewData.data.shop.name).toBe("Wonder Arcade");
-      expect(overviewData.data.shop.billingEnabled).toBe(true);
 
       // Access tenant pricing as shop owner
       const pricingRes = await testApp.request(

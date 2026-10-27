@@ -37,6 +37,7 @@ import { Modal, button, buttonQuiet, primary, useMerchant } from "./shared";
 import {
   identityPolicySettings,
   setupStatus,
+  shopBills,
   type IdentityPolicy,
   type OperatingMode,
   type SetupStatus,
@@ -67,11 +68,14 @@ async function readerAuthorized(): Promise<boolean | null> {
 
 async function loadStatus(shopCode: string, shopId: string) {
   const optional = <T,>(request: Promise<T>) => request.catch(() => null);
-  const settings = await api<Settings>(shopApi(shopCode, "settings"));
-  const billing = settings.billingEnabled;
-  const [machines, staffSettings, tokens, players, members, presents, codes, reader] =
+  const [settings, machines, groups] = await Promise.all([
+    api<Settings>(shopApi(shopCode, "settings")),
+    Api.machines(shopId).then((r) => r.machines),
+    Api.resourceGroups(shopId).then((r) => r.resourceGroups).catch(() => []),
+  ]);
+  const billing = shopBills(groups, machines);
+  const [staffSettings, tokens, players, members, presents, codes, reader] =
     await Promise.all([
-      Api.machines(shopId).then((r) => r.machines),
       optional(
         api<{
           settings: {
@@ -102,6 +106,7 @@ async function loadStatus(shopCode: string, shopId: string) {
   const now = Date.now();
   return setupStatus({
     settings,
+    billing,
     machines,
     tokens: tokens?.apiTokens ?? [],
     ttLock: staffSettings?.settings.ttLockConnection ?? null,
@@ -166,7 +171,7 @@ export const SetupContext = createContext<{
 const modeNames: Record<OperatingMode, [string, string]> = {
   self: ["自助计费（无前台）", "玩家在手机上入场计时、离店自助结账，从预存余额扣款。"],
   desk: ["前台收银", "玩家在前台刷实体卡入场，离店时在前台现场付款；带手机的玩家也可以自助。"],
-  devices: ["不使用计费", "只用 PRiSM 的设备功能，收费在你自己的其它经营平台完成。"],
+  devices: ["不使用计费", "还没有资源组或资源设置计费方案：PRiSM 只运行设备，收费在你自己的其它经营平台完成。"],
 };
 
 export function ShopGuide() {
@@ -291,7 +296,7 @@ function PlayerJourney({ mode, identity }: { mode: OperatingMode; identity: bool
     mode === "desk"
       ? [
           [CreditCard, "前台刷卡", "第一次来由店员登记一个昵称，之后刷卡就能认出。"],
-          [Receipt, "店员点入场", "按默认计费方案开始计时。"],
+          [Receipt, "店员点入场", "按前台资源所在资源组的方案开始计时。"],
           [Gamepad2, "游玩", "计时进行中，店员可以在「在店」页随时看账单。"],
           [Wallet, "回前台付款", "店员按屏幕金额收微信、支付宝或现金，确认收款后结账。"],
         ]
@@ -451,17 +456,14 @@ function StepCard({
     id === "pricing"
       ? {
           title: "设定收费标准",
-          why: "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的默认方案，再加上它依赖的方案。",
+          why: "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的方案，再加上它依赖的方案。",
           warn:
             status.pricingProblem === "assets"
               ? "缺少可用的余额资产，玩家无法结账。"
-              : status.pricingProblem === "entry"
-                ? "默认资源组还没有可用的默认计费方案，玩家无法开始计费。"
-                : undefined,
+              : undefined,
           actions: (
             <>
               {status.pricingProblem === "assets" && go(`${base}/assets`, "恢复余额资产")}
-              {status.pricingProblem === "entry" && go(`${base}/resources`, "设置默认计费方案")}
               {go(`${base}/pricing`, "查看计费规则", true)}
             </>
           ),

@@ -18,14 +18,12 @@ export function normalizeShop(shopRow: TenantShop): TenantShop {
 }
 
 const SHOP_QUERY = `SELECT s.id, s.public_id, s.name, s.latitude, s.longitude, s.radius_meters,
-  COALESCE(b.billing_enabled, 0) AS billing_enabled,
   COALESCE(b.auto_register, 0) AS auto_register,
   COALESCE(b.identity_binding_required, 1) AS identity_binding_required,
   COALESCE((SELECT json_extract(value_json, '$.enabled') FROM app_settings WHERE shop_id = s.id AND key = 'cashier.settings'), 0) AS cashier_enabled,
   COALESCE(b.checkin_geo, 0) AS checkin_geo,
   COALESCE(b.checkout_geo, 0) AS checkout_geo,
   COALESCE(b.machine_geo, 0) AS machine_geo,
-  COALESCE(b.entry_pricing_ids_json, '[]') AS entry_pricing_ids_json,
   COALESCE(b.bot_contact, '') AS bot_contact,
   CASE WHEN s.hero_data IS NULL OR s.hero_data = '' THEN NULL ELSE '/api/v1/shops/' || s.public_id || '/hero?v=' || COALESCE(s.hero_hash, 'original') END AS hero_url,
   COALESCE((SELECT json_extract(value_json, '$.timeZone') FROM app_settings WHERE shop_id = s.id AND key = 'store.profile'), 'Asia/Shanghai') AS time_zone

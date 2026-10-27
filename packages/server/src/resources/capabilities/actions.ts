@@ -18,7 +18,6 @@ import {
   type DeviceEventActor,
   type DeviceEventRepository,
   type PlayerIdentityRepository,
-  type Session,
   type SessionRepository,
 } from "@prism/core";
 import type { Env } from "../../bindings.js";
@@ -33,10 +32,10 @@ export type DeviceActionDependencies = {
   shopId: string;
   sessions: SessionRepository;
   /**
-   * In a shop that bills, the running session of a resource's plan for a
-   * player, or null. A player may only use a resource whose plan is running.
+   * Whether a player may use a resource now: it is free, or its plan runs for
+   * them. Without it, any running session admits the player.
    */
-  resourcePlanSession?(input: { resourceId: string; playerId: string }): Promise<Session | null>;
+  resourceAdmits?(input: { resourceId: string; playerId: string }): Promise<boolean>;
   deviceEvents: DeviceEventRepository;
   playerIdentities: PlayerIdentityRepository;
   coinCooldownMs: () => Promise<number>;
@@ -116,8 +115,8 @@ export function createDeviceActionService(deps: DeviceActionDependencies): Devic
       const targets = resolveTargets(devices, input, action);
 
       if (playerId && spec.requiresBilling) {
-        const running = deps.resourcePlanSession
-          ? (await Promise.all(targets.map((target) => deps.resourcePlanSession!({ resourceId: target.device.id, playerId })))).every(Boolean)
+        const running = deps.resourceAdmits
+          ? (await Promise.all(targets.map((target) => deps.resourceAdmits!({ resourceId: target.device.id, playerId })))).every(Boolean)
           : (await deps.sessions.findActiveByPlayerId(playerId)).some((session) => session.status === "active");
         if (!running) {
           throw new PrismDomainError(

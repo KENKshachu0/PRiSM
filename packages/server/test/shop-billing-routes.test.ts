@@ -185,12 +185,12 @@ function createTestContext(): { db: D1DatabaseLike; sqlite: Database; env: Env }
     CREATE TABLE IF NOT EXISTS resource_groups (
       shop_id TEXT NOT NULL,
       id TEXT NOT NULL,
-      name TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
       enabled INTEGER NOT NULL DEFAULT 1,
       default_pricing_config_id TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(shop_id, id)
+      created_at TEXT,
+      updated_at TEXT,
+      PRIMARY KEY (shop_id, id)
     );
   `);
 
@@ -259,8 +259,10 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       "UPDATE shop_billing_settings SET identity_binding_required = 0, checkin_geo = 0, checkout_geo = 0, machine_geo = 0 WHERE shop_id = ?",
       [shopId],
     );
+    // The front desk is a resource in the default group: its check-ins bill the setup's plan.
+    sqlite.run("INSERT INTO machines(shop_id,id,public_id,name,kind,enabled) VALUES (?,'front-desk','front-desk','前台','machine',1)", [shopId]);
     sqlite.run(
-      "INSERT INTO app_settings (shop_id, key, value_json, updated_at) VALUES (?, 'cashier.settings', '{\"enabled\":true}', CURRENT_TIMESTAMP)",
+      "INSERT INTO app_settings (shop_id, key, value_json, updated_at) VALUES (?, 'cashier.settings', '{\"enabled\":true,\"resourceId\":\"front-desk\"}', CURRENT_TIMESTAMP)",
       [shopId],
     );
 
@@ -1451,9 +1453,9 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       const playerId = registeredBody.player.id;
       expect(registeredBody.player.displayName).toBe("Koishi Guest");
 
-      const [entryPlanId] = JSON.parse((sqlite.query(
-        "SELECT entry_pricing_ids_json AS ids FROM shop_billing_settings WHERE shop_id=?",
-      ).get(shopId) as { ids: string }).ids) as string[];
+      const entryPlanId = (sqlite.query(
+        "SELECT default_pricing_config_id AS id FROM resource_groups WHERE shop_id=? AND id='default'",
+      ).get(shopId) as { id: string }).id;
       // The table bills its own plan. It is published before the visit starts,
       // so it belongs to the release the visit is pinned to.
       sqlite.run(
@@ -1503,7 +1505,8 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         sessions: Array<{ id: string; playerId: string; label?: string; identities?: Array<{ provider: string; subject: string }> }>;
       };
       expect(activeBody.sessions).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: entryBody.session.id, playerId, label: "entry" }),
+        // Labelled by its plan: there is no default plan to call "entry".
+        expect.objectContaining({ id: entryBody.session.id, playerId, label: "标准入场" }),
         expect.objectContaining({ id: tableBody.session.id, playerId, label: "麻将 A 桌" }),
       ]));
       expect(activeBody.sessions.some(s => s.playerId === playerId
@@ -1639,7 +1642,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
     sqlite.close();
   });
 
-  it("lets a bot bind identities for a shop that does not bill through PRiSM", async () => {
+  it("lets a bot bind identities and read wallets for a shop where no resource bills", async () => {
     const { db, sqlite, env } = createTestContext();
     const { publicId, shopId, botToken } = await setupShopFixture(db, sqlite);
     const app = createTestApp();
@@ -1659,9 +1662,10 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
         method: "POST", headers, body: JSON.stringify({ code: code.code, provider: "onebot", subject: `qq-${user}` }),
       }), env);
     };
-    sqlite.run("UPDATE shop_billing_settings SET billing_enabled=0 WHERE shop_id=?", [shopId]);
+    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]' WHERE shop_id=?", [shopId]);
     clearShopDependenciesCache();
-    expect((await wallet()).status).toBe(409);
+    // There is no shop-wide billing switch to refuse it.
+    expect((await wallet()).status).toBe(200);
     expect((await bind("user_no_billing")).status).toBe(200);
     sqlite.close();
   });
@@ -1714,7 +1718,7 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
   });
 
   for (const invalid of ["pricing", "balance"] as const) {
-    it(`allows location edits with invalid existing ${invalid} while still validating billing changes`, async () => {
+    it(`allows settings edits with invalid existing ${invalid}, and requires a front-desk resource`, async () => {
       const { db, sqlite, env } = createTestContext();
       const { publicId, shopId, staffSessionToken } = await setupShopFixture(db, sqlite);
       const app = createTestApp();
@@ -1723,24 +1727,21 @@ describe("Direct Multi-Tenant Shop Billing Routes Suite", () => {
       if (invalid === "pricing") sqlite.run("UPDATE pricing_configs SET enabled=0 WHERE shop_id=?", [shopId]);
       else sqlite.run("UPDATE asset_definitions SET status='archived' WHERE shop_id=? AND type='currency'", [shopId]);
       const current = await (await app.fetch(new Request(url, { headers }), env)).json() as Record<string, unknown>;
+      // Settings no longer hold a plan: billing is set on resource groups.
+      expect(current).not.toHaveProperty("entryPricingIds");
+      expect(current).toMatchObject({ cashierResourceId: "front-desk", billingConfiguration: { ready: invalid === "pricing" } });
       const save = (patch: Record<string, unknown>) => app.fetch(new Request(url, {
         method: "PUT", headers, body: JSON.stringify({ ...current, ...patch }),
       }), env);
       const location = await save({ locationEnabled: false });
       expect(location.status).toBe(200);
-      expect(await location.json()).toMatchObject({ locationEnabled: false, billingEnabled: true, billingConfiguration: { ready: false } });
-      const changed = await save({ entryPricingIds: ["missing-rule"] });
-      expect(changed.status).toBe(409);
-      expect(await changed.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
-      expect((await save({ billingEnabled: false, cashierEnabled: false })).status).toBe(200);
-      const enable = await save({ billingEnabled: true });
-      expect(enable.status).toBe(409);
-      expect(await enable.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
-      // Re-enabling cashier also requires a valid billing configuration.
-      sqlite.run("UPDATE shop_billing_settings SET billing_enabled=1 WHERE shop_id=?", [shopId]);
-      const cashier = await save({ cashierEnabled: true });
-      expect(cashier.status).toBe(409);
-      expect(await cashier.json()).toMatchObject({ error: { code: "BILLING_CONFIGURATION_REQUIRED" } });
+      expect(await location.json()).not.toHaveProperty("billingEnabled");
+      // The front desk bills through a resource, so it cannot be on without one.
+      const noDesk = await save({ cashierResourceId: null });
+      expect(noDesk.status).toBe(409);
+      expect(await noDesk.json()).toMatchObject({ error: { code: "CASHIER_RESOURCE_REQUIRED" } });
+      expect((await save({ cashierResourceId: "missing" })).status).toBe(404);
+      expect((await save({ cashierEnabled: false, cashierResourceId: null })).status).toBe(200);
       sqlite.close();
     });
   }

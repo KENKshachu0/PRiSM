@@ -6,6 +6,7 @@ import {
   identityPolicySettings,
   operatingMode,
   setupStatus,
+  shopBills,
   type SetupSignals,
 } from "./setup-guide";
 
@@ -29,10 +30,9 @@ const machine = (over: Partial<Resource> = {}): Resource => ({
   ...over,
 });
 
-const ready = { ready: true, balanceAssetsReady: true, entryPricingReady: true, invalidEntryPricingIds: [] };
+const ready = { ready: true, balanceAssetsReady: true };
 
 const settings = (over: Partial<Settings> = {}): Settings => ({
-  billingEnabled: false,
   cashierEnabled: false,
   autoRegister: true,
   identityBindingRequired: true,
@@ -40,13 +40,13 @@ const settings = (over: Partial<Settings> = {}): Settings => ({
   checkinGeo: false,
   checkoutGeo: false,
   machineGeo: false,
-  entryPricingIds: [],
   botContact: "",
   ...over,
 });
 
 const signals = (over: Partial<SetupSignals> = {}): SetupSignals => ({
   settings: settings(),
+  billing: false,
   machines: [],
   tokens: [],
   ttLock: null,
@@ -72,9 +72,9 @@ describe("setup guide", () => {
   });
 
   it("reads the operating mode from billing and the front desk", () => {
-    expect(operatingMode(settings())).toBe("devices");
-    expect(operatingMode(settings({ billingEnabled: true }))).toBe("self");
-    expect(operatingMode(settings({ billingEnabled: true, cashierEnabled: true }))).toBe("desk");
+    expect(operatingMode({ billing: false, cashierEnabled: false })).toBe("devices");
+    expect(operatingMode({ billing: true, cashierEnabled: false })).toBe("self");
+    expect(operatingMode({ billing: true, cashierEnabled: true })).toBe("desk");
   });
 
   it("asks a device-only shop only for devices and a trial", () => {
@@ -89,13 +89,13 @@ describe("setup guide", () => {
   });
 
   it("walks a self-service shop through pricing, identity, prepaid balance, devices and a trial", () => {
-    const status = setupStatus(signals({ settings: settings({ billingEnabled: true, billingConfiguration: ready }), players: [] }));
+    const status = setupStatus(signals({ billing: true, settings: settings({ billingConfiguration: ready }), players: [] }));
     expect(status.mode).toBe("self");
     expect(ids(status)).toEqual(["pricing:done", "identity:todo", "prepaid:todo", "devices:todo", "trial:todo"]);
   });
 
   it("counts prepaid balance as ready once a code can be sold or a player holds balance", () => {
-    const base = { settings: settings({ billingEnabled: true, billingConfiguration: ready }) };
+    const base = { billing: true, settings: settings({ billingConfiguration: ready }) };
     const prepaid = (over: Partial<SetupSignals>) => setupStatus(signals({ ...base, ...over })).steps.find((s) => s.id === "prepaid")!.done;
     expect(prepaid({ players: [] })).toBe(false);
     expect(prepaid({ players: [], redeemCodes: 3 })).toBe(true);
@@ -104,21 +104,21 @@ describe("setup guide", () => {
 
   it("walks a front-desk shop through the reader and staff instead of prepaid balance", () => {
     const status = setupStatus(signals({
-      settings: settings({ billingEnabled: true, cashierEnabled: true, billingConfiguration: ready }),
+      billing: true, settings: settings({ cashierEnabled: true, billingConfiguration: ready }),
       players: [],
       reader: false,
     }));
     expect(status.mode).toBe("desk");
     expect(ids(status)).toEqual(["pricing:done", "reader:todo", "staff:todo", "identity:todo", "devices:todo", "trial:todo"]);
     const ready2 = setupStatus(signals({
-      settings: settings({ billingEnabled: true, cashierEnabled: true, billingConfiguration: ready }),
+      billing: true, settings: settings({ cashierEnabled: true, billingConfiguration: ready }),
       players: [], reader: true, members: 2,
     }));
     expect(ready2.steps.filter((s) => s.id === "reader" || s.id === "staff").every((s) => s.done)).toBe(true);
   });
 
   it("only counts a bot as connected once it has used its token", () => {
-    const base = { settings: settings({ billingEnabled: true }), players: [] };
+    const base = { billing: true, settings: settings(), players: [] };
     const identityDone = (tokens: SetupSignals["tokens"]) =>
       setupStatus(signals({ ...base, tokens })).steps.find((s) => s.id === "identity")!.done;
     expect(identityDone([{ role: "integration", status: "active", lastUsedAt: null }])).toBe(false);
@@ -126,21 +126,27 @@ describe("setup guide", () => {
     expect(identityDone([{ ...connectedBot[0]!, status: "revoked" }])).toBe(false);
   });
 
-  it("explains why billing is not ready", () => {
+  it("explains why billing is not ready: only a missing balance asset stops it", () => {
     const problem = (balanceAssetsReady: boolean) =>
       setupStatus(signals({
-        settings: settings({
-          billingEnabled: true,
-          billingConfiguration: { ready: false, balanceAssetsReady, entryPricingReady: false, invalidEntryPricingIds: [] },
-        }),
+        billing: true,
+        settings: settings({ billingConfiguration: { ready: balanceAssetsReady, balanceAssetsReady } }),
       })).pricingProblem;
     expect(problem(false)).toBe("assets");
-    expect(problem(true)).toBe("entry");
+    // Which resources bill is set on groups; there is no default plan to check.
+    expect(problem(true)).toBeNull();
+  });
+
+  it("bills wherever a group or a resource has a plan, with no shop-wide switch", () => {
+    const free = { defaultPricingConfigId: null };
+    expect(shopBills([free], [machine()])).toBe(false);
+    expect(shopBills([free, { defaultPricingConfigId: "night" }], [])).toBe(true);
+    expect(shopBills([free], [machine({ pricingConfigOverrideId: "vip" })])).toBe(true);
   });
 
   it("completes a configured self-service shop once someone has played", () => {
     const status = setupStatus(signals({
-      settings: settings({ billingEnabled: true, billingConfiguration: ready }),
+      billing: true, settings: settings({ billingConfiguration: ready }),
       tokens: connectedBot,
       machines: [machine({ homeAssistant: { url: "http://ha", entityId: "switch.a" } })],
       players: [{ walletTotal: 10 }],

@@ -242,11 +242,10 @@ export function MembersPanel({
   onChanged: () => void | Promise<void>;
 }) {
   const { t, errorText } = useI18n();
-  const { shopCode, billingEnabled } = useMerchant();
+  const { shopCode } = useMerchant();
   const [permissions, setPermissions] = useState<Record<string, string>>({});
   const [savingMember, setSavingMember] = useState("");
   useEffect(() => {
-    if (!billingEnabled) return;
     let active = true;
     api<{ members: { userId: string; billingRole: string }[] }>(
       `/api/v1/shops/${segment(shopCode)}/billing-members`,
@@ -254,7 +253,7 @@ export function MembersPanel({
       if (active) setPermissions(Object.fromEntries(result.members.map((m) => [m.userId, m.billingRole])));
     }).catch((e) => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [shopCode, billingEnabled, members]);
+  }, [shopCode, members]);
   const [memberUser, setMemberUser] = useState("");
   const [role, setRole] = useState<ShopMember["role"]>("staff");
   const [busy, setBusy] = useState(false);
@@ -327,7 +326,7 @@ export function MembersPanel({
               </p>
             </div>
             <div className="flex items-center gap-3">
-              {billingEnabled && member.role !== "owner" && (
+              {member.role !== "owner" && (
                 <label className="grid gap-1 text-xs text-ink/60">
                   {t("计费权限")}
                   <select

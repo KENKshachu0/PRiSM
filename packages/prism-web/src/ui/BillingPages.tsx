@@ -4,15 +4,14 @@ import { pricingInZone } from "./merchant/pricing-clock";
 import type { Pricing } from "./merchant/Pricing";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, InlineError } from "../api";
+import { Api, api, InlineError } from "../api";
 import { useI18n } from "../i18n";
 import { BillingConversionWizard } from "./merchant/BillingSetup";
 import { IdentityPolicyPicker } from "./merchant/IdentityPolicyPicker";
 import { identityPolicy, identityPolicySettings } from "./merchant/setup-guide";
-import { primary } from "./merchant/shared";
+import { primary, useMerchant } from "./merchant/shared";
 
 export type Settings = {
-  billingEnabled: boolean;
   cashierEnabled: boolean;
   autoRegister: boolean;
   identityBindingRequired: boolean;
@@ -20,14 +19,13 @@ export type Settings = {
   checkinGeo: boolean;
   checkoutGeo: boolean;
   machineGeo: boolean;
-  entryPricingIds: string[];
+  /** The resource a front-desk check-in bills through: its group's plan, or its own. */
+  cashierResourceId?: string | null;
   /** The binding instructions shown to players; the line with `{code}` is the command. */
   botContact: string;
   billingConfiguration?: {
     ready: boolean;
     balanceAssetsReady: boolean;
-    entryPricingReady: boolean;
-    invalidEntryPricingIds: string[];
   };
 };
 type EntryRule = Pick<Pricing, "id" | "name" | "kind" | "enabled" | "status">;
@@ -138,42 +136,43 @@ export function BillingSettings({
   section?: "billing" | "players" | "devices" | null;
 }) {
   const { t } = useI18n();
+  const { shopId } = useMerchant();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [rules, setRules] = useState<EntryRule[]>([]);
+  const [resources, setResources] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [savedSection, setSavedSection] = useState<typeof section>(null);
   const [errorSection, setErrorSection] = useState<typeof section>(null);
-  const [billingActive, setBillingActive] = useState(false);
   const [converting, setConverting] = useState(false);
   const load = useCallback(async () => {
-    const [s, r] = await Promise.all([
+    const [s, r, m] = await Promise.all([
       api<Settings>(shopApi(shopCode, "settings")),
       api<{ pricingConfigs: EntryRule[] }>(
         shopApi(shopCode, "staff/pricing-configs"),
       ),
+      shopId ? Api.machines(shopId).then((result) => result.machines).catch(() => []) : Promise.resolve([]),
     ]);
+    setResources(m.map((machine) => ({ id: machine.id, name: machine.name })));
     setSettings({
       ...s,
       cashierEnabled: s.cashierEnabled ?? false,
       identityBindingRequired: s.identityBindingRequired ?? true,
     });
-    setBillingActive(s.billingEnabled);
     setRules(r.pricingConfigs);
-  }, [shopCode]);
+  }, [shopCode, shopId]);
   useEffect(() => {
     void load().catch((e) => setError(e.message));
   }, [load]);
   if (!settings)
     return section ? <p role="status">{error || t("加载中...")}</p> : null;
   const flags = {
-    billingEnabled: "启用入场计费",
     locationEnabled: "启用位置校验",
   } as const;
-  // Turning billing on by hand fails until a balance asset and an entry rule
-  // exist; the conversion wizard creates both, so it is the only way offered.
-  const needsConversion =
-    !billingActive && !settings.billingConfiguration?.ready;
+  // A shop bills wherever a resource group or resource has a plan. Without a
+  // balance asset nothing can bill yet, so quick setup creates one together
+  // with a full-day plan for the default group.
+  const needsConversion = !settings.billingConfiguration?.balanceAssetsReady;
   return (
     <>
       <form
@@ -192,9 +191,8 @@ export function BillingSettings({
             const patch =
               savingSection === "billing"
                 ? {
-                    billingEnabled: settings.billingEnabled,
                     cashierEnabled: settings.cashierEnabled,
-                    entryPricingIds: settings.entryPricingIds,
+                    cashierResourceId: settings.cashierResourceId ?? null,
                   }
                 : savingSection === "players"
                   ? {
@@ -206,7 +204,6 @@ export function BillingSettings({
               method: "PUT",
               body: JSON.stringify({ ...current, ...patch }),
             });
-            setBillingActive(result.billingEnabled);
             setSettings(previous => previous && { ...previous, billingConfiguration: result.billingConfiguration });
             setSavedSection(savingSection);
             window.dispatchEvent(new Event("prism-shop-settings"));
@@ -229,41 +226,29 @@ export function BillingSettings({
           </h4>
           {section === "billing" && needsConversion && (
             <div className="grid gap-3 rounded-lg bg-ink/5 p-4 text-sm">
-              <p>{t("按时长向玩家收费，管理玩家余额和离店结账。向导会一次建好余额资产和一条全天入场规则，再启用计费。")}</p>
+              <p>{t("按时长向玩家收费，管理玩家余额和离店结账。向导会一次建好余额资产和一条全天计费方案，并设为默认资源组的方案。")}</p>
               <button
                 type="button"
                 className={`${primary} justify-self-start`}
                 onClick={() => setConverting(true)}
               >
-                {t("转换为计费店铺")}
+                {t("快速创建计费")}
               </button>
             </div>
           )}
           {section === "billing" && !needsConversion && (
             <>
-              <label className="grid gap-2">
-                <span className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={settings.billingEnabled}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        billingEnabled: e.target.checked,
-                        cashierEnabled:
-                          e.target.checked && settings.cashierEnabled,
-                      })
-                    }
-                  />
-                  {t(flags.billingEnabled)}
-                </span>
-              </label>
+              <p className="text-sm leading-relaxed text-ink/60">
+                {t("给资源组或资源设置计费方案，那里就开始计费；不设置方案的资源免费使用。")}{" "}
+                <Link className="underline" to={`/merchant/${encodeURIComponent(shopCode)}/resources`}>
+                  {t("资源组与计费")}
+                </Link>
+              </p>
               <label className="grid gap-2">
                 <span className="flex items-center gap-3">
                   <input
                     type="checkbox"
                     checked={settings.cashierEnabled}
-                    disabled={!settings.billingEnabled}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
@@ -279,6 +264,24 @@ export function BillingSettings({
                   )}
                 </span>
               </label>
+              {settings.cashierEnabled && (
+                <label className="grid gap-2 pl-7 text-sm">
+                  <span className="font-medium">{t("前台资源")}</span>
+                  <select
+                    className="focus-ring min-h-11 rounded-lg border border-ink/20 bg-panel px-3 py-2"
+                    value={settings.cashierResourceId ?? ""}
+                    onChange={(e) => setSettings({ ...settings, cashierResourceId: e.target.value || null })}
+                  >
+                    <option value="">{t("请选择")}</option>
+                    {resources.map((resource) => (
+                      <option key={resource.id} value={resource.id}>{resource.name}</option>
+                    ))}
+                  </select>
+                  <span className="text-ink/60">
+                    {t("前台刷卡入场按这个资源计费：它自己的方案，否则是它所在资源组的方案。")}
+                  </span>
+                </label>
+              )}
             </>
           )}
           {section === "players" && (
@@ -345,7 +348,6 @@ export function BillingSettings({
               locationEnabled:
                 previous?.locationEnabled ?? value.locationEnabled,
             }));
-            setBillingActive(value.billingEnabled);
             setConverting(false);
             setSavedSection("billing");
             setError("");

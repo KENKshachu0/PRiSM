@@ -278,8 +278,8 @@ function ResourceSessionPage({
         subtitle={checkingPower ? `${machine.name} · ${t("正在获取电源状态")}` : machine.name}
       />
 
-      {/* A resource without hardware still bills in a shop that bills, so it needs the player and a confirmation. */}
-      {!Object.values(machine.capabilities).some(Boolean) && !machine.shop.billingEnabled ? (
+      {/* A resource without hardware that has a plan still bills, so it needs the player and a confirmation. */}
+      {!Object.values(machine.capabilities).some(Boolean) && !machine.billed ? (
         <div className="device-controls"><p className="session-subtitle text-center">{t("这里没有可操作的设备")}</p></div>
       ) : loading ? (
         <div className="device-controls" role="status"><Loader2 className="mx-auto animate-spin" aria-label={t("正在加载")} /></div>

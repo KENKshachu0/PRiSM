@@ -22,17 +22,29 @@ export const identityPolicySettings = (policy: IdentityPolicy) =>
 /**
  * How the shop takes money. A shop with a front desk always takes payment
  * there; one without may still have staff, but they do not handle money.
- * "devices" shops bill elsewhere and use PRiSM only to run devices.
+ * "devices" shops have no plan on any resource yet: they bill elsewhere and
+ * use PRiSM only to run devices. It is a description, not a switch.
  */
 export type OperatingMode = "devices" | "self" | "desk";
 
 export const operatingMode = (
-  settings: Pick<Settings, "billingEnabled" | "cashierEnabled">,
+  input: { billing: boolean; cashierEnabled: boolean },
 ): OperatingMode =>
-  !settings.billingEnabled ? "devices" : settings.cashierEnabled ? "desk" : "self";
+  !input.billing ? "devices" : input.cashierEnabled ? "desk" : "self";
+
+/**
+ * Whether any resource bills: a resource group (the default group's plan is
+ * the shop default) or a resource of its own has a plan.
+ */
+export const shopBills = (
+  groups: { defaultPricingConfigId: string | null }[],
+  machines: Pick<Resource, "pricingConfigOverrideId">[],
+) => groups.some((group) => !!group.defaultPricingConfigId) || machines.some((machine) => !!machine.pricingConfigOverrideId);
 
 export type SetupSignals = {
   settings: Settings;
+  /** Whether any resource bills; see `shopBills`. */
+  billing: boolean;
   machines: Resource[];
   tokens: { role: string; status: string; lastUsedAt?: string | null }[];
   ttLock: {
@@ -71,8 +83,8 @@ export type SetupStatus = {
   billing: boolean;
   steps: SetupStep[];
   complete: boolean;
-  /** Why billing is not ready: no balance asset, or no usable entry rule. */
-  pricingProblem: "assets" | "entry" | null;
+  /** Why billing is not ready: no balance asset. */
+  pricingProblem: "assets" | null;
   devices: number;
   unconfigured: number;
   doorDevices: number;
@@ -99,7 +111,7 @@ export type SetupStatus = {
  */
 export function setupStatus(signals: SetupSignals): SetupStatus {
   const { settings, machines } = signals;
-  const mode = operatingMode(settings);
+  const mode = operatingMode({ billing: signals.billing, cashierEnabled: settings.cashierEnabled });
   const billing = mode !== "devices";
   const caps = machines.map(resourceCapabilities);
   const unconfigured = machines.filter(isUnconfigured).length;
@@ -121,8 +133,13 @@ export function setupStatus(signals: SetupSignals): SetupStatus {
   const players = signals.players ?? [];
   const fundedPlayers = players.filter((player) => player.walletTotal > 0).length;
   const steps: SetupStep[] = [];
+  const configuration = settings.billingConfiguration;
+  // Some resource already has a plan, so pricing is ready once players have a
+  // balance to pay from.
+  const pricingProblem =
+    !billing || !configuration || configuration.balanceAssetsReady ? null : "assets" as const;
   if (billing)
-    steps.push({ id: "pricing", done: !!settings.billingConfiguration?.ready });
+    steps.push({ id: "pricing", done: !!configuration && !pricingProblem });
   if (mode === "desk") {
     steps.push({ id: "reader", done: signals.reader === true });
     steps.push({ id: "staff", done: signals.members > 1 });
@@ -137,18 +154,12 @@ export function setupStatus(signals: SetupSignals): SetupStatus {
     id: "trial",
     done: signals.trialConfirmed || (billing && players.length > 0),
   });
-  const configuration = settings.billingConfiguration;
   return {
     mode,
     billing,
     steps,
     complete: steps.every((step) => step.done),
-    pricingProblem:
-      !billing || !configuration || configuration.ready
-        ? null
-        : !configuration.balanceAssetsReady
-          ? "assets"
-          : "entry",
+    pricingProblem,
     devices: machines.length,
     unconfigured,
     doorDevices,

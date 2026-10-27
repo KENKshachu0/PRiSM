@@ -33,7 +33,7 @@ export function PlayerAccountMenu() {
         .then(async (result) => {
           if (cancelled) return;
           setInfo(result);
-          if (result.shop.billingEnabled && result.membership) {
+          if (result.membership) {
             const current = await api<Summary>(shopApi(activeShop, "player/me"));
             if (!cancelled) setBillingActive(activeShop, !!current.activeSession);
           } else setBillingActive(activeShop, false);
@@ -72,7 +72,7 @@ export function PlayerAccountMenu() {
           <ChevronDown size={16} className="shrink-0" />
         </summary>
         <div className="player-menu-items">
-          {info?.shop.billingEnabled &&
+          {info &&
             playerSections.filter(item => !shopPage || item !== "账单").map((item) => (
               <button
                 key={item}

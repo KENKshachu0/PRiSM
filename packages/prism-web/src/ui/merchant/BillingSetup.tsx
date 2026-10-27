@@ -49,11 +49,11 @@ export function BillingConversionWizard({ shopCode, close, done }: {
       setError(error instanceof Error ? error.message : t("操作失败"));
     } finally { submitting.current = false; setBusy(false); }
   }
-  return <Modal title="转换为计费店铺" close={() => { if (!submitting.current) close(); }}>
+  return <Modal title="快速创建计费" close={() => { if (!submitting.current) close(); }}>
     <form onSubmit={submit}>
       <fieldset disabled={busy} className="grid gap-4">
         <ol className="flex gap-4 text-sm text-ink/60">
-          {["收费标准", "确认转换"].map((label, index) => <li key={label} aria-current={step === index ? "step" : undefined}
+          {["收费标准", "确认创建"].map((label, index) => <li key={label} aria-current={step === index ? "step" : undefined}
             className={step === index ? "font-semibold text-ink" : ""}>{index + 1} · {t(label)}</li>)}
         </ol>
         {step === 0 ? <>
@@ -68,12 +68,12 @@ export function BillingConversionWizard({ shopCode, close, done }: {
             <dt>{t("全天封顶")}</dt><dd>{setup.dailyCap === 0 ? t("不封顶") : money(setup.dailyCap)}</dd>
             <dt>{t("前台收银")}</dt><dd>{t(cashier ? "启用" : "停用")}</dd>
           </dl>
-          <p className="text-sm">{t("将补齐基础余额资产，创建并选用新的标准入场方案，然后启用计费。已有资源、玩家、资产和计费方案会保留。")}</p>
+          <p className="text-sm">{t("将补齐基础余额资产，创建新的标准入场方案并设为默认资源组的方案。默认资源组里的资源从此开始计费；其他资源组保持各自的方案。已有资源、玩家、资产和计费方案会保留。")}</p>
         </>}
         {error && <p role="alert" className="text-sm text-coral">{error}</p>}
         <div className="flex flex-wrap justify-between gap-3">
           <button type="button" className={button} onClick={() => step === 0 ? close() : setStep(0)}>{t(step === 0 ? "取消" : "上一步")}</button>
-          <button className={primary}>{t(busy ? "正在处理，请稍候" : step === 0 ? "下一步" : "确认转换并启用计费")}</button>
+          <button className={primary}>{t(busy ? "正在处理，请稍候" : step === 0 ? "下一步" : "确认创建")}</button>
         </div>
       </fieldset>
     </form>

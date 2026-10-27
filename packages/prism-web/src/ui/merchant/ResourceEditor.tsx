@@ -50,7 +50,7 @@ export function ResourceEditor({
   /** Locks the dialog while a one-time token is on screen. */
   onLockChange: (locked: boolean) => void;
 }) {
-  const { shopId, shopCode, billingEnabled, owner } = useMerchant();
+  const { shopId, shopCode, owner } = useMerchant();
   const { t } = useI18n();
   const shopSettings = useResource<{
     settings: { ttLockConnection?: Record<string, string | undefined> | null };
@@ -139,10 +139,10 @@ export function ResourceEditor({
   const [overrideId, setOverrideId] = useState(value?.pricingConfigOverrideId ?? "");
   const { groups } = useResourceGroups(shopId);
   const billablePlans = useBillablePlans(shopCode);
-  const groupPlanName = (() => {
-    const planId = groups?.find((group) => group.id === groupId)?.defaultPricingConfigId;
-    return planId ? billablePlans.find((plan) => plan.id === planId)?.name ?? null : null;
-  })();
+  const groupPlanId = groups?.find((group) => group.id === groupId)?.defaultPricingConfigId ?? null;
+  const groupPlanName = groupPlanId ? billablePlans.find((plan) => plan.id === groupPlanId)?.name ?? null : null;
+  // Without its own plan or its group's, the resource is free to use.
+  const billed = !!overrideId || !!groupPlanId;
 
   const [issued, setIssued] = useState<{ token: string; url: string } | null>(
     null,
@@ -195,7 +195,7 @@ export function ResourceEditor({
     if (id === "hinata_io" && !embedded && !hinataUrl.trim())
       return t("请填写 HINATA IO 地址");
     if (id === "door" && !(Number(lockId) > 0)) return t("请填写门锁 ID");
-    if (id === "mahjong" && billingEnabled && !mahjongPricing.length) return t("请选择一条麻将计费规则");
+    if (id === "mahjong" && billed && !mahjongPricing.length) return t("请选择一条麻将计费规则");
     return null;
   };
 
@@ -219,7 +219,7 @@ export function ResourceEditor({
   const seatsFrom = capabilityList.find((id) => caps[id] && capabilityMeta[id].seats) ?? null;
   const sections: { id: typeof pane; label: string; icon: LucideIcon; problem?: boolean }[] = [
     { id: "basic", label: "基本信息", icon: Info },
-    { id: "usage", label: billingEnabled ? "计费与占用" : "占用", icon: Users },
+    { id: "usage", label: "计费与占用", icon: Users },
     ...capabilityList.filter((id) => caps[id]).map((id) => ({
       id, label: capabilityMeta[id].label, icon: capabilityMeta[id].icon, problem: !!incomplete(id),
     })),
@@ -379,7 +379,8 @@ export function ResourceEditor({
             occupancyMinutes: Number(occupancyMinutes) || 15,
             bot: caps.bot ? bot : null,
             ...(caps.bot && f.get("intent") === "rotate-bot" ? { rotateBotToken: true } : {}),
-            ...(billingEnabled ? { resourceGroupId: groupId, pricingConfigOverrideId: overrideId || null } : {}),
+            resourceGroupId: groupId,
+            pricingConfigOverrideId: overrideId || null,
             mahjong: caps.mahjong ? { pricingConfigIds: mahjongPricing } : null,
             // A capability that is switched off is removed, which the server
             // expresses as `null` for the bound fields.
@@ -509,8 +510,7 @@ export function ResourceEditor({
       )}
       {pane === "usage" && (
         <>
-          {billingEnabled && (
-            <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
               <Field label="所属资源组">
                 <select className={input} value={groupId} onChange={(e) => setGroupId(e.target.value)}>
                   {(groups ?? [{ id: "default", name: "默认资源组" }]).map((group) => (
@@ -521,7 +521,7 @@ export function ResourceEditor({
               <Field label="计费方案覆盖">
                 <select className={input} value={overrideId} onChange={(e) => setOverrideId(e.target.value)}>
                   <option value="">
-                    {groupPlanName ? t("跟随资源组（{plan}）", { plan: groupPlanName }) : t("跟随资源组（未设置）")}
+                    {groupPlanName ? t("跟随资源组（{plan}）", { plan: groupPlanName }) : t("跟随资源组（不计费）")}
                   </option>
                   {billablePlans.map((plan) => (
                     <option key={plan.id} value={plan.id}>{plan.name}</option>
@@ -529,7 +529,6 @@ export function ResourceEditor({
                 </select>
               </Field>
             </div>
-          )}
           {!caps.bot && (
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="容量" unit="人">
@@ -720,14 +719,9 @@ export function ResourceEditor({
               </legend>
               {pricing.filter((r) => r.enabled).length === 0 ? (
                 <p className="text-sm text-ink/55">
-                  {billingEnabled
-                    ? t("还没有启用中的计费规则。")
-                    : t("麻将桌按座位计时收费，需要先启用入场计费。")}{" "}
-                  <Link
-                    className="underline"
-                    to={billingEnabled ? `${shopPath}/pricing` : `${shopPath}/settings?group=billing`}
-                  >
-                    {t(billingEnabled ? "去「计费」页创建" : "启用入场计费")}
+                  {t("还没有启用中的计费规则。")}{" "}
+                  <Link className="underline" to={`${shopPath}/pricing`}>
+                    {t("去「计费」页创建")}
                   </Link>
                 </p>
               ) : (

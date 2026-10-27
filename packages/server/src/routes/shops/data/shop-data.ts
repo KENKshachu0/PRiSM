@@ -9,6 +9,10 @@ import { withOperationLease } from "@prism/application";
 import { requireUser } from "../../../middleware/auth.js";
 import { getBillingShop, staffPrincipal, type BillingShop } from "./compat.js";
 import { sha256 } from "../../../crypto.js";
+import { freeShopStatements } from "../../../resources/billed-sql.js";
+import { DEFAULT_RESOURCE_GROUP_ID } from "../../../resources/billing.js";
+import { missingFrontDeskStatements } from "../../platform/shops.js";
+import { notifyBotsChangedAfter } from "../../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../../http.js";
 import { enforceRateLimits } from "./compat.js";
 import type { AppBindings } from "./compat.js";
@@ -97,16 +101,20 @@ async function exportBackup(c: C, shop: BillingShop, scope: ShopBackup["scope"])
   const settings = new Map(result[tables.length]!.results.map(row => [row.key, JSON.parse(String(row.value_json))]));
   const billing = result[tables.length + 1]!.results[0];
   const flag = (key: string, fallback: boolean) => billing ? !!billing[key] : fallback;
+  const defaultGroupPlan = (await (c.env.DB as LegacyD1Database).prepare(
+    "SELECT default_pricing_config_id AS plan FROM resource_groups WHERE shop_id=? AND id=?",
+  ).bind(shop.id, DEFAULT_RESOURCE_GROUP_ID).first<{ plan: string | null }>())?.plan ?? null;
   const backup: ShopBackup = {
     format: "prism-shop-data", version: 1, scope, exportedAt: new Date().toISOString(),
     source: { publicId: shop.public_id, name: shop.name, timeZone: shop.time_zone, origin: new URL(c.req.url).origin,
       location: { latitude: shop.latitude, longitude: shop.longitude, radiusMeters: shop.radius_meters } },
     storage: { timeZone: "UTC", money: "minor-units" },
     settings: {
-      billingEnabled: flag("billing_enabled", false), cashierEnabled: !!settings.get("cashier.settings")?.enabled,
+      cashierEnabled: !!settings.get("cashier.settings")?.enabled,
       autoRegister: flag("auto_register", false), identityBindingRequired: flag("identity_binding_required", true),
       checkinGeo: flag("checkin_geo", false), checkoutGeo: flag("checkout_geo", false), machineGeo: flag("machine_geo", false),
-      entryPricingIds: billing ? JSON.parse(String(billing.entry_pricing_ids_json)) : [], botContact: String(billing?.bot_contact ?? ""),
+      // v1 files have no resource groups: the default group's plan travels here, as it always did.
+      entryPricingIds: defaultGroupPlan ? [defaultGroupPlan] : [], botContact: String(billing?.bot_contact ?? ""),
       coinCooldownMs: settings.get("venue.operations")?.coinCooldownMs ?? 60_000,
       defaultPresentId: settings.get("player.registration")?.defaultPresentId ?? null,
     },
@@ -186,16 +194,22 @@ export function registerShopDataRoutes(app: Hono<AppBindings>) {
       }
       statements.push(...triggers.map(trigger => (c.env.DB as LegacyD1Database).prepare(trigger.sql)));
       const s = backup.settings;
-      statements.push((c.env.DB as LegacyD1Database).prepare(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,checkin_geo,checkout_geo,machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)
-        VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET billing_enabled=excluded.billing_enabled,auto_register=excluded.auto_register,
-        checkin_geo=excluded.checkin_geo,checkout_geo=excluded.checkout_geo,machine_geo=excluded.machine_geo,entry_pricing_ids_json=excluded.entry_pricing_ids_json,
+      statements.push((c.env.DB as LegacyD1Database).prepare(`INSERT INTO shop_billing_settings(shop_id,auto_register,checkin_geo,checkout_geo,machine_geo,bot_contact,identity_binding_required)
+        VALUES (?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,
+        checkin_geo=excluded.checkin_geo,checkout_geo=excluded.checkout_geo,machine_geo=excluded.machine_geo,
         bot_contact=excluded.bot_contact,identity_binding_required=excluded.identity_binding_required`)
-        .bind(shop.id, +s.billingEnabled, +s.autoRegister, +s.checkinGeo, +s.checkoutGeo, +s.machineGeo, JSON.stringify(s.entryPricingIds), s.botContact, +s.identityBindingRequired));
+        .bind(shop.id, +s.autoRegister, +s.checkinGeo, +s.checkoutGeo, +s.machineGeo, s.botContact, +s.identityBindingRequired));
+      // v1 files carry the default group's plan as the shop's default plan.
+      statements.push((c.env.DB as LegacyD1Database).prepare(`INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at)
+        VALUES (?,?,'默认资源组',1,?,?,?) ON CONFLICT(shop_id,id) DO UPDATE SET default_pricing_config_id=excluded.default_pricing_config_id`)
+        .bind(shop.id, DEFAULT_RESOURCE_GROUP_ID, s.entryPricingIds?.[0] ?? null, now, now));
+      if (s.billingEnabled === false) statements.push(...freeShopStatements(c.env.DB as LegacyD1Database, shop.id));
       for (const [key, value] of [
         ["venue.operations", { timeZone: "UTC", coinCooldownMs: s.coinCooldownMs }],
         ["player.registration", { defaultPresentId: s.defaultPresentId }], ["cashier.settings", { enabled: s.cashierEnabled }],
       ] as const) statements.push((c.env.DB as LegacyD1Database).prepare(`INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,?,?,?)
         ON CONFLICT(shop_id,key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`).bind(shop.id, key, JSON.stringify(value), now));
+      statements.push(...missingFrontDeskStatements(c.env.DB as LegacyD1Database, shop.id));
       try { await (c.env.DB as LegacyD1Database).batch(statements); }
       catch (error) {
         const message = String(error);
@@ -205,6 +219,7 @@ export function registerShopDataRoutes(app: Hono<AppBindings>) {
           jsonError(409, "数据关联或约束校验失败，导入已全部回滚", "IMPORT_CONSTRAINT_FAILED");
         throw error;
       }
+      notifyBotsChangedAfter(c, shop.id);
       return c.json(result);
     });
   });

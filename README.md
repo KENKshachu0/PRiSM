@@ -120,7 +120,7 @@ The root `package.json` owns the release SemVer. `bun run version:bump patch|min
 - [Architecture](docs/architecture.md)
 - [API Reference](docs/api.md)
 - [商户工作台的开店指引](docs/merchant-setup-guide.md)
-- [已有店铺转换为计费店铺](docs/billing-setup.md)
+- [快速创建计费](docs/billing-setup.md)
 - [前台收银与 WebHID 读卡](docs/cashier.md)
 - [资源与资源组](docs/resources.md)
 - [计费状态编排：会话、依赖与冲突](docs/pricing-sessions.md)

@@ -209,6 +209,11 @@ function createTestEnvironment(): { db: D1DatabaseLike; sqlite: Database; env: E
     CREATE TABLE IF NOT EXISTS resource_groups (
       shop_id TEXT NOT NULL,
       id TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      default_pricing_config_id TEXT,
+      created_at TEXT,
+      updated_at TEXT,
       PRIMARY KEY (shop_id, id)
     );
     CREATE TABLE IF NOT EXISTS players (
@@ -565,9 +570,14 @@ describe("Platform & System Routes", () => {
         expect(res.status).toBe(201);
         const { shop } = await res.json() as { shop: { id: string } };
         const row = await env.DB.prepare(
-          "SELECT billing_enabled, auto_register, identity_binding_required FROM shop_billing_settings WHERE shop_id=?",
+          "SELECT auto_register, identity_binding_required FROM shop_billing_settings WHERE shop_id=?",
         ).bind(shop.id).first();
-        expect(row).toEqual({ billing_enabled: billingSetup ? 1 : 0, auto_register: 1, identity_binding_required: 1 });
+        expect(row).toEqual({ auto_register: 1, identity_binding_required: 1 });
+        // Every shop has its default group; billing setup gives it a plan, otherwise its resources are free.
+        const group = await env.DB.prepare(
+          "SELECT default_pricing_config_id IS NOT NULL AS priced FROM resource_groups WHERE shop_id=? AND id='default'",
+        ).bind(shop.id).first();
+        expect(group).toEqual({ priced: billingSetup ? 1 : 0 });
       }
     });
 
@@ -581,8 +591,11 @@ describe("Platform & System Routes", () => {
       }, env);
       expect(res.status).toBe(201);
       const { shop } = await res.json() as { shop: { id: string } };
-      const row = await env.DB.prepare("SELECT value_json FROM app_settings WHERE shop_id=? AND key='cashier.settings'").bind(shop.id).first();
-      expect(row).toEqual({ value_json: '{"enabled":true}' });
+      const row = await env.DB.prepare("SELECT value_json FROM app_settings WHERE shop_id=? AND key='cashier.settings'").bind(shop.id).first<{ value_json: string }>();
+      // The front desk is a resource from the start, in the default group.
+      expect(JSON.parse(row!.value_json)).toEqual({ enabled: true, resourceId: `desk-${shop.id}` });
+      const desk = await env.DB.prepare("SELECT name, resource_group_id FROM machines WHERE id=?").bind(`desk-${shop.id}`).first();
+      expect(desk).toEqual({ name: "前台", resource_group_id: null });
     });
 
     it("creates a shop with billing setup and bot integration token", async () => {

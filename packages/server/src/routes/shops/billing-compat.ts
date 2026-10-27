@@ -3,10 +3,12 @@ import { z } from "zod";
 import { withOperationLease } from "@prism/application";
 import type { AppBindings } from "../../bindings.js";
 import { sha256 } from "../../crypto.js";
+import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 import { jsonError } from "../../http.js";
 import { requireUser, staffPrincipal } from "../../middleware/auth.js";
 import { getShop, getShopDeps } from "../../middleware/tenant.js";
 import { billingSetupSchema, billingSetupStatements } from "../platform/shops.js";
+import { DEFAULT_RESOURCE_GROUP_ID } from "../../resources/billing.js";
 import { publicSettings } from "./index.js";
 
 /** Backward-compatible merchant billing routes. */
@@ -96,12 +98,13 @@ billingCompatRouter.post("/billing/setup", async (c) => {
         return Response.json(result.body, { status: result.status });
       }
       const current = await c.env.DB.prepare(
-        `SELECT COALESCE(b.billing_enabled,0) AS billing_enabled,
+        `SELECT (SELECT g.default_pricing_config_id FROM resource_groups g WHERE g.shop_id=s.id AND g.id=?) AS default_group_plan,
         COALESCE(b.auto_register,0) AS auto_register, COALESCE(b.bot_contact,'') AS bot_contact
         FROM shops s LEFT JOIN shop_billing_settings b ON b.shop_id=s.id WHERE s.id=?`,
-      ).bind(shop.id).first<{ billing_enabled: number; auto_register: number; bot_contact: string }>();
+      ).bind(DEFAULT_RESOURCE_GROUP_ID, shop.id).first<{ default_group_plan: string | null; auto_register: number; bot_contact: string }>();
       if (!current) jsonError(404, "店铺不存在", "SHOP_NOT_FOUND");
-      if (current.billing_enabled) jsonError(409, "店铺已启用计费，请在计费页面调整规则", "BILLING_ALREADY_ENABLED");
+      // Quick setup prices the default group; one that has a plan is adjusted on the resources page.
+      if (current.default_group_plan) jsonError(409, "默认资源组已有计费方案，请在资源页调整", "BILLING_ALREADY_ENABLED");
       const archived = await c.env.DB.prepare(
         "SELECT 1 FROM asset_definitions WHERE shop_id=? AND type='currency' AND code IN ('paid','free') AND status='archived' LIMIT 1",
       ).bind(shop.id).first();
@@ -110,9 +113,10 @@ billingCompatRouter.post("/billing/setup", async (c) => {
         ...body, autoRegister: !!current.auto_register, botContact: current.bot_contact,
       });
       const result = {
-        ...publicSettings(shop), billingEnabled: true, cashierEnabled: body.cashierEnabled,
-        entryPricingIds: [setup.ruleId], pricingConfigId: setup.ruleId,
-        billingConfiguration: { ready: true, balanceAssetsReady: true, entryPricingReady: true, invalidEntryPricingIds: [] },
+        ...publicSettings(shop), cashierEnabled: body.cashierEnabled || !!shop.cashier_enabled,
+        ...(body.cashierEnabled ? { cashierResourceId: `desk-${shop.id}` } : {}),
+        pricingConfigId: setup.ruleId,
+        billingConfiguration: { ready: true, balanceAssetsReady: true },
       };
       const now = new Date().toISOString();
       await c.env.DB.batch([
@@ -122,15 +126,14 @@ billingCompatRouter.post("/billing/setup", async (c) => {
             SELECT 1 FROM player_operations WHERE shop_id=? AND user_id=? AND id=? AND kind='billing/setup' AND request_hash=?
           )`,
         ).bind(shop.id, user.id, operationId, requestHash, now, shop.id, user.id, operationId, requestHash),
+        // Turning the front desk on also makes it a resource (see frontDeskStatements).
         ...setup.statements,
-        c.env.DB.prepare(
-          `INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,'cashier.settings',?,?)
-          ON CONFLICT(shop_id,key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`,
-        ).bind(shop.id, JSON.stringify({ enabled: body.cashierEnabled }), now),
         c.env.DB.prepare(
           "UPDATE player_operations SET status='completed',result_json=? WHERE shop_id=? AND user_id=? AND id=? AND kind='billing/setup' AND request_hash=?",
         ).bind(JSON.stringify({ status: 200, body: result }), shop.id, user.id, operationId, requestHash),
       ]);
+      // The default group bills now, and so do its bots.
+      notifyBotsChangedAfter(c, shop.id);
       return c.json(result);
     },
   );

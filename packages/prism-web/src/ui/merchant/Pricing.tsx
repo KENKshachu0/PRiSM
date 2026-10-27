@@ -4,11 +4,9 @@ import { useResourceGroups } from "./ResourceGroups";
 import { BillingSimulator } from "./BillingSimulator";
 import { pricingInZone } from "./pricing-clock";
 import { billTime } from "../bill-time";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { BillingManualButton } from "./BillingExplainer";
-import { api } from "../../api";
-import { shopApi } from "../BillingPages";
 import { ChevronDown, Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 import {
@@ -102,22 +100,11 @@ const newRuleFor = (kind: Pricing["kind"]): Rule => (kind === "time.cap" ? newCa
 
 export function PricingPage() {
   const { t } = useI18n();
-  const { canWrite, shopCode, shopId, billingEnabled, owner } = useMerchant();
+  const { canWrite, shopCode, shopId, owner } = useMerchant();
   const resourceGroups = useResourceGroups(shopId);
   const resource = useResource<{ pricingConfigs: Pricing[] }>(
     "pricing-configs",
   );
-  // Which rules entry uses lives in the shop settings; without it a new rule
-  // looks live here but never bills anyone.
-  const [entryIds, setEntryIds] = useState<string[] | null>(null);
-  useEffect(() => {
-    if (!billingEnabled) return;
-    let active = true;
-    api<{ entryPricingIds: string[] }>(shopApi(shopCode, "settings"))
-      .then((settings) => { if (active) setEntryIds(settings.entryPricingIds); })
-      .catch(() => {});
-    return () => { active = false; };
-  }, [shopCode, billingEnabled]);
   const request = useStaffApi();
   const [edit, setEdit] = useState<Pricing | null>(null);
   const [archive, setArchive] = useState<Pricing | null>(null);
@@ -185,7 +172,7 @@ export function PricingPage() {
         <div className="rounded-xl border border-dashed border-ink/20 px-6 py-14 text-center">
           <p className="font-medium">{t("还没有计费规则")}</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-ink/55">
-            {t("规则决定玩家什么时段、按什么价格付费。至少需要一条按时计费规则作为默认计费方案。")}
+            {t("规则决定玩家什么时段、按什么价格付费。给资源组选上规则后，组里的资源才开始计费。")}
           </p>
           {canWrite && (
             <button
@@ -208,22 +195,20 @@ export function PricingPage() {
         </div>
       ) : (
         <>
-        {entryIds && (
-          <p className="text-sm text-ink/60">
-            {t("标有「默认」的规则是默认计费方案。新建的规则要被资源组、资源或其他规则的「依赖」引用才会计费。")}
-            {owner && (
-              <>
-                {" "}
-                <Link
-                  className="underline"
-                  to={`/merchant/${segment(shopCode)}/resources`}
-                >
-                  {t("资源组")}
-                </Link>
-              </>
-            )}
-          </p>
-        )}
+        <p className="text-sm text-ink/60">
+          {t("新建的规则要被资源组、资源或其他规则的「依赖」引用才会计费。")}
+          {owner && (
+            <>
+              {" "}
+              <Link
+                className="underline"
+                to={`/merchant/${segment(shopCode)}/resources`}
+              >
+                {t("资源组")}
+              </Link>
+            </>
+          )}
+        </p>
         {resource.data && resource.data.pricingConfigs.filter((row) => row.kind === "time.priority" && row.status !== "archived").length > 1 && (
           <details className="grid gap-3" open>
             <summary className="cursor-pointer text-sm font-semibold">{t("规则关系")}</summary>
@@ -241,11 +226,6 @@ export function PricingPage() {
             <tr key={row.id}>
               <td className={`${cell} font-medium`}>
                 {row.name}
-                {entryIds?.includes(row.id) && (
-                  <span className="ml-2 rounded-full bg-mint/10 px-2 py-0.5 text-xs font-medium text-mint">
-                    {t("默认")}
-                  </span>
-                )}
               </td>
               <td className={cell}>
                 {t(kinds[row.kind])}

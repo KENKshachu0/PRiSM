@@ -3,17 +3,7 @@ import { touchShopHubAfter } from "../../durable-objects/shop-hub-client.js";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
-import {
-  buildPriorityTimePricingTimeline,
-  buildTimeCapPricingTimeline,
-  formatLocalDate,
-  PrismDomainError,
-  type PricingConfig,
-} from "@prism/core";
-import {
-  toPricingConfig,
-  type PricingConfigRow,
-} from "@prism/storage-sql";
+import { formatLocalDate, PrismDomainError } from "@prism/core";
 import { withOperationLease } from "@prism/application";
 import type { AppBindings, TenantShop } from "../../bindings.js";
 import { sha256 } from "../../crypto.js";
@@ -38,6 +28,7 @@ import { legacyStaffRouter } from "../../legacy/handlers/staff.js";
 import { legacyIntegrationRouter } from "../../legacy/handlers/integration.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
 import { liveActivityConfig } from "../../durable-objects/live-activity-push.js";
+import { shopBillsSql } from "../../resources/billed-sql.js";
 import {
   extractSessionIds, playerIdsFromPayload, pushSessionEvent, sessionEventForPath,
 } from "./live-activity-events.js";
@@ -48,52 +39,25 @@ export * from "./integration.js";
 export * from "./pricing.js";
 export * from "./assets.js";
 export * from "./cashier.js";
+import { cashierResourceId } from "./cashier.js";
 export * from "./redeem.js";
 export * from "./binding.js";
 export * from "./views.js";
 
-export async function billingConfiguration(
-  db: Context<AppBindings>["env"]["DB"],
-  shopId: string,
-  entryPricingIds: readonly string[],
-) {
-  const [currency, pricing] = await Promise.all([
-    db
-      .prepare(
-        "SELECT 1 FROM asset_definitions WHERE shop_id = ? AND type = 'currency' AND status = 'active' LIMIT 1",
-      )
-      .bind(shopId)
-      .first(),
-    db
-      .prepare(
-        "SELECT id FROM pricing_configs WHERE shop_id = ? AND enabled = 1 AND status = 'active' AND kind != 'time.cap'",
-      )
-      .bind(shopId)
-      .all<{ id: string }>(),
-  ]);
-
-  const validIds = new Set(pricing.results.map((row) => row.id));
-  const invalidEntryPricingIds = entryPricingIds.filter((id) => !validIds.has(id));
-  const balanceAssetsReady = !!currency;
-  const entryPricingReady = entryPricingIds.length > 0 && invalidEntryPricingIds.length === 0;
-
-  return {
-    ready: balanceAssetsReady && entryPricingReady,
-    balanceAssetsReady,
-    entryPricingReady,
-    invalidEntryPricingIds,
-  };
+/**
+ * Whether the shop can bill: players need a balance to pay from. Which
+ * resources bill is set on resource groups and resources, not here.
+ */
+export async function billingConfiguration(db: Context<AppBindings>["env"]["DB"], shopId: string) {
+  const currency = await db
+    .prepare("SELECT 1 FROM asset_definitions WHERE shop_id = ? AND type = 'currency' AND status = 'active' LIMIT 1")
+    .bind(shopId)
+    .first();
+  return { ready: !!currency, balanceAssetsReady: !!currency };
 }
 
 export function publicSettings(shop: TenantShop) {
-  let entryPricingIds: string[] = [];
-  try {
-    entryPricingIds = JSON.parse(shop.entry_pricing_ids_json) as string[];
-  } catch {
-    entryPricingIds = [];
-  }
   return {
-    billingEnabled: !!shop.billing_enabled,
     cashierEnabled: !!shop.cashier_enabled,
     autoRegister: !!shop.auto_register,
     identityBindingRequired: !!shop.identity_binding_required,
@@ -101,7 +65,6 @@ export function publicSettings(shop: TenantShop) {
     checkinGeo: !!shop.checkin_geo,
     checkoutGeo: !!shop.checkout_geo,
     machineGeo: !!shop.machine_geo,
-    entryPricingIds,
     botContact: shop.bot_contact,
   };
 }
@@ -114,7 +77,6 @@ export function publicSettings(shop: TenantShop) {
 export const bindingPromptSchema = z.string().trim().max(500);
 
 const settingsSchema = z.object({
-  billingEnabled: z.boolean(),
   cashierEnabled: z.boolean().optional(),
   autoRegister: z.boolean(),
   identityBindingRequired: z.boolean().optional(),
@@ -122,9 +84,8 @@ const settingsSchema = z.object({
   checkinGeo: z.boolean().optional(),
   checkoutGeo: z.boolean().optional(),
   machineGeo: z.boolean().optional(),
-  // The shop's default plan: what the default resource group bills and what
-  // front-desk and bot admissions start. One plan, as every session bills one.
-  entryPricingIds: z.array(z.string().min(1)).max(1, "默认计费方案只能选择一个"),
+  // The resource a front-desk check-in bills through: its group's plan, or its own.
+  cashierResourceId: z.string().min(1).nullable().optional(),
   botContact: bindingPromptSchema,
 });
 
@@ -226,7 +187,7 @@ shopRouter.route("/data", shopDataRouter);
 shopRouter.route("/staff", legacyStaffRouter);
 shopRouter.route("/integration", legacyIntegrationRouter);
 
-// Shop Overview, Entry Pricing and Today's Schedule
+// Shop Overview
 shopRouter.get("/", async (c) => {
   const shop = getShop(c);
   const user = optionalUser(c);
@@ -240,13 +201,11 @@ shopRouter.get("/", async (c) => {
         .first<{ playerId: string; identityBound: number }>()
     : null;
 
-  const pricing = shop.billing_enabled
-    ? await c.env.DB.prepare(
-        "SELECT id,name,kind,enabled,status,provider_json,created_at,updated_at FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active' AND (id IN (SELECT value FROM json_each(?)) OR kind='time.cap')",
-      )
-        .bind(shop.id, shop.entry_pricing_ids_json)
-        .all<PricingConfigRow>()
-    : { results: [] };
+  // Released App Clips decode `shop.billingEnabled` as a required field and use
+  // it to offer the bill and wallet. There is no switch behind it any more: it
+  // says whether any resource bills.
+  const billingEnabled = !!(await c.env.DB.prepare(`SELECT ${shopBillsSql("?")} AS bills`)
+    .bind(shop.id).first<{ bills: number }>())?.bills;
 
   const localDate =
     c.req.query("date") ?? formatLocalDate(new Date(), shop.time_zone);
@@ -258,126 +217,16 @@ shopRouter.get("/", async (c) => {
     jsonError(400, "日期无效", "INVALID_DATE");
   }
 
-  let ids: string[] = [];
-  try {
-    ids = JSON.parse(shop.entry_pricing_ids_json) as string[];
-  } catch {
-    ids = [];
-  }
-
-  // A cap across plans holds every time plan, so every cap applies to the entry plans.
-  const configs = pricing.results.map(toPricingConfig);
-
-  // Main's browser billing previews consume raw UTC pricing rules directly.
-  if (c.req.query("pricing") === "raw") return c.json({
-    entryPricing: configs.map((row) =>
-      "rules" in row.provider && row.provider.rules
-        ? {
-            ...row,
-            provider: {
-              ...row.provider,
-              rules: [...row.provider.rules].sort(
-                (a: { priority: number }, b: { priority: number }) => b.priority - a.priority,
-              ),
-            },
-          }
-        : row,
-    ),
-    pricingSchedule: { localDate, timeZone: shop.time_zone, groups: [], clientCalculation: true },
-    shop: { publicId: shop.public_id, name: shop.name, timeZone: shop.time_zone, heroUrl: shop.hero_url, ...publicSettings(shop) },
-    membership: membership ? { ...membership, identityBound: !!membership.identityBound } : null,
-  });
-
-  const groups = configs.map((row) => {
-    const config = {
-      ...row,
-      provider: {
-        ...row.provider,
-        timeZone:
-          ("timeZone" in row.provider ? row.provider.timeZone : undefined) ??
-          "UTC",
-      },
-    } as PricingConfig;
-
-    if (config.kind === "charge.fixed") {
-      return {
-        id: row.id,
-        name: row.name,
-        kind: row.kind,
-        amount: config.provider.amount,
-        segments: [],
-      };
-    }
-
-    const timeline =
-      config.kind === "time.cap"
-        ? buildTimeCapPricingTimeline({
-            localDate,
-            config: config.provider,
-            displayTimeZone: shop.time_zone,
-          })
-        : buildPriorityTimePricingTimeline({
-            localDate,
-            config: config.provider,
-            displayTimeZone: shop.time_zone,
-          });
-
-    return { id: row.id, name: row.name, kind: row.kind, ...timeline };
-  });
-
+  // A shop has no entry plan: what a visit bills is the scanned resource's
+  // group's plan, shown on its page. The empty lists stay for released App
+  // Clips, which decode them as required fields.
   return c.json({
-    entryPricing: configs
-      .map((row, index) => {
-        const activeRuleIds = new Set(
-          groups[index]!.segments
-            .filter((segment) => !segment.isClosed)
-            .map((segment) => segment.ruleId),
-        );
-        const dateTime = new Intl.DateTimeFormat("sv-SE", {
-          timeZone: shop.time_zone,
-          dateStyle: "short",
-          timeStyle: "medium",
-          hourCycle: "h23",
-        });
-        return {
-          id: row.id,
-          name: row.name,
-          kind: row.kind,
-          provider: {
-            ...row.provider,
-            rules: ("rules" in row.provider ? row.provider.rules : undefined)
-              ?.filter(
-                (rule: { id: string; status?: string }) =>
-                  (rule.status ?? "active") === "active" &&
-                  activeRuleIds.has(rule.id),
-              )
-              .sort(
-                (a: { priority: number }, b: { priority: number }) =>
-                  b.priority - a.priority,
-              )
-              .map((rule) => ({
-                ...rule,
-                ...(rule.dateTimeRange
-                  ? {
-                      displayDateTimeRange: {
-                        start: dateTime.format(
-                          new Date(rule.dateTimeRange.start),
-                        ),
-                        end: dateTime.format(new Date(rule.dateTimeRange.end)),
-                      },
-                    }
-                  : {}),
-              })),
-          },
-        };
-      })
-      .filter(
-        (plan) => plan.kind === "charge.fixed" || plan.provider.rules?.length,
-      ),
+    entryPricing: [],
     pricingSchedule: {
       localDate,
       timeZone: shop.time_zone,
-      groups,
+      groups: [],
+      ...(c.req.query("pricing") === "raw" ? { clientCalculation: true } : {}),
     },
     shop: {
       publicId: shop.public_id,
@@ -385,6 +234,7 @@ shopRouter.get("/", async (c) => {
       timeZone: shop.time_zone,
       heroUrl: shop.hero_url,
       ...publicSettings(shop),
+      billingEnabled,
     },
     membership: membership
       ? { ...membership, identityBound: !!membership.identityBound }
@@ -419,19 +269,14 @@ shopRouter.get("/hero", async (c) => {
 shopRouter.get("/settings", async (c) => {
   const shop = getShop(c);
   await staffPrincipal(c, shop, true);
-  let entryPricingIds: string[] = [];
-  try {
-    entryPricingIds = JSON.parse(shop.entry_pricing_ids_json) as string[];
-  } catch {
-    entryPricingIds = [];
-  }
+  const [cashierResource, configuration] = await Promise.all([
+    cashierResourceId(c.env.DB, shop.id),
+    billingConfiguration(c.env.DB, shop.id),
+  ]);
   return c.json({
     ...publicSettings(shop),
-    billingConfiguration: await billingConfiguration(
-      c.env.DB,
-      shop.id,
-      entryPricingIds,
-    ),
+    cashierResourceId: cashierResource,
+    billingConfiguration: configuration,
   });
 });
 
@@ -463,10 +308,6 @@ shopRouter.put("/settings", async (c) => {
         jsonError(400, "绑定提示需要包含 {code}，用来显示绑定码", "BINDING_PROMPT_CODE_REQUIRED");
       }
 
-      if (cashierEnabled && !body.billingEnabled) {
-        jsonError(409, "请先启用入场计费", "BILLING_DISABLED");
-      }
-
       if (initialShop.cashier_enabled && !cashierEnabled) {
         const unpaid = await c.env.DB.prepare(`SELECT 1 FROM sessions s JOIN cashier_profiles cp
           ON cp.shop_id=s.shop_id AND cp.player_id=s.player_id
@@ -475,48 +316,31 @@ shopRouter.put("/settings", async (c) => {
         if (unpaid) jsonError(409, "存在未结清的前台账单，请先收款结账", "CASHIER_UNSETTLED_SESSIONS");
       }
 
-      const configuration = await billingConfiguration(c.env.DB, initialShop.id, body.entryPricingIds);
-      const billingChanged = !initialShop.billing_enabled ||
-        (!initialShop.cashier_enabled && cashierEnabled) ||
-        JSON.stringify(body.entryPricingIds) !== JSON.stringify(publicSettings(initialShop).entryPricingIds);
-      // Existing invalid pricing must not prevent editing unrelated settings.
-      if (body.billingEnabled && billingChanged && !configuration.ready) {
-        jsonError(
-          409,
-          !configuration.balanceAssetsReady
-            ? "请先配置有效的余额资产"
-            : !body.entryPricingIds.length
-            ? "请先在「资源组与计费」中设置默认计费方案"
-            : "默认计费方案已停用或归档，请在「资源组与计费」中重新选择",
-          "BILLING_CONFIGURATION_REQUIRED",
-          configuration,
-        );
-      }
-
-      if (initialShop.billing_enabled && !body.billingEnabled) {
-        const unpaid = await c.env.DB.prepare(
-          "SELECT 1 FROM sessions WHERE shop_id=? AND payment_status='unpaid' LIMIT 1",
-        ).bind(initialShop.id).first();
-        if (unpaid) jsonError(409, "存在未结消费，不能停用计费", "UNSETTLED_SESSIONS");
-      }
+      // A front-desk check-in bills through a resource, like a scan; the front
+      // desk cannot be on without one.
+      const cashierResource = body.cashierResourceId === undefined
+        ? await cashierResourceId(c.env.DB, initialShop.id)
+        : body.cashierResourceId;
+      if (cashierEnabled && !cashierResource) jsonError(409, "请先选择前台资源", "CASHIER_RESOURCE_REQUIRED");
+      if (cashierResource && !await c.env.DB.prepare("SELECT 1 FROM machines WHERE shop_id = ? AND id = ?")
+        .bind(initialShop.id, cashierResource).first()) jsonError(404, "没有找到这个资源", "DEVICE_NOT_FOUND");
+      const configuration = await billingConfiguration(c.env.DB, initialShop.id);
 
       await c.env.DB.batch([
         c.env.DB.prepare(
-          `INSERT INTO shop_billing_settings (shop_id, billing_enabled, auto_register, checkin_geo, checkout_geo, machine_geo, entry_pricing_ids_json, bot_contact, identity_binding_required)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO shop_billing_settings (shop_id, auto_register, checkin_geo, checkout_geo, machine_geo, bot_contact, identity_binding_required)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(shop_id) DO UPDATE SET
-             billing_enabled=excluded.billing_enabled, auto_register=excluded.auto_register,
+             auto_register=excluded.auto_register,
              checkin_geo=excluded.checkin_geo, checkout_geo=excluded.checkout_geo, machine_geo=excluded.machine_geo,
-             entry_pricing_ids_json=excluded.entry_pricing_ids_json, bot_contact=excluded.bot_contact,
+             bot_contact=excluded.bot_contact,
              identity_binding_required=excluded.identity_binding_required`,
         ).bind(
           initialShop.id,
-          +body.billingEnabled,
           +body.autoRegister,
           +checkinGeo,
           +checkoutGeo,
           +machineGeo,
-          JSON.stringify(body.entryPricingIds),
           body.botContact,
           +identityBindingRequired,
         ),
@@ -526,7 +350,7 @@ shopRouter.put("/settings", async (c) => {
            ON CONFLICT(shop_id, key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
         ).bind(
           initialShop.id,
-          JSON.stringify({ enabled: cashierEnabled }),
+          JSON.stringify({ enabled: cashierEnabled, ...(cashierResource ? { resourceId: cashierResource } : {}) }),
           new Date().toISOString(),
         ),
       ]);
@@ -538,6 +362,7 @@ shopRouter.put("/settings", async (c) => {
         checkoutGeo,
         machineGeo,
         cashierEnabled,
+        cashierResourceId: cashierResource,
         identityBindingRequired,
         billingConfiguration: configuration,
       });

@@ -93,6 +93,12 @@ const snapshot = {
 };
 
 describe("convertPrismNeoSnapshot", () => {
+  it("keeps a snapshot without billing rules as a device-only shop", () => {
+    const converted = convertPrismNeoSnapshot({ ...snapshot, billingRules: [] }, { timeZone: "Asia/Shanghai" });
+    expect(converted.settings).toMatchObject({ entryPricingIds: [] });
+    expect(converted.tables.pricing_configs).toEqual([]);
+  });
+
   it("stores present grants in stored units and keeps per-item limits", () => {
     const converted = convertPrismNeoSnapshot(
       {
@@ -192,13 +198,23 @@ describe("convertPrismNeoSnapshot", () => {
     ]);
   });
 
-  it("ships a disabled legacy pricing release pinning unpaid sessions", () => {
-    expect(backup.tables.pricing_configs[0]).toMatchObject({ id: "legacy:pricing-config:time-priority", enabled: 0 });
+  it("bills the default group by an enabled legacy pricing release pinning unpaid sessions", () => {
+    expect(backup.settings).toMatchObject({
+      cashierEnabled: false,
+      entryPricingIds: ["legacy:pricing-config:time-priority"],
+    });
+    expect(backup.tables.pricing_configs[0]).toMatchObject({ id: "legacy:pricing-config:time-priority", enabled: 1 });
+    expect(backup.tables.pricing_config_versions[0]).toMatchObject({ enabled: 1 });
+    expect(
+      backup.tables.asset_definitions.filter((d) => d.type === "currency" && d.status === "active").map((d) => d.code),
+    ).toEqual(expect.arrayContaining(["paid", "free"]));
     const provider = JSON.parse(String(backup.tables.pricing_configs[0]!.provider_json));
+    // neo's Fri/Sat 20:00-04:00 Shanghai night rate, stored in UTC.
+    expect(provider.timeZone).toBe("UTC");
     expect(provider.rules[0]).toMatchObject({
       id: "legacy.rule.2",
       weekdays: [5, 6],
-      timeRange: { start: "20:00", end: "04:00" },
+      timeRange: { start: "12:00", end: "20:00" },
       pricing: { unitPrice: 4000, priceCap: 16000 },
     });
     expect(backup.tables.pricing_releases[0]!.time_zone).toBe("UTC");

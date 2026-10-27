@@ -35,7 +35,7 @@ function ShopSurface({ shopCode }: { shopCode: string }) {
     const revision = checkoutRevision.current;
     try {
       const shop = await api<ShopInfo>(shopApi(shopCode), { signal });
-      const current = user && shop.shop.billingEnabled && (shop.membership || !shop.shop.identityBindingRequired)
+      const current = user && (shop.membership || !shop.shop.identityBindingRequired)
         ? await api<Summary>(shopApi(shopCode, "player/me"), { signal }) : null;
       const preview = current?.activeSession ? await browserCheckoutPreview(shopApi(shopCode, "player/billing-inputs"), shopApi(shopCode, "player/checkout/preview"), signal) : null;
       const latest = current && !current.activeSession ? await api<{ receipt: Receipt | null }>(shopApi(shopCode, "player/checkout/latest"), { signal }) : null;
@@ -48,17 +48,16 @@ function ShopSurface({ shopCode }: { shopCode: string }) {
         setError(errorText(e instanceof Error ? e.message : "操作失败"));
       throw e;
     } finally { if (!signal.aborted) setBusy(false); }
-  }, !loading, `${shopCode}:${attempt}`, !info || !!user && info.shop.billingEnabled
+  }, !loading, `${shopCode}:${attempt}`, !info || !!user
     && info.shop.identityBindingRequired && !info.membership?.identityBound && !bill);
   return <section className={`machine-session shop-session ${bill ? "has-checkout" : ""}`}>
     {info && <ShopHero name={info.shop.name || shopCode} heroUrl={info.shop.heroUrl} subtitle={!user ? "" : bill ? t("计费中") : receipt ? t("结账成功") : busy ? t("正在加载") : t("未入场")} />}
     {error && <div role="alert" className="text-coral">{error}<button className="ml-3 underline" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button></div>}
     {loading || (busy && !info) ? <Loader2 className="mx-auto animate-spin" /> : info && !user ? <SessionSignIn /> : busy && !bill && !receipt ? <Loader2 className="mx-auto animate-spin" /> : info && user && <SessionPasskeySetup>
-      {!info.shop.billingEnabled ? <p className="session-subtitle">{t("本店未启用入场计费，暂无账单功能。")}</p>
-        : !bill && info.shop.identityBindingRequired && !info.membership?.identityBound ? <PlatformBinding code={shopCode} />
+      {!bill && info.shop.identityBindingRequired && !info.membership?.identityBound ? <PlatformBinding code={shopCode} />
         : bill ? <div className="grid gap-5"><BillTotal preview={bill} /><BillTimeline preview={bill} /></div>
         : receipt ? <SettledBill receipt={receipt} />
-        : !error && <p className="session-subtitle">{t("请碰一下 NFC 或扫描机台上的二维码入场")}</p>}
+        : !error && <p className="session-subtitle">{t("请碰一下 NFC 或扫描机台上的二维码")}</p>}
       {bill && <footer className="shop-checkout"><CheckoutButton info={info} onPendingChange={pending => { checkoutPending.current = pending; checkoutRevision.current++; }} onComplete={result => { checkoutPending.current = false; checkoutRevision.current++; setReceipt(result); setBill(null); setBillingActive(shopCode, false); }} /></footer>}
     </SessionPasskeySetup>}
   </section>;

@@ -53,14 +53,12 @@ export type TenantShop = {
   latitude: number;
   longitude: number;
   radius_meters: number;
-  billing_enabled: number;
   cashier_enabled: number;
   auto_register: number;
   identity_binding_required: number;
   checkin_geo: number;
   checkout_geo: number;
   machine_geo: number;
-  entry_pricing_ids_json: string;
   bot_contact: string;
   time_zone: string;
   hero_url: string | null;

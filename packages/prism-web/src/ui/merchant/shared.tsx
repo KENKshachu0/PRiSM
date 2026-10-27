@@ -17,7 +17,6 @@ import { shopApi } from "../BillingPages";
 export const MerchantContext = createContext({
   shopCode: "",
   shopId: "",
-  billingEnabled: false,
   cashierEnabled: false,
   canWrite: false,
   owner: false,

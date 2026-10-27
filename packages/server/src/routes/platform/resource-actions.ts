@@ -103,14 +103,15 @@ export async function executeResourceAction(
   const climate = isClimate ? climatePayload(body) : {};
   if (!staff)
     checkShopLocation(shop, isDoor ? "checkin" : "machine", body.location);
+  const billed = staff || isDoor ? null : await requireResourcePlan(c, shop, machine.id);
   const player = staff
     ? null
     : isDoor
-      ? await requireShopPlayer(c, shop, true)
-      : shop.billing_enabled
-        ? { id: (await requireResourcePlan(c, shop, machine.id)).playerId }
+      ? await requireShopPlayer(c, shop)
+      : billed
+        ? { id: billed.playerId }
         : device.capabilities.has("door")
-          ? await requireShopPlayer(c, shop, true)
+          ? await requireShopPlayer(c, shop)
           : null;
   if (action === "coin") {
     if (!staff && hinataConfigOf(device)?.coinAfterSwipe)
@@ -165,8 +166,8 @@ export async function executeResourceAction(
       }
       // Opening a door starts the door's plan when the player agreed to it, as
       // scanning any other resource and confirming does.
-      if (!staff && isDoor && shop.billing_enabled &&
-          !(await deps.resourceBilling.activeSession({ resourceId: machine.id, playerId: player!.id }))) {
+      if (!staff && isDoor &&
+          !(await deps.resourceBilling.admits({ resourceId: machine.id, playerId: player!.id }))) {
         if (!body.consent)
           jsonError(409, "请确认计费规则", "CHECKIN_CONSENT_REQUIRED");
         await deps.resourceBilling.activate({

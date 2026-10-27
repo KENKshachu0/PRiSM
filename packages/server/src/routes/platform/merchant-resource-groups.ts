@@ -5,13 +5,14 @@ import type { AppBindings } from "../../bindings.js";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { DEFAULT_RESOURCE_GROUP_ID } from "../../resources/billing.js";
-import { defaultResourceGroup, findResourceGroup, listResourceGroups } from "../../resources/repository.js";
+import { ensureDefaultGroupStatement, findResourceGroup, listResourceGroups } from "../../resources/repository.js";
 import { assertResourceShop, canConfigureResource } from "./merchant-resources.js";
+import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 
 /**
- * Resource groups: a name and a default plan for the resources in them. The
- * shop's default group is not stored; its plan is the shop's default plan, so
- * a shop that never creates a group keeps billing exactly as it did.
+ * Resource groups: a name and the plan the resources in them bill. The shop's
+ * default group is stored like any other and holds every resource without a
+ * group of its own; it can be renamed, priced and paused, but not deleted.
  */
 export const merchantResourceGroupRouter = new Hono<AppBindings>();
 type C = Context<AppBindings>;
@@ -38,33 +39,31 @@ async function configurable(c: C, shopId: string) {
 
 /**
  * A plan a resource may bill: a plan of this shop a session can run (a time
- * plan, or a fixed charge billed once per session) that is not archived. The
- * shop's default plan times every visit with nothing else running, so it is a
- * time plan.
+ * plan, or a fixed charge billed once per session) that is not archived. A plan
+ * given to a group or resource starts billing it, so players also need a
+ * balance to pay from. Clearing the plan (null) makes it free.
  */
 export async function assertBillablePlan(c: C, shopId: string, planId: string | null | undefined, timeOnly = false) {
   if (!planId) return;
-  const plan = await c.env.DB.prepare("SELECT kind, status FROM pricing_configs WHERE shop_id = ? AND id = ?")
-    .bind(shopId, planId).first<{ kind: PricingConfigKind; status: string }>();
+  const [plan, currency] = await Promise.all([
+    c.env.DB.prepare("SELECT kind, status FROM pricing_configs WHERE shop_id = ? AND id = ?")
+      .bind(shopId, planId).first<{ kind: PricingConfigKind; status: string }>(),
+    c.env.DB.prepare("SELECT 1 FROM asset_definitions WHERE shop_id = ? AND type = 'currency' AND status = 'active' LIMIT 1")
+      .bind(shopId).first(),
+  ]);
   if (!plan || plan.status !== "active" || !isStartablePricingKind(plan.kind) || (timeOnly && plan.kind !== "time.priority"))
     jsonError(400, timeOnly ? "请选择有效的按时计费规则" : "请选择有效的计费规则", "RESOURCE_PRICING_INVALID");
-}
-
-async function shopDefaultGroup(c: C, shopId: string) {
-  const row = await c.env.DB.prepare("SELECT entry_pricing_ids_json AS ids FROM shop_billing_settings WHERE shop_id = ?")
-    .bind(shopId).first<{ ids: string }>();
-  return defaultResourceGroup(shopId, row?.ids ?? "[]");
+  if (!currency) jsonError(409, "请先配置有效的余额资产", "BILLING_CONFIGURATION_REQUIRED");
 }
 
 async function view(c: C, shopId: string) {
-  const [defaultGroup, groups, counts] = await Promise.all([
-    shopDefaultGroup(c, shopId),
+  const [groups, counts] = await Promise.all([
     listResourceGroups(c.env.DB, shopId),
     c.env.DB.prepare("SELECT COALESCE(resource_group_id, ?) AS id, COUNT(*) AS n FROM machines WHERE shop_id = ? GROUP BY 1")
       .bind(DEFAULT_RESOURCE_GROUP_ID, shopId).all<{ id: string; n: number }>(),
   ]);
   const count = new Map(counts.results.map((row) => [row.id, row.n]));
-  return [defaultGroup, ...groups].map((group) => ({
+  return groups.map((group) => ({
     id: group.id,
     name: group.name,
     enabled: group.enabled,
@@ -99,31 +98,24 @@ merchantResourceGroupRouter.patch("/resource-groups/:id", async (c) => {
   const body = patchInput.parse(await c.req.json());
   const id = c.req.param("id");
   await configurable(c, body.shopId);
-  await assertBillablePlan(c, body.shopId, body.defaultPricingConfigId, id === DEFAULT_RESOURCE_GROUP_ID);
-  if (id === DEFAULT_RESOURCE_GROUP_ID) {
-    if (body.name !== undefined || body.enabled === false)
-      jsonError(400, "默认资源组只能修改计费方案", "RESOURCE_GROUP_DEFAULT_FIXED");
-    if (body.defaultPricingConfigId !== undefined) {
-      await c.env.DB.prepare(
-        `INSERT INTO shop_billing_settings(shop_id, billing_enabled, auto_register, entry_pricing_ids_json, bot_contact)
-         VALUES (?, 0, 0, ?, '') ON CONFLICT(shop_id) DO UPDATE SET entry_pricing_ids_json = excluded.entry_pricing_ids_json`,
-      ).bind(body.shopId, JSON.stringify(body.defaultPricingConfigId ? [body.defaultPricingConfigId] : [])).run();
-    }
-  } else {
-    const group = await findResourceGroup(c.env.DB, body.shopId, id);
-    if (!group) jsonError(404, "没有找到这个资源组", "RESOURCE_GROUP_NOT_FOUND");
-    await c.env.DB.prepare(
-      `UPDATE resource_groups SET name = ?, enabled = ?, default_pricing_config_id = ?, updated_at = ?
-       WHERE shop_id = ? AND id = ?`,
-    ).bind(
-      body.name ?? group.name,
-      +(body.enabled ?? group.enabled),
-      body.defaultPricingConfigId === undefined ? group.defaultPricingConfigId : body.defaultPricingConfigId,
-      new Date().toISOString(),
-      body.shopId,
-      id,
-    ).run();
-  }
+  await assertBillablePlan(c, body.shopId, body.defaultPricingConfigId);
+  // The default group is edited like any other; a shop missing its row gets one.
+  if (id === DEFAULT_RESOURCE_GROUP_ID) await ensureDefaultGroupStatement(c.env.DB, body.shopId).run();
+  const group = await findResourceGroup(c.env.DB, body.shopId, id);
+  if (!group) jsonError(404, "没有找到这个资源组", "RESOURCE_GROUP_NOT_FOUND");
+  await c.env.DB.prepare(
+    `UPDATE resource_groups SET name = ?, enabled = ?, default_pricing_config_id = ?, updated_at = ?
+     WHERE shop_id = ? AND id = ?`,
+  ).bind(
+    body.name ?? group.name,
+    +(body.enabled ?? group.enabled),
+    body.defaultPricingConfigId === undefined ? group.defaultPricingConfigId : body.defaultPricingConfigId,
+    new Date().toISOString(),
+    body.shopId,
+    id,
+  ).run();
+  // A bot in this group may now bill on entry, or no longer.
+  notifyBotsChangedAfter(c, body.shopId);
   return c.json({ resourceGroup: (await view(c, body.shopId)).find((group) => group.id === id) });
 });
 

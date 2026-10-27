@@ -182,8 +182,8 @@ curl -X POST http://localhost:8787/rpc/player/redeem \
 | `PATCH` | `/rpc/staff/players/:playerId/status` | 设置玩家状态（`active` / `disabled` / `banned`）。 |
 | `POST` | `/rpc/staff/players/:playerId/identities` | 绑定玩家外部物理卡或 平台身份。 |
 | `DELETE` | `/rpc/staff/players/:playerId/identities/:provider/:subject` | 删除玩家的某个外部身份绑定；删除后该 平台身份、卡号或扫码身份不再自动指向此玩家。 |
-| `POST` | `/rpc/staff/players/:playerId/session/preview` | 预览为玩家开始一个方案会新增、结束、保留哪些方案。请求 `{pricingConfigId?}`，不传为店铺默认方案；响应 `{pricingConfigId, planName, revision, changed, started, stopped, kept}`（方案名）。 |
-| `POST` | `/rpc/staff/players/:playerId/session/start` | 店员为玩家开始一个方案的计费，请求 `{pricingConfigId?, expectedRevision?}`（旧的 `pricingConfigIds` 最多一个）；不传方案为店铺默认方案。带预览的 `expectedRevision` 时，状态已变化返回 `409 PRICING_STATE_REVISION_MISMATCH`。一条 session 只计一个方案；同一方案最多一条，再次开始已在计费的方案返回原 session（`billing.created: false`）。响应 `{session, billing}`，`billing` 同扫码确认。与扫码、前台收银、机器人走同一个入口，见 [计费状态编排](pricing-sessions.md)。 |
+| `POST` | `/rpc/staff/players/:playerId/session/preview` | 预览为玩家开始一个方案会新增、结束、保留哪些方案。请求 `{pricingConfigId}`，必须指定（没有默认方案，不传返回 `PRICING_TARGET_REQUIRED`）；响应 `{pricingConfigId, planName, revision, changed, started, stopped, kept}`（方案名）。 |
+| `POST` | `/rpc/staff/players/:playerId/session/start` | 店员为玩家开始一个方案的计费，请求 `{pricingConfigId?, expectedRevision?}`（旧的 `pricingConfigIds` 最多一个）；必须指定方案，不传返回 `PRICING_TARGET_REQUIRED`。带预览的 `expectedRevision` 时，状态已变化返回 `409 PRICING_STATE_REVISION_MISMATCH`。一条 session 只计一个方案；同一方案最多一条，再次开始已在计费的方案返回原 session（`billing.created: false`）。响应 `{session, billing}`，`billing` 同扫码确认。与扫码、前台收银、机器人走同一个入口，见 [计费状态编排](pricing-sessions.md)。 |
 | `GET` | `/rpc/staff/players/:playerId/assets` | 检查并审计指定玩家的资产持有和变更流水。 |
 | `POST` | `/rpc/staff/players/:playerId/assets/grants` | 给玩家赠送/分发资产（货币、道具、月卡等）。 |
 | `POST` | `/rpc/staff/players/:playerId/assets/adjustments` | 按 `holdingId` 精确调整/扣减/ revoke 某条玩家持有记录，避免同类资产的不同有效期记录互相混淆。 |
@@ -334,8 +334,7 @@ Integration RPC 面向聊天机器人、自助入口、扫码入口等可信外�
 
 所有 Integration 路由共用一道检查（`guardIntegration`）：
 
-- `platform-binding/confirm`（身份绑定）只需要有效的 Bot 凭据，**不要求店铺启用计费**，不使用 PRiSM 计费的店铺也能让玩家通过 Bot 绑定身份（门锁等设备需要）。
-- 其它路由要求店铺启用计费（否则 `409 BILLING_DISABLED`）。
+- 只校验 Bot 凭据。店铺没有整店计费开关，没有资源计费的店铺也能让玩家绑定身份、查询钱包；开始计费等动作是否可行由目标资源决定（免费资源返回 `RESOURCE_NOT_BILLED`）。
 
 Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后台分不清一条请求是管理员还是玩家发的（管理员白名单只在 Bot 里），而凭据本身就在店家自己的 Bot 里。Koishi 插件的 `playerCommands: "readonly"` 让玩家只能绑定、查询和兑换，见插件 README。
 
@@ -343,7 +342,7 @@ Bot 向玩家开放哪些命令由 Bot 自己配置，后台不做限制：后�
 | --- | --- | --- |
 | `POST` | `/rpc/integration/players/by-identity/resolve` | 按外部身份查找已绑定玩家。 |
 | `POST` | `/rpc/integration/players/by-identity/register` | 按外部身份查找或注册玩家，并自动绑定该身份。 |
-| `POST` | `/rpc/integration/players/by-identity/session/start` | 按外部身份为玩家开始发请求的 Bot 资源的方案：Bot 的专属方案，否则它所属资源组的方案（默认资源组即店铺默认方案）。请求带 `pricingConfigIds` 时开始其中第一个方案（`label` 作为场次显示名），这是给麻将还没交给平台的旧版 Bot 的兼容路径：旧版 Bot 上桌时按桌的方案开始计费、下桌时停止返回的那个场次，所以只结束麻将方案、不影响玩家的其他计费；`entry` 被忽略；Bot 资源停用时返回 `403 BOT_DISABLED`。该方案已在计费时返回原 session（`created: false`）；方案依赖的其他方案会自动开始，互斥的方案会结束。响应 `{session, created, planName, billing}`，`billing` 同扫码确认。 |
+| `POST` | `/rpc/integration/players/by-identity/session/start` | 按外部身份为玩家开始发请求的 Bot 资源的方案：Bot 的专属方案，否则它所属资源组的方案。请求带 `pricingConfigIds` 时开始其中第一个方案（`label` 作为场次显示名），这是给麻将还没交给平台的旧版 Bot 的兼容路径：旧版 Bot 上桌时按桌的方案开始计费、下桌时停止返回的那个场次，所以只结束麻将方案、不影响玩家的其他计费；`entry` 被忽略；Bot 资源停用时返回 `403 BOT_DISABLED`。该方案已在计费时返回原 session（`created: false`）；方案依赖的其他方案会自动开始，互斥的方案会结束。响应 `{session, created, planName, billing}`，`billing` 同扫码确认。 |
 | `POST` | `/rpc/integration/players/by-identity/presence` | 一位玩家是否在店：`{inShop, plans, occupying}`，`plans` 为在计费的方案，`occupying` 为正在占用的资源。只剩未结账单的玩家 `inShop: false`。 |
 | `POST` | `/rpc/integration/players/by-identity/checkout/preview` | 按外部身份预览玩家当前 session 结算。 |
 | `POST` | `/rpc/integration/players/by-identity/checkout/confirm` | 按外部身份确认玩家当前 session 结算。 |
@@ -479,7 +478,7 @@ HINATA IO 机台可以直接连到本平台：`GET /io/ws`，WebSocket 升级请
 
 ## React 店铺计费初始化
 
-已有非计费店铺可由 owner 调用 `POST /api/v1/shops/:shopCode/billing/setup`，通过一次事务补齐余额资产、创建标准入场方案并启用计费。请求带收费标准、可选的 `cashierEnabled` 和 UUID `operationId`，重试不会重复创建规则。新建店铺的 `billingSetup.createBotToken` 默认为 `false`，只有显式选择才创建 Bot 凭据；`billingSetup.cashierEnabled`（默认 `false`）为 `true` 时同时开启前台收银；`billingSetup.autoRegister` 默认 `true`；启用计费的设置校验不要求 Bot 凭据。向导操作、完整参数及数据保留策略见[店铺计费初始化](billing-setup.md)。
+默认资源组还没有方案的店铺可由 owner 调用 `POST /api/v1/shops/:shopCode/billing/setup`，通过一次事务补齐余额资产、创建标准入场方案并设为默认资源组的方案（快速创建计费）。请求带收费标准、可选的 `cashierEnabled` 和 UUID `operationId`，重试不会重复创建规则。新建店铺的 `billingSetup.createBotToken` 默认为 `false`，只有显式选择才创建 Bot 凭据；`billingSetup.cashierEnabled`（默认 `false`）为 `true` 时同时开启前台收银；`billingSetup.autoRegister` 默认 `true`；选定计费方案的校验不要求 Bot 凭据。向导操作、完整参数及数据保留策略见[店铺计费初始化](billing-setup.md)。
 
 设备状态接口的身份门控统一为 `gate: "binding"`，业务错误为 `PLATFORM_BINDING_REQUIRED`。React 与 Koishi 已同步采用新契约；其他调用旧 `qq-binding` 或旧门控名的客户端需一起更新。
 

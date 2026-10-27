@@ -727,8 +727,7 @@ function PlayerPanel({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
-  const { canWrite, shopCode, cashierEnabled, timeZone, billingEnabled } =
-    useMerchant();
+  const { canWrite, shopCode, cashierEnabled, timeZone } = useMerchant();
   const request = useStaffApi();
   const base = `players/${segment(player.id)}`;
   const assets = useResource<Holdings>(`${base}/assets`);
@@ -737,7 +736,7 @@ function PlayerPanel({
     "asset-definitions",
   );
   const plans = useResource<{ pricingConfigs: EntryPlan[] }>(
-    billingEnabled ? "pricing-configs" : null,
+    "pricing-configs",
   );
   const [action, setAction] = useState<
     "wallet" | "entry" | "checkout" | "override" | "recharge" | "grant" | null

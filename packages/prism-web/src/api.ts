@@ -31,6 +31,8 @@ export type PublicResource = {
   kind: "machine" | "door";
   capabilities: { power: boolean; climate?: boolean; coin: boolean; card: boolean; door: boolean; mahjong?: boolean };
   webOnly?: boolean;
+  /** Using it needs its pricing plan running; a free resource needs nothing. */
+  billed?: boolean;
   publicId: string;
   name: string;
   shop: {
@@ -38,7 +40,6 @@ export type PublicResource = {
     publicId?: string;
     locationEnabled?: boolean;
     machineGeo?: boolean;
-    billingEnabled?: boolean;
     webUrl?: string;
     heroUrl?: string | null;
     latitude: number;
