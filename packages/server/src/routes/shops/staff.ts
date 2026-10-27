@@ -215,7 +215,7 @@ staffRouter.post("/players/:playerId/session/preview", async (c) => {
   });
 });
 
-// Start Session: the named plan, or the shop's default plan.
+// Start Session: the plan staff named; there is no default plan to fall back on.
 staffRouter.post("/players/:playerId/session/start", async (c) => {
   const shop = getShop(c);
   const staff = await staffPrincipal(c, shop);

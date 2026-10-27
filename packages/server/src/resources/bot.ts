@@ -86,8 +86,7 @@ export async function botConfigView(db: D1DatabaseLike, shopId: string, bot: Bot
        WHERE c.shop_id = ? AND c.capability = 'door' AND m.enabled = 1 ORDER BY m.name`,
     ).bind(shopId).all<{ id: string; name: string }>(),
     db.prepare(
-      `SELECT ${resourceBilledSql("m", "b")} AS billed FROM machines m
-       LEFT JOIN shop_billing_settings b ON b.shop_id = m.shop_id WHERE m.shop_id = ? AND m.id = ?`,
+      `SELECT ${resourceBilledSql("m")} AS billed FROM machines m WHERE m.shop_id = ? AND m.id = ?`,
     ).bind(shopId, bot.id).first<{ billed: number }>(),
   ]);
   const { tokenId: _token, doorResourceId, ...settings } = bot.config;

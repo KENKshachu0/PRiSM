@@ -42,8 +42,10 @@ async function fixture() {
   sqlite.run("INSERT INTO shop_player_accounts(shop_id,user_id,player_id,verified_at) VALUES ('shop','owner-user','owner-player',?)", [NOW]);
   sqlite.run("INSERT INTO player_identities(shop_id,player_id,provider,subject,created_at) VALUES ('shop','owner-player','onebot','10001',?)", [NOW]);
   sqlite.run("INSERT INTO shop_platform_bindings(shop_id,user_id,provider,subject,verified_at) VALUES ('shop','owner-user','onebot','10001',?)", [NOW]);
-  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required,entry_pricing_ids_json)
-    VALUES ('shop',1,1,0,'["base"]')`);
+  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required)
+    VALUES ('shop',1,1,0)`);
+  // Every resource without a group of its own bills through the default group.
+  sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('shop','default','默认资源组',1,'base',?,?)", [NOW, NOW]);
   sqlite.run("INSERT INTO asset_definitions(shop_id,type,code,name,stackable,status) VALUES ('shop','currency','paid','猫粮',1,'active')");
   plan(sqlite, "base");
   plan(sqlite, "mahjong", { requires: ["base"] });

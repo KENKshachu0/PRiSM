@@ -51,13 +51,14 @@ deactivate({ playerId, pricingConfigId, expectedRevision?, at? })
 
 ## 5. 各入口
 
-开始计费只有一个入口：`resourceBilling.activate`（`packages/server/src/resources/activation.ts`）。目标有三种写法：一个资源（开始它的方案）、一个方案，或都不写（店铺默认计费方案）。它在玩家计费锁内解析目标并调用编排器，处理没有计时方案时的占位 Session，并返回 `created`：目标方案这次是否新开始。`resourceBilling.preview` 用同样的目标给出预览。扫码确认、门锁开门、店员开单、收银台、机器人入场都调用它，响应里的 `billing` 统一为 `{changed, created, started, stopped, kept}`（方案名）。麻将入座需要为整桌共享同一时间点，直接调用编排器。
+开始计费只有一个入口：`resourceBilling.activate`（`packages/server/src/resources/activation.ts`）。目标有两种写法：一个资源（开始它的方案）或一个方案；没有默认计费方案，两者都不写返回 `PRICING_TARGET_REQUIRED`。它在玩家计费锁内解析目标并调用编排器，处理没有计时方案时的占位 Session，并返回 `created`：目标方案这次是否新开始。`resourceBilling.preview` 用同样的目标给出预览。扫码确认、门锁开门、店员开单、收银台、机器人入场都调用它，响应里的 `billing` 统一为 `{changed, created, started, stopped, kept}`（方案名）。麻将入座需要为整桌共享同一时间点，直接调用编排器。
 
 | 入口 | 行为 |
 | --- | --- |
 | 玩家扫码确认、门锁开门 | 开始扫码资源的方案（资源专属方案，否则资源组的方案），见 [资源与资源组](resources.md) |
-| 店员开单、收银台入场 | 指定一个方案则开始该方案，否则开始店铺默认计费方案；未设置时若只有一个可开始的计时方案就用它，否则返回 `ENTRY_PRICING_REQUIRED`。店员开单先调用 `session/preview` 显示会新增、结束、保留的方案，确认时带 `expectedRevision` |
-| Integration / Bot 入场 | Bot 是资源：开始这个 Bot 的方案（专属方案，否则所属资源组的方案；默认资源组即店铺默认计费方案）；已在计费则复用原 Session（`created: false`）。请求里的方案、`label`、`entry` 都被忽略 |
+| 店员开单 | 开始店员指定的方案，不指定返回 `PRICING_TARGET_REQUIRED`。店员开单先调用 `session/preview` 显示会新增、结束、保留的方案，确认时带 `expectedRevision` |
+| 收银台入场 | 前台是资源：开始「前台资源」的方案（专属方案，否则所属资源组的方案），见 [前台收银](cashier.md) |
+| Integration / Bot 入场 | Bot 是资源：开始这个 Bot 的方案（专属方案，否则所属资源组的方案）；已在计费则复用原 Session（`created: false`）。请求里的方案、`label`、`entry` 都被忽略 |
 | 停止单条 Session（店员、玩家、Integration） | 有 `pricingConfigId` 的按方案 `deactivate`，依赖它的方案同时结束；没有的（占位、历史）按原方式只关闭这一条 |
 | 麻将入座 | 要求麻将桌这个资源的方案（等位方案）在计费中（店员或 Bot 代为入座时直接开始）。座位跟着它当前所在的 session：等位时是等位方案的，开局后是麻将方案的；麻将方案与等位方案互斥时，开局会结束等位方案而座位保留。满桌（或桌上已有人在计费）时，为每位等待中的玩家 `activate(麻将方案)`，同一时间点；先逐一预览，任何一位无法计费则都不开始，并撤销本次入座 |
 | 麻将下桌 | 只结束座位当前所在的 session：已开局时 `deactivate(麻将方案)`；等位中时结束为这张桌开始的等位方案（没有其他方案依赖它时）。随之开始的基础方案继续计费，再删除座位；响应带 `billing.remaining`。见 [卡片、占用与查人](occupancy.md#3-麻将等位) |
@@ -66,7 +67,7 @@ deactivate({ playerId, pricingConfigId, expectedRevision?, at? })
 
 麻将桌只能选择一个计费方案（商家接口最多一个）。要叠加在普通游玩上，就让麻将方案 `requires` 普通游玩。
 
-不再有「入场」身份：代码不根据 `label`、`metadata` 或方案列表判断 Session 是否入场，`isEntry` 与 `startEntry` 已删除。使用资源只看该资源的方案是否在计费。默认计费方案的 Session 写入展示标签 `entry`（旧版机器人据此识别已入场），其他方案自动开始的 Session 以方案名称为标签；标签只用于显示。
+不再有「入场」身份：代码不根据 `label`、`metadata` 或方案列表判断 Session 是否入场，`isEntry` 与 `startEntry` 已删除。使用资源只看该资源的方案是否在计费。Session 以方案名称为展示标签，不再写 `entry`；标签只用于显示。
 
 ## 6. 验证
 

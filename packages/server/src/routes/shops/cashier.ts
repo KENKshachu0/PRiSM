@@ -10,6 +10,15 @@ import {
   toPlayerCheckoutResultView,
 } from "./views.js";
 
+/** The resource a front-desk check-in bills through, as the cashier settings name it. */
+export async function cashierResourceId(db: Context<AppBindings>["env"]["DB"], shopId: string): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT json_extract(value_json, '$.resourceId') AS id FROM app_settings WHERE shop_id = ? AND key = 'cashier.settings'")
+    .bind(shopId)
+    .first<{ id: string | null }>();
+  return typeof row?.id === "string" ? row.id : null;
+}
+
 const cardSchema = z
   .object({
     kind: z.enum(["type-a", "felica"]),
@@ -174,8 +183,12 @@ cashierRouter.post("/profiles/:playerId/entry", async (c) => {
         jsonError(409, "请先结清上次账单", "CASHIER_UNPAID_VISIT");
       }
 
-      const session = await deps.playerCommands.startSession({
+      // The front desk is a resource: its check-in bills its group's plan, or its own.
+      const resourceId = await cashierResourceId(c.env.DB, shop.id);
+      if (!resourceId) jsonError(409, "请先选择前台资源", "CASHIER_RESOURCE_REQUIRED");
+      const { session } = await deps.resourceBilling.activate({
         playerId,
+        resourceId,
         metadata: { createdBy: "cashier", staffId: staff.staffId },
       });
 

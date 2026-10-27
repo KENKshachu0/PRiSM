@@ -24,11 +24,11 @@ async function fixture() {
   sqlite.run(
     "INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop-id','shop-code','Arcade',0,0,80,'player-one')",
   );
-  // The door bills through the shop's default plan, which its default group uses.
   sqlite.run(
-    `INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required,entry_pricing_ids_json)
-     VALUES ('shop-id',1,0,'["entry"]')`,
-  );
+    `INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required)
+    VALUES ('shop-id',1,0)`);
+  // Every resource without a group of its own bills through the default group.
+  sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('shop-id','default','默认资源组',1,'entry',?,?)", [now, now]);
   sqlite.run("INSERT INTO asset_definitions(shop_id,type,code,name,stackable,status) VALUES ('shop-id','currency','paid','余额',1,'active')");
   sqlite.run(
     `INSERT INTO pricing_configs(shop_id,id,kind,name,enabled,status,provider_json,created_at,updated_at)

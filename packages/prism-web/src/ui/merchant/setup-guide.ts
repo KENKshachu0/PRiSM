@@ -83,8 +83,8 @@ export type SetupStatus = {
   billing: boolean;
   steps: SetupStep[];
   complete: boolean;
-  /** Why billing is not ready: no balance asset, or no usable entry rule. */
-  pricingProblem: "assets" | "entry" | null;
+  /** Why billing is not ready: no balance asset. */
+  pricingProblem: "assets" | null;
   devices: number;
   unconfigured: number;
   doorDevices: number;
@@ -135,15 +135,9 @@ export function setupStatus(signals: SetupSignals): SetupStatus {
   const steps: SetupStep[] = [];
   const configuration = settings.billingConfiguration;
   // Some resource already has a plan, so pricing is ready once players have a
-  // balance to pay from and the default plan, if set, still bills.
+  // balance to pay from.
   const pricingProblem =
-    !billing || !configuration
-      ? null
-      : !configuration.balanceAssetsReady
-        ? "assets" as const
-        : configuration.invalidEntryPricingIds.length
-          ? "entry" as const
-          : null;
+    !billing || !configuration || configuration.balanceAssetsReady ? null : "assets" as const;
   if (billing)
     steps.push({ id: "pricing", done: !!configuration && !pricingProblem });
   if (mode === "desk") {

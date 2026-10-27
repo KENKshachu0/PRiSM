@@ -426,7 +426,8 @@ describe("pre-fork shop data restore on migrated D1 schema",()=>{
     const backup=await exported.json() as {tables:Tables;[key:string]:unknown};
     expect(backup.tables.resource_groups).toEqual([expect.objectContaining({id:"rest",name:"休息区"})]);
     await restore(app,env,headers,"destination",backup);
-    expect(sqlite.query("SELECT name FROM resource_groups WHERE shop_id='destination'").all()).toEqual([{name:"休息区"}]);
+    // The destination also gets its default group: the file's shop never stored one.
+    expect(sqlite.query("SELECT name FROM resource_groups WHERE shop_id='destination' ORDER BY id='default' DESC").all()).toEqual([{name:"默认资源组"},{name:"休息区"}]);
     expect(sqlite.query("SELECT resource_group_id AS g FROM machines WHERE shop_id='destination' AND name='休息区入口'").get()).toEqual({g:"rest"});
     sqlite.close();
   });

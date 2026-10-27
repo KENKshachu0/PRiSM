@@ -274,7 +274,7 @@ describe("Middleware Test Suite", () => {
         latitude: 0, longitude: 0, radius_meters: 50,
         billing_enabled: 1, cashier_enabled: 0, auto_register: 0,
         identity_binding_required: 1, checkin_geo: 0, checkout_geo: 0, machine_geo: 0,
-        entry_pricing_ids_json: "[]", bot_contact: "", time_zone: "Asia/Shanghai", hero_url: null,
+        bot_contact: "", time_zone: "Asia/Shanghai", hero_url: null,
       };
       const before = getOrCreateShopDependencies(db, shop);
       expect(getOrCreateShopDependencies(db, shop)).toBe(before);
@@ -625,7 +625,6 @@ describe("Middleware Test Suite", () => {
           checkin_geo: 0,
           checkout_geo: 0,
           machine_geo: 0,
-          entry_pricing_ids_json: "[]",
           bot_contact: "",
           time_zone: "Asia/Shanghai",
           hero_url: null,
@@ -708,7 +707,7 @@ describe("independent geofence flags", () => {
   const base = {
     id:"shop",public_id:"shop",name:"shop",latitude:35,longitude:139,radius_meters:80,
     billing_enabled:1,cashier_enabled:0,auto_register:0,identity_binding_required:0,
-    checkin_geo:0,checkout_geo:0,machine_geo:0,entry_pricing_ids_json:"[]",bot_contact:"",
+    checkin_geo:0,checkout_geo:0,machine_geo:0,bot_contact:"",
     time_zone:"Asia/Tokyo",hero_url:null
   };
   it("only enforces the requested operation's flag", () => {

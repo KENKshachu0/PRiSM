@@ -19,7 +19,6 @@ export const SHOP_QUERY = `SELECT s.id, s.public_id, s.name, s.latitude, s.longi
   COALESCE(b.checkin_geo, 0) AS checkin_geo,
   COALESCE(b.checkout_geo, 0) AS checkout_geo,
   COALESCE(b.machine_geo, 0) AS machine_geo,
-  COALESCE(b.entry_pricing_ids_json, '[]') AS entry_pricing_ids_json,
   COALESCE(b.bot_contact, '') AS bot_contact,
   CASE WHEN s.hero_data IS NULL OR s.hero_data = '' THEN NULL ELSE '/api/v1/shops/' || s.public_id || '/hero?v=' || COALESCE(s.hero_hash, 'original') END AS hero_url,
   COALESCE((SELECT json_extract(value_json, '$.timeZone') FROM app_settings WHERE shop_id = s.id AND key = 'store.profile'), 'Asia/Shanghai') AS time_zone
@@ -451,10 +450,17 @@ export function initializeLocalDatabase(
       ],
     );
     db.run(
-      `INSERT INTO shop_billing_settings(shop_id, auto_register, identity_binding_required, checkin_geo, checkout_geo, machine_geo, entry_pricing_ids_json, bot_contact)
-       VALUES (?, 1, 0, 0, 0, 0, ?, '')
-       ON CONFLICT(shop_id) DO UPDATE SET auto_register = excluded.auto_register, entry_pricing_ids_json = excluded.entry_pricing_ids_json;`,
-      [shopId, JSON.stringify([ruleId])],
+      `INSERT INTO shop_billing_settings(shop_id, auto_register, identity_binding_required, checkin_geo, checkout_geo, machine_geo, bot_contact)
+       VALUES (?, 1, 0, 0, 0, 0, '')
+       ON CONFLICT(shop_id) DO UPDATE SET auto_register = excluded.auto_register;`,
+      [shopId],
+    );
+    // The seeded plan bills the default group, where every resource starts out.
+    db.run(
+      `INSERT INTO resource_groups(shop_id, id, name, enabled, default_pricing_config_id, created_at, updated_at)
+       VALUES (?, 'default', '默认资源组', 1, ?, ?, ?)
+       ON CONFLICT(shop_id, id) DO UPDATE SET default_pricing_config_id = excluded.default_pricing_config_id;`,
+      [shopId, ruleId, now, now],
     );
     db.run(
       `INSERT INTO app_settings(shop_id, key, value_json, updated_at)

@@ -296,7 +296,7 @@ function PlayerJourney({ mode, identity }: { mode: OperatingMode; identity: bool
     mode === "desk"
       ? [
           [CreditCard, "前台刷卡", "第一次来由店员登记一个昵称，之后刷卡就能认出。"],
-          [Receipt, "店员点入场", "按默认计费方案开始计时。"],
+          [Receipt, "店员点入场", "按前台资源所在资源组的方案开始计时。"],
           [Gamepad2, "游玩", "计时进行中，店员可以在「在店」页随时看账单。"],
           [Wallet, "回前台付款", "店员按屏幕金额收微信、支付宝或现金，确认收款后结账。"],
         ]
@@ -456,17 +456,14 @@ function StepCard({
     id === "pricing"
       ? {
           title: "设定收费标准",
-          why: "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的默认方案，再加上它依赖的方案。",
+          why: "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的方案，再加上它依赖的方案。",
           warn:
             status.pricingProblem === "assets"
               ? "缺少可用的余额资产，玩家无法结账。"
-              : status.pricingProblem === "entry"
-                ? "默认资源组还没有可用的默认计费方案，玩家无法开始计费。"
-                : undefined,
+              : undefined,
           actions: (
             <>
               {status.pricingProblem === "assets" && go(`${base}/assets`, "恢复余额资产")}
-              {status.pricingProblem === "entry" && go(`${base}/resources`, "设置默认计费方案")}
               {go(`${base}/pricing`, "查看计费规则", true)}
             </>
           ),

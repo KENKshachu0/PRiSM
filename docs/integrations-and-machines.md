@@ -70,9 +70,9 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 | `mahjongTables` | 自动推导：带麻将能力的资源，含名称、别名和开桌人数（即资源的容量） |
 | `billingEnabled` | 自动推导：通过这个 Bot 入场是否计费，即 Bot 资源有专属方案或所在资源组有方案。沿用旧的整店开关字段名，供已发布的插件读取；店铺本身已没有计费开关 |
 
-机器人连上 WebSocket 后先读取这份配置，再发送 hello（名称和闲置提醒提前量取自配置）。**监听 Home Assistant 不是店家的开关**：能连上 Home Assistant 的 Bot 一律在 hello 里声明，由平台按店铺的监听名额自己挑谁在听、听哪些连接；换人、断线、停用都由平台调度，店家不用管。商家保存任何资源、修改资源组的计费方案、修改默认计费方案、快速创建计费、导入店铺数据，以及员工通过机器人绑定平台身份后，Hub 会向所有在线机器人推送 `{"type":"config.changed"}`，机器人重新读取并再发一次 hello；不再允许监听时，它正在监听的 Home Assistant 会交给下一个监听者。Bot 资源被停用时该接口返回 `403 BOT_DISABLED`。
+机器人连上 WebSocket 后先读取这份配置，再发送 hello（名称和闲置提醒提前量取自配置）。**监听 Home Assistant 不是店家的开关**：能连上 Home Assistant 的 Bot 一律在 hello 里声明，由平台按店铺的监听名额自己挑谁在听、听哪些连接；换人、断线、停用都由平台调度，店家不用管。商家保存任何资源、修改资源组（含默认资源组）的计费方案、快速创建计费、导入店铺数据，以及员工通过机器人绑定平台身份后，Hub 会向所有在线机器人推送 `{"type":"config.changed"}`，机器人重新读取并再发一次 hello；不再允许监听时，它正在监听的 Home Assistant 会交给下一个监听者。Bot 资源被停用时该接口返回 `403 BOT_DISABLED`。
 
-Bot 和其他资源一样属于一个资源组，也可以设置专属方案（资源编辑页的「计费」一节）。玩家通过它 `/login`、`/入场` 时，开始的就是这个 Bot 的方案，规则与扫码一样：专属方案优先，否则用所属资源组的方案。没有改过的 Bot 在默认资源组，开始店铺默认计费方案。一家店可以有多个 Bot，例如麻将群的 Bot 放在麻将区，入场就开始麻将区的方案。Bot 所在资源组的方案只决定入场；Bot 替玩家操作其他资源时，检查的仍是目标资源的方案。Bot 所在资源组没有方案、Bot 也没有专属方案时，Bot 资源免费，`/login`、`/入场` 返回 `409 RESOURCE_NOT_BILLED`（插件提示「这里不计费，无需入场」）。配置里的 `billingEnabled` 只描述这个 Bot 自己。新版插件只用它拦截 `login`／`入场`：为 `false` 时不请求平台，直接回复「这里不计费，无需入场」；钱包、账单、结账、兑换、上下桌、`list` 等命令属于玩家或各自的资源，一律交给平台判断。旧版插件（0.3.1 及以前）用它拦截所有计费类命令，Bot 在免费资源组时这些命令都会回复「本店未启用计费」，升级插件后恢复正常。方案变化后平台会推送 `config.changed`，Bot 重新读取，缓存的值不会过期。
+Bot 和其他资源一样属于一个资源组，也可以设置专属方案（资源编辑页的「计费」一节）。玩家通过它 `/login`、`/入场` 时，开始的就是这个 Bot 的方案，规则与扫码一样：专属方案优先，否则用所属资源组的方案。没有改过的 Bot 在默认资源组，开始默认资源组的方案。一家店可以有多个 Bot，例如麻将群的 Bot 放在麻将区，入场就开始麻将区的方案。Bot 所在资源组的方案只决定入场；Bot 替玩家操作其他资源时，检查的仍是目标资源的方案。Bot 所在资源组没有方案、Bot 也没有专属方案时，Bot 资源免费，`/login`、`/入场` 返回 `409 RESOURCE_NOT_BILLED`（插件提示「这里不计费，无需入场」）。配置里的 `billingEnabled` 只描述这个 Bot 自己。新版插件只用它拦截 `login`／`入场`：为 `false` 时不请求平台，直接回复「这里不计费，无需入场」；钱包、账单、结账、兑换、上下桌、`list` 等命令属于玩家或各自的资源，一律交给平台判断。旧版插件（0.3.1 及以前）用它拦截所有计费类命令，Bot 在免费资源组时这些命令都会回复「本店未启用计费」，升级插件后恢复正常。方案变化后平台会推送 `config.changed`，Bot 重新读取，缓存的值不会过期。
 
 ### 按外部身份上下麻将桌
 
@@ -128,7 +128,7 @@ curl -X POST https://prism.example.com/rpc/integration/players/by-identity/sessi
 
 开始哪个方案只由发请求的 Bot 资源决定（见上文「Bot 是一种资源」）；请求里的 `pricingConfigId`、`pricingConfigIds`、`label`、`entry` 都会被忽略。麻将由上下桌接口开始和结束计费，不再由机器人另开 session。无论请求里的 `autoRegister` 如何设置，服务端都以店铺是否允许自动注册为准。
 
-机器人、店员后台、前台收银和扫码确认都走同一个开始入口（`resourceBilling.activate`），结果相同；响应的 `billing.stopped` 列出因互斥被结束的方案，机器人在回复里列出。Bot 在默认资源组、店铺又没有设置默认计费方案且启用了多个计时方案时会被拒绝（`ENTRY_PRICING_REQUIRED`）；所在资源组停用时返回 `RESOURCE_GROUP_DISABLED`。在场就是有进行中的 session，在哪个场由 session 的方案区分：响应带 `created` 与 `planName`，`created: false` 表示这个方案在这次请求之前就在计费（例如已在「普通游玩」中），返回的是原 session。机器人对设备的操作要求该设备的计费方案在玩家这里计费中，否则返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。
+机器人、店员后台、前台收银和扫码确认都走同一个开始入口（`resourceBilling.activate`），结果相同；响应的 `billing.stopped` 列出因互斥被结束的方案，机器人在回复里列出。Bot 所在资源组（包括默认资源组）没有方案时返回 `RESOURCE_NOT_BILLED`；所在资源组停用时返回 `RESOURCE_GROUP_DISABLED`。在场就是有进行中的 session，在哪个场由 session 的方案区分：响应带 `created` 与 `planName`，`created: false` 表示这个方案在这次请求之前就在计费（例如已在「普通游玩」中），返回的是原 session。机器人对设备的操作要求该设备的计费方案在玩家这里计费中，否则返回 `DEVICE_COMMAND_REQUIRES_ACTIVE_SESSION`。
 
 如果 `autoRegister` 为 `false` 或未传，而身份没有绑定玩家，接口会返回 `PLAYER_IDENTITY_NOT_FOUND` 和 HTTP 404。
 

@@ -115,7 +115,6 @@ async function calculateActivityBill(
       COALESCE(b.checkin_geo, 0) AS checkin_geo,
       COALESCE(b.checkout_geo, 0) AS checkout_geo,
       COALESCE(b.machine_geo, 0) AS machine_geo,
-      COALESCE(b.entry_pricing_ids_json, '[]') AS entry_pricing_ids_json,
       COALESCE(b.bot_contact, '') AS bot_contact,
       CASE WHEN s.hero_data IS NULL OR s.hero_data = '' THEN NULL ELSE '/api/v1/shops/' || s.public_id || '/hero?v=' || COALESCE(s.hero_hash, 'original') END AS hero_url,
       COALESCE((SELECT json_extract(value_json, '$.timeZone') FROM app_settings WHERE shop_id = s.id AND key = 'store.profile'), 'Asia/Shanghai') AS time_zone
@@ -139,7 +138,6 @@ async function calculateActivityBill(
     checkin_geo: 0,
     checkout_geo: 0,
     machine_geo: 0,
-    entry_pricing_ids_json: "[]",
     bot_contact: "",
     time_zone: "Asia/Shanghai",
     hero_url: null,

@@ -16,35 +16,46 @@ function toGroup(row: GroupRow): ResourceGroup {
     name: row.name,
     enabled: row.enabled === 1,
     defaultPricingConfigId: row.default_pricing_config_id,
-    isDefault: false,
+    isDefault: row.id === DEFAULT_RESOURCE_GROUP_ID,
   };
 }
 
-/** The shop's default group, built from its default plan setting. */
-export function defaultResourceGroup(shopId: string, entryPricingIdsJson: string): ResourceGroup {
-  let ids: unknown = [];
-  try {
-    ids = JSON.parse(entryPricingIdsJson);
-  } catch {
-    ids = [];
-  }
-  const [planId] = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+/**
+ * The shop's default group as it is before anyone priced it. Every shop has it
+ * stored (migration 0045, shop creation, imports); a shop that somehow lacks the
+ * row still gets a free, enabled default group rather than failing every scan.
+ */
+export function unstoredDefaultGroup(shopId: string): ResourceGroup {
   return {
     id: DEFAULT_RESOURCE_GROUP_ID,
     shopId,
     name: "默认资源组",
     enabled: true,
-    defaultPricingConfigId: planId ?? null,
+    defaultPricingConfigId: null,
     isDefault: true,
   };
 }
 
+/** Stores the shop's default group if it is not there yet: free and enabled. */
+export function ensureDefaultGroupStatement<T>(db: { prepare(sql: string): { bind(...values: unknown[]): T } }, shopId: string, planId: string | null = null): T {
+  const now = new Date().toISOString();
+  return db.prepare(
+    `INSERT INTO resource_groups(shop_id, id, name, enabled, default_pricing_config_id, created_at, updated_at)
+     VALUES (?, ?, '默认资源组', 1, ?, ?, ?) ON CONFLICT(shop_id, id) DO NOTHING`,
+  ).bind(shopId, DEFAULT_RESOURCE_GROUP_ID, planId, now, now);
+}
+
+/** The shop's groups, the default group first. */
 export async function listResourceGroups(db: D1DatabaseLike, shopId: string): Promise<ResourceGroup[]> {
   const rows = await db
-    .prepare("SELECT shop_id, id, name, enabled, default_pricing_config_id FROM resource_groups WHERE shop_id = ? ORDER BY created_at, id")
-    .bind(shopId)
+    .prepare(
+      `SELECT shop_id, id, name, enabled, default_pricing_config_id FROM resource_groups WHERE shop_id = ?
+       ORDER BY id <> ?, created_at, id`,
+    )
+    .bind(shopId, DEFAULT_RESOURCE_GROUP_ID)
     .all<GroupRow>();
-  return rows.results.map(toGroup);
+  const groups = rows.results.map(toGroup);
+  return groups.some((group) => group.isDefault) ? groups : [unstoredDefaultGroup(shopId), ...groups];
 }
 
 export async function findResourceGroup(db: D1DatabaseLike, shopId: string, groupId: string): Promise<ResourceGroup | null> {
@@ -52,7 +63,7 @@ export async function findResourceGroup(db: D1DatabaseLike, shopId: string, grou
     .prepare("SELECT shop_id, id, name, enabled, default_pricing_config_id FROM resource_groups WHERE shop_id = ? AND id = ?")
     .bind(shopId, groupId)
     .first<GroupRow>();
-  return row ? toGroup(row) : null;
+  return row ? toGroup(row) : groupId === DEFAULT_RESOURCE_GROUP_ID ? unstoredDefaultGroup(shopId) : null;
 }
 
 /** A resource's identity and billing binding, without its capabilities. */
@@ -67,12 +78,7 @@ export async function findBillableResource(db: D1DatabaseLike, shopId: string, r
 }
 
 /** Everything that bills through `planId`, by display name, for refusing to archive it. */
-export async function resourcePlanUsers(
-  db: D1DatabaseLike,
-  shopId: string,
-  defaultPlanIds: readonly string[],
-  planId: string,
-): Promise<string[]> {
+export async function resourcePlanUsers(db: D1DatabaseLike, shopId: string, planId: string): Promise<string[]> {
   const [groups, resources, tables] = await Promise.all([
     db.prepare("SELECT name FROM resource_groups WHERE shop_id = ? AND default_pricing_config_id = ? ORDER BY name")
       .bind(shopId, planId).all<{ name: string }>(),
@@ -86,7 +92,6 @@ export async function resourcePlanUsers(
     ).bind(shopId, planId).all<{ name: string }>(),
   ]);
   return [
-    ...(defaultPlanIds.includes(planId) ? ["默认资源组"] : []),
     ...groups.results.map((row) => `资源组「${row.name}」`),
     ...resources.results.map((row) => `资源「${row.name}」`),
     ...tables.results.map((row) => `麻将桌「${row.name}」`),

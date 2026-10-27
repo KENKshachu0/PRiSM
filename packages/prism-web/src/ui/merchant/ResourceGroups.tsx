@@ -42,14 +42,13 @@ export function useResourceGroups(shopId: string) {
 
 /**
  * One resource group: its name, the plan its resources bill, and whether it
- * is in use. The shop's default group has a fixed name and is always on; its
- * plan is the shop's default plan.
+ * is in use. The default group is edited like any other; it only cannot be
+ * deleted, because resources without a group of their own are in it.
  */
 export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; done: () => void }) {
   const { t } = useI18n();
   const { shopId, shopCode } = useMerchant();
-  // The default group's plan is the shop's default, which times every visit: a time plan.
-  const plans = useBillablePlans(shopCode).filter((plan) => !group?.isDefault || plan.kind === "time.priority");
+  const plans = useBillablePlans(shopCode);
   const [name, setName] = useState(group?.name ?? "");
   const [planId, setPlanId] = useState(group?.defaultPricingConfigId ?? "");
   const [enabled, setEnabled] = useState(group?.enabled ?? true);
@@ -78,28 +77,27 @@ export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; do
           group
             ? Api.updateResourceGroup(group.id, {
                 shopId,
-                ...(group.isDefault ? {} : { name: name.trim(), enabled }),
+                name: name.trim(),
+                enabled,
                 defaultPricingConfigId: planId || null,
               })
             : Api.createResourceGroup({ shopId, name: name.trim(), defaultPricingConfigId: planId || null }),
         );
       }}
     >
-      {!group?.isDefault && (
-        <Field label="名称">
-          <input
-            className={input}
-            maxLength={40}
-            required
-            placeholder={t("例如：休息区、麻将包间")}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </Field>
-      )}
+      <Field label="名称">
+        <input
+          className={input}
+          maxLength={40}
+          required
+          placeholder={t("例如：休息区、麻将包间")}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </Field>
       <Field label="计费方案">
         <select className={input} value={planId} onChange={(e) => setPlanId(e.target.value)}>
-          <option value="">{t("未设置")}</option>
+          <option value="">{t("不计费")}</option>
           {plans.map((plan) => (
             <option key={plan.id} value={plan.id}>
               {plan.name}{plan.enabled ? "" : ` (${t("已停用")})`}
@@ -107,7 +105,7 @@ export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; do
           ))}
         </select>
       </Field>
-      {group && !group.isDefault && (
+      {group && (
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           {t("启用")}
@@ -115,7 +113,7 @@ export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; do
       )}
       {error && <p role="alert" className="text-sm text-coral">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="submit" className={primary} disabled={busy || (!group?.isDefault && !name.trim())}>
+        <button type="submit" className={primary} disabled={busy || !name.trim()}>
           {t(group ? "保存" : "添加资源组")}
         </button>
         {group && !group.isDefault && (

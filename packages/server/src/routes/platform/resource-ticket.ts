@@ -37,7 +37,7 @@ const machineSelect = `SELECT machines.*, shops.name AS shop_name,
     ELSE '/api/v1/shops/' || shops.public_id || '/hero?v=' || COALESCE(shops.hero_hash,'original') END AS shop_hero_url,
   shops.latitude, shops.longitude, shops.radius_meters, shops.public_id AS shop_public_id,
   (COALESCE(b.machine_geo,0) OR COALESCE(b.checkin_geo,0) OR COALESCE(b.checkout_geo,0)) AS machine_geo,
-  ${resourceBilledSql("machines", "b")} AS billed
+  ${resourceBilledSql("machines")} AS billed
   FROM machines JOIN shops ON shops.id=machines.shop_id
   LEFT JOIN shop_billing_settings b ON b.shop_id=shops.id`;
 

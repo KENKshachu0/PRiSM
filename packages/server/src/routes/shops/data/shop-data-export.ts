@@ -226,7 +226,7 @@ async function metadata(c: C, shop: BillingShop, job: ExportJob) {
       'checkinGeo',json(CASE WHEN COALESCE(b.checkin_geo,0) THEN 'true' ELSE 'false' END),
       'checkoutGeo',json(CASE WHEN COALESCE(b.checkout_geo,0) THEN 'true' ELSE 'false' END),
       'machineGeo',json(CASE WHEN COALESCE(b.machine_geo,0) THEN 'true' ELSE 'false' END),
-      'entryPricingIds',json(COALESCE(b.entry_pricing_ids_json,'[]')),'botContact',COALESCE(b.bot_contact,''),
+      'botContact',COALESCE(b.bot_contact,''),
       'cashierEnabled',json(CASE WHEN COALESCE((SELECT json_extract(value_json,'$.enabled') FROM app_settings WHERE shop_id=s.id AND key='cashier.settings'),0) THEN 'true' ELSE 'false' END),
       'coinCooldownMs',COALESCE((SELECT json_extract(value_json,'$.coinCooldownMs') FROM app_settings WHERE shop_id=s.id AND key='venue.operations'),60000),
       'defaultPresentId',(SELECT json_extract(value_json,'$.defaultPresentId') FROM app_settings WHERE shop_id=s.id AND key='player.registration'))) AS header_json

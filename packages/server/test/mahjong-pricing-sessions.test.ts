@@ -37,8 +37,10 @@ async function fixture(tablePlan = "mahjong-eight", waitingPlan?: string) {
 
   sqlite.run("INSERT INTO users(id,role,created_at,updated_at) VALUES ('owner','user',?,?)", [NOW, NOW]);
   sqlite.run("INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop-1','shop-code','Arcade',0,0,80,'owner')");
-  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required,entry_pricing_ids_json)
-    VALUES ('shop-1',1,1,0,'["normal-play"]')`);
+  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,billing_enabled,auto_register,identity_binding_required)
+    VALUES ('shop-1',1,1,0)`);
+  // Every resource without a group of its own bills through the default group.
+  sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('shop-1','default','默认资源组',1,'normal-play',?,?)", [NOW, NOW]);
   plan(sqlite, "normal-play", 1300);
   plan(sqlite, "mahjong-four", -200, { requires: ["normal-play"] });
   plan(sqlite, "mahjong-eight", 200, { requires: ["normal-play"], conflicts: ["mahjong-four"] });
@@ -79,7 +81,8 @@ async function fixture(tablePlan = "mahjong-eight", waitingPlan?: string) {
 
   const shop = (await findLegacyShopByCode(env.DB, "shop-code"))!;
   const deps = () => getOrCreateShopDependencies(env.DB, shop, env.URL_ENCRYPTION_KEY, env);
-  const enter = (playerId: string) => deps().playerCommands.startSession({ playerId });
+  // Entry names its plan, as a staff start does; there is no default plan.
+  const enter = (playerId: string) => deps().playerCommands.startSession({ playerId, pricingConfigIds: ["normal-play"] });
   /** What confirming on the table's page does. */
   const confirmTable = (playerId: string) => deps().resourceBilling.activate({ resourceId: "table-1", playerId });
   const gate = async (player: number) => {

@@ -65,7 +65,6 @@ legacySetupRouter.post("/install", async (c) => {
       checkin_geo: 0,
       checkout_geo: 0,
       machine_geo: 0,
-      entry_pricing_ids_json: "[]",
       bot_contact: "",
       hero_url: null,
       time_zone: body.timeZone || "Asia/Shanghai",

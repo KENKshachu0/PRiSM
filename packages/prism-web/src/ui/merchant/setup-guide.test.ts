@@ -30,7 +30,7 @@ const machine = (over: Partial<Resource> = {}): Resource => ({
   ...over,
 });
 
-const ready = { ready: true, balanceAssetsReady: true, entryPricingReady: true, invalidEntryPricingIds: [] };
+const ready = { ready: true, balanceAssetsReady: true };
 
 const settings = (over: Partial<Settings> = {}): Settings => ({
   cashierEnabled: false,
@@ -40,7 +40,6 @@ const settings = (over: Partial<Settings> = {}): Settings => ({
   checkinGeo: false,
   checkoutGeo: false,
   machineGeo: false,
-  entryPricingIds: [],
   botContact: "",
   ...over,
 });
@@ -127,17 +126,14 @@ describe("setup guide", () => {
     expect(identityDone([{ ...connectedBot[0]!, status: "revoked" }])).toBe(false);
   });
 
-  it("explains why billing is not ready", () => {
-    const problem = (balanceAssetsReady: boolean, invalidEntryPricingIds: string[] = []) =>
+  it("explains why billing is not ready: only a missing balance asset stops it", () => {
+    const problem = (balanceAssetsReady: boolean) =>
       setupStatus(signals({
         billing: true,
-        settings: settings({
-          billingConfiguration: { ready: false, balanceAssetsReady, entryPricingReady: false, invalidEntryPricingIds },
-        }),
+        settings: settings({ billingConfiguration: { ready: balanceAssetsReady, balanceAssetsReady } }),
       })).pricingProblem;
     expect(problem(false)).toBe("assets");
-    expect(problem(true, ["archived-plan"])).toBe("entry");
-    // A free default group is fine while another group bills.
+    // Which resources bill is set on groups; there is no default plan to check.
     expect(problem(true)).toBeNull();
   });
 

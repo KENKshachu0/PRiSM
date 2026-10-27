@@ -35,7 +35,8 @@ export const backupSchema = z.object({
     billingEnabled: z.boolean().optional(),
     cashierEnabled: z.boolean(), autoRegister: z.boolean(),
     identityBindingRequired: z.boolean(), checkinGeo: z.boolean(), checkoutGeo: z.boolean(), machineGeo: z.boolean(),
-    entryPricingIds: z.array(z.string().min(1)).max(30), botContact: z.string().max(500),
+    /** Older files: the default group's plan, from when it was the shop's default plan. */
+    entryPricingIds: z.array(z.string().min(1)).max(30).optional(), botContact: z.string().max(500),
     coinCooldownMs: z.number().int().nonnegative(), defaultPresentId: z.string().min(1).nullable(),
   }).strict(),
   tables: z.record(z.array(z.record(primitive))),
@@ -126,12 +127,13 @@ export function validateBackup(backup: ShopBackup): string[] {
     }
   }
   const configs = new Map(backup.tables.pricing_configs!.map(row => [row.id, row]));
-  if (backup.settings.entryPricingIds.some(id => !configs.has(id))) add("入场规则引用了不存在的计费方案");
-  // A default plan bills the default group; a retired non-billing file drops it on import.
-  if (backup.settings.billingEnabled !== false && backup.settings.entryPricingIds.length) {
+  const entryPricingIds = backup.settings.entryPricingIds ?? [];
+  if (entryPricingIds.some(id => !configs.has(id))) add("入场规则引用了不存在的计费方案");
+  // It becomes the default group's plan; a retired non-billing file drops it on import.
+  if (backup.settings.billingEnabled !== false && entryPricingIds.length) {
     const assets = backup.tables.asset_definitions!;
     if (["paid", "free"].some(code => !assets.some(row => row.type === "currency" && row.code === code && row.status === "active"))) add("默认计费方案需要有效余额资产");
-    if (backup.settings.entryPricingIds.some(id => {
+    if (entryPricingIds.some(id => {
       const row = configs.get(id); return !row || row.enabled !== 1 || row.status !== "active" || row.kind === "time.cap";
     })) add("默认计费方案不可用");
   }

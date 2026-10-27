@@ -4,12 +4,12 @@ import { pricingInZone } from "./merchant/pricing-clock";
 import type { Pricing } from "./merchant/Pricing";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, InlineError } from "../api";
+import { Api, api, InlineError } from "../api";
 import { useI18n } from "../i18n";
 import { BillingConversionWizard } from "./merchant/BillingSetup";
 import { IdentityPolicyPicker } from "./merchant/IdentityPolicyPicker";
 import { identityPolicy, identityPolicySettings } from "./merchant/setup-guide";
-import { primary } from "./merchant/shared";
+import { primary, useMerchant } from "./merchant/shared";
 
 export type Settings = {
   cashierEnabled: boolean;
@@ -19,14 +19,13 @@ export type Settings = {
   checkinGeo: boolean;
   checkoutGeo: boolean;
   machineGeo: boolean;
-  entryPricingIds: string[];
+  /** The resource a front-desk check-in bills through: its group's plan, or its own. */
+  cashierResourceId?: string | null;
   /** The binding instructions shown to players; the line with `{code}` is the command. */
   botContact: string;
   billingConfiguration?: {
     ready: boolean;
     balanceAssetsReady: boolean;
-    entryPricingReady: boolean;
-    invalidEntryPricingIds: string[];
   };
 };
 type EntryRule = Pick<Pricing, "id" | "name" | "kind" | "enabled" | "status">;
@@ -137,27 +136,31 @@ export function BillingSettings({
   section?: "billing" | "players" | "devices" | null;
 }) {
   const { t } = useI18n();
+  const { shopId } = useMerchant();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [rules, setRules] = useState<EntryRule[]>([]);
+  const [resources, setResources] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [savedSection, setSavedSection] = useState<typeof section>(null);
   const [errorSection, setErrorSection] = useState<typeof section>(null);
   const [converting, setConverting] = useState(false);
   const load = useCallback(async () => {
-    const [s, r] = await Promise.all([
+    const [s, r, m] = await Promise.all([
       api<Settings>(shopApi(shopCode, "settings")),
       api<{ pricingConfigs: EntryRule[] }>(
         shopApi(shopCode, "staff/pricing-configs"),
       ),
+      shopId ? Api.machines(shopId).then((result) => result.machines).catch(() => []) : Promise.resolve([]),
     ]);
+    setResources(m.map((machine) => ({ id: machine.id, name: machine.name })));
     setSettings({
       ...s,
       cashierEnabled: s.cashierEnabled ?? false,
       identityBindingRequired: s.identityBindingRequired ?? true,
     });
     setRules(r.pricingConfigs);
-  }, [shopCode]);
+  }, [shopCode, shopId]);
   useEffect(() => {
     void load().catch((e) => setError(e.message));
   }, [load]);
@@ -189,7 +192,7 @@ export function BillingSettings({
               savingSection === "billing"
                 ? {
                     cashierEnabled: settings.cashierEnabled,
-                    entryPricingIds: settings.entryPricingIds,
+                    cashierResourceId: settings.cashierResourceId ?? null,
                   }
                 : savingSection === "players"
                   ? {
@@ -261,6 +264,24 @@ export function BillingSettings({
                   )}
                 </span>
               </label>
+              {settings.cashierEnabled && (
+                <label className="grid gap-2 pl-7 text-sm">
+                  <span className="font-medium">{t("前台资源")}</span>
+                  <select
+                    className="focus-ring min-h-11 rounded-lg border border-ink/20 bg-panel px-3 py-2"
+                    value={settings.cashierResourceId ?? ""}
+                    onChange={(e) => setSettings({ ...settings, cashierResourceId: e.target.value || null })}
+                  >
+                    <option value="">{t("请选择")}</option>
+                    {resources.map((resource) => (
+                      <option key={resource.id} value={resource.id}>{resource.name}</option>
+                    ))}
+                  </select>
+                  <span className="text-ink/60">
+                    {t("前台刷卡入场按这个资源计费：它自己的方案，否则是它所在资源组的方案。")}
+                  </span>
+                </label>
+              )}
             </>
           )}
           {section === "players" && (

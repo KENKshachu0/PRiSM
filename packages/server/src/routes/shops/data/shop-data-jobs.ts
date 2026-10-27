@@ -11,6 +11,8 @@ import { withOperationLease } from "@prism/application";
 import { requireUser } from "../../../middleware/auth.js";
 import { type BillingShop } from "./compat.js";
 import { freeShopStatements } from "../../../resources/billed-sql.js";
+import { ensureDefaultGroupStatement } from "../../../resources/repository.js";
+import { missingFrontDeskStatements } from "../../platform/shops.js";
 import { notifyBotsChangedAfter } from "../../../durable-objects/shop-hub-client.js";
 import { encryptSecret, sha256 } from "../../../crypto.js";
 import { jsonError } from "../../../http.js";
@@ -285,14 +287,16 @@ async function previewJob(
     FROM shop_data_rows WHERE job_id=? AND table_name='pricing_configs'
     AND json_extract(payload_json,'$.id') IN (SELECT value FROM json_each(?))`,
     )
-      .bind(job.id, JSON.stringify(header.settings.entryPricingIds))
+      .bind(job.id, JSON.stringify(header.settings.entryPricingIds ?? []))
       .all<DataRow>()
   ).results;
   const configs = new Map(configRows.map((r) => [r.id, r] as const));
   const settings = header.settings;
-  if (settings.entryPricingIds.some((id) => !configs.has(id))) errors.push("入场规则引用了不存在的计费方案");
-  // A default plan bills the default group; a retired non-billing file drops it on import.
-  if (settings.billingEnabled !== false && settings.entryPricingIds.length) {
+  // Older files name the default group's plan here; newer ones store the group.
+  const entryPricingIds = settings.entryPricingIds ?? [];
+  if (entryPricingIds.some((id) => !configs.has(id))) errors.push("入场规则引用了不存在的计费方案");
+  // A retired non-billing file drops the plan on import, so it is not checked.
+  if (settings.billingEnabled !== false && entryPricingIds.length) {
     const assets = (
       await (c.env.DB as LegacyD1Database).prepare(
         `SELECT json_extract(payload_json,'$.type') AS type,json_extract(payload_json,'$.code') AS code,json_extract(payload_json,'$.status') AS status
@@ -308,7 +312,7 @@ async function previewJob(
     )
       errors.push("默认计费方案需要有效余额资产");
     if (
-      settings.entryPricingIds.some((id) => {
+      entryPricingIds.some((id) => {
         const row = configs.get(id);
         return !row || row.enabled !== 1 || row.status !== "active" || row.kind === "time.cap";
       })
@@ -357,7 +361,8 @@ async function previewJob(
         .bind(job.id)
         .all<DataRow>()
     ).results;
-    // The retired billing switch is not compared: a file may carry it or not.
+    // The retired billing switch is not compared, and the default group's plan
+    // only when the file names it: either may be missing.
     const expected = {
       autoRegister: !!raw.auto_register,
       identityBindingRequired:
@@ -365,7 +370,9 @@ async function previewJob(
       checkinGeo: !!raw.checkin_geo,
       checkoutGeo: !!raw.checkout_geo,
       machineGeo: !!raw.machine_geo,
-      entryPricingIds: JSON.parse(String(raw.entry_pricing_ids_json ?? "[]")) as string[],
+      ...(settings.entryPricingIds === undefined
+        ? {}
+        : { entryPricingIds: JSON.parse(String(raw.entry_pricing_ids_json ?? "[]")) as string[] }),
       botContact: raw.bot_contact ?? "",
       cashierEnabled: !!settingRows.find((r) => r.key === "cashier.settings")?.enabled,
       coinCooldownMs: settingRows.find((r) => r.key === "venue.operations")?.cooldown ?? 60000,
@@ -748,9 +755,9 @@ async function applyJob(
     statements.push(
       db
         .prepare(
-          `INSERT INTO shop_billing_settings(shop_id,auto_register,checkin_geo,checkout_geo,machine_geo,entry_pricing_ids_json,bot_contact,identity_binding_required)
-      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,checkin_geo=excluded.checkin_geo,
-      checkout_geo=excluded.checkout_geo,machine_geo=excluded.machine_geo,entry_pricing_ids_json=excluded.entry_pricing_ids_json,bot_contact=excluded.bot_contact,identity_binding_required=excluded.identity_binding_required`,
+          `INSERT INTO shop_billing_settings(shop_id,auto_register,checkin_geo,checkout_geo,machine_geo,bot_contact,identity_binding_required)
+      VALUES (?,?,?,?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,checkin_geo=excluded.checkin_geo,
+      checkout_geo=excluded.checkout_geo,machine_geo=excluded.machine_geo,bot_contact=excluded.bot_contact,identity_binding_required=excluded.identity_binding_required`,
         )
         .bind(
           shop.id,
@@ -758,7 +765,6 @@ async function applyJob(
           +s.checkinGeo,
           +s.checkoutGeo,
           +s.machineGeo,
-          JSON.stringify(s.entryPricingIds),
           s.botContact,
           +s.identityBindingRequired,
         ),
@@ -777,6 +783,10 @@ async function applyJob(
           .bind(shop.id, key, JSON.stringify(value), now),
       );
   }
+  // The default group: stored by newer files, otherwise made here with the plan
+  // older files kept as the shop's default plan.
+  statements.push(ensureDefaultGroupStatement(db, shop.id, header.settings.entryPricingIds?.[0] ?? null));
+  statements.push(...missingFrontDeskStatements(db, shop.id));
   if (header.settings.billingEnabled === false) statements.push(...freeShopStatements(db, shop.id));
   if (rowsCount.account_links) {
     const cols = schemas.account_links.columns.map((c) => c.name);

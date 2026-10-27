@@ -41,8 +41,10 @@ async function fixture() {
   }
   sqlite.run("INSERT INTO shops(id,public_id,name,latitude,longitude,radius_meters,created_by) VALUES ('shop','shop-code','Arcade',0,0,80,'owner-user')");
   sqlite.run("INSERT INTO shop_members(id,shop_id,user_id,role) VALUES ('m1','shop','owner-user','owner')");
-  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required,entry_pricing_ids_json)
-    VALUES ('shop',1,0,'["base"]')`);
+  sqlite.run(`INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required)
+    VALUES ('shop',1,0)`);
+  // Every resource without a group of its own bills through the default group.
+  sqlite.run("INSERT INTO resource_groups(shop_id,id,name,enabled,default_pricing_config_id,created_at,updated_at) VALUES ('shop','default','默认资源组',1,'base',?,?)", [NOW, NOW]);
   sqlite.run("INSERT INTO asset_definitions(shop_id,type,code,name,stackable,status) VALUES ('shop','currency','paid','余额',1,'active')");
   sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES ('shop','p1','P1','active',?)", [NOW]);
   sqlite.run("INSERT INTO shop_player_accounts(shop_id,user_id,player_id,verified_at) VALUES ('shop','player-user','p1',?)", [NOW]);
@@ -194,7 +196,7 @@ describe("scanning a resource", () => {
     expect(later.shared[0].paidBefore).toBe(3);
   });
 
-  it("bills a resource without a group through the shop's default plan", async () => {
+  it("bills a resource without a group of its own through the default group's plan", async () => {
     const { scan, active } = await fixture();
     const { state, confirm } = await scan("front-desk");
     expect(state.billing.preview.pricingConfigId).toBe("base");
@@ -219,15 +221,15 @@ describe("scanning a resource", () => {
     // On a scanned resource it answers for that resource.
     expect((await scan("cabinet")).machine).toMatchObject({ billed: true, shop: { billingEnabled: true } });
     expect((await scan("loose")).machine).toMatchObject({ billed: false, shop: { billingEnabled: false } });
-    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]'");
+    sqlite.run("UPDATE resource_groups SET default_pricing_config_id=NULL WHERE id='default'");
     sqlite.run("UPDATE resource_groups SET default_pricing_config_id=NULL");
     sqlite.run("UPDATE machines SET pricing_config_override_id=NULL");
     expect(await overview()).toBe(false);
   });
 
-  it("leaves the default group free once the shop's default plan is cleared", async () => {
+  it("leaves the default group free once its plan is cleared", async () => {
     const { scan, sqlite } = await fixture();
-    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]'");
+    sqlite.run("UPDATE resource_groups SET default_pricing_config_id=NULL WHERE id='default'");
     expect((await scan("front-desk")).state.gate).toBe("ready");
     // Other groups keep billing by their own plans.
     expect((await scan("cabinet")).state.gate).toBe("entry");
@@ -262,14 +264,24 @@ describe("resource groups", () => {
     expect(told).toBe(2);
   });
 
-  it("lists the default group with the shop's default plan, and edits it there", async () => {
-    const { call, sqlite } = await fixture();
+  it("edits the default group like any other, except that it cannot be deleted", async () => {
+    const { call, sqlite, scan } = await fixture();
     const listed = await call("GET", "/api/v1/merchant/resource-groups?shopId=shop", OWNER);
     expect(listed.body.resourceGroups[0]).toMatchObject({ id: "default", isDefault: true, defaultPricingConfigId: "base", resourceCount: 1 });
 
-    await call("PATCH", "/api/v1/merchant/resource-groups/default", OWNER, { shopId: "shop", defaultPricingConfigId: "special" });
-    expect(sqlite.query("SELECT entry_pricing_ids_json AS ids FROM shop_billing_settings").get()).toEqual({ ids: '["special"]' });
+    const renamed = await call("PATCH", "/api/v1/merchant/resource-groups/default", OWNER, { shopId: "shop", name: "大厅", defaultPricingConfigId: "special" });
+    expect(renamed.body.resourceGroup).toMatchObject({ id: "default", name: "大厅", defaultPricingConfigId: "special" });
+    expect(sqlite.query("SELECT default_pricing_config_id AS plan FROM resource_groups WHERE id='default'").get()).toEqual({ plan: "special" });
+    // Pausing it pauses the resources that have no group of their own.
+    await call("PATCH", "/api/v1/merchant/resource-groups/default", OWNER, { shopId: "shop", enabled: false });
+    expect((await scan("front-desk")).state.billing.error.code).toBe("RESOURCE_GROUP_DISABLED");
     expect((await call("DELETE", "/api/v1/merchant/resource-groups/default?shopId=shop", OWNER)).status).toBe(400);
+  });
+
+  it("treats a shop without a stored default group as a free one", async () => {
+    const { scan, sqlite } = await fixture();
+    sqlite.run("DELETE FROM resource_groups WHERE id='default'");
+    expect((await scan("front-desk")).state.gate).toBe("ready");
   });
 
   it("creates a group, moves a resource into it and refuses to delete it while used", async () => {
@@ -288,7 +300,7 @@ describe("resource groups", () => {
     expect((await call("DELETE", `/api/v1/merchant/resource-groups/${groupId}?shopId=shop`, OWNER)).status).toBe(200);
   });
 
-  it("refuses archiving a plan a group, a resource or the shop default bills through", async () => {
+  it("refuses archiving a plan a group, the default group or a resource bills through", async () => {
     const { call } = await fixture();
     const archive = (id: string) => call("POST", `/api/v1/shops/shop-code/staff/pricing-configs/${id}/archive`, OWNER);
     const refused = await archive("special");

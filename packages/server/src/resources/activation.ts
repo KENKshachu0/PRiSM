@@ -1,9 +1,10 @@
 /**
  * Starting a plan for a player, from anywhere.
  *
- * Every start names its target the same way: a resource (whose plan it bills),
- * a plan, or neither (the shop's default plan). The scan page, the front desk,
- * the cashier and the bot all start through `activate`, so a start everywhere
+ * Every start names its target the same way: a resource (whose plan it bills)
+ * or a plan. There is no default plan to fall back on: the front desk is a
+ * resource, and so is a bot. The scan page, the front desk, staff and the bot
+ * all start through `activate`, so a start everywhere
  * has the same preview, the same placeholder rule for a shop without time
  * plans, and the same answer to whether anything new started.
  *
@@ -21,10 +22,10 @@ import type {
   PricingSessionTransitionItem,
 } from "@prism/application";
 import { buildPricingRelationGraph, isStartablePricingKind, PLACEHOLDER_PRICING_CONFIG_ID, PrismDomainError, type PricingConfig, type Session, type SessionRepository } from "@prism/core";
-import { defaultGroupPlanId, resolveResourcePlanId, shopDefaultPlanId } from "./billing.js";
+import { resolveResourcePlanId, resourceGroupIdOf } from "./billing.js";
 import { findBillableResource, findResourceGroup } from "./repository.js";
 
-/** What a start names: a resource's plan, a plan, or neither for the shop's default plan. */
+/** What a start names: a resource's plan, or a plan. */
 export type BillingTarget = {
   playerId: string;
   resourceId?: string;
@@ -60,15 +61,13 @@ export type ResourcePlanRule = {
 
 /** Where the resource's plan comes from, and every plan that will bill with it. */
 export type ResourcePlanRules = {
-  source: { kind: "resource" | "group" | "default"; groupName?: string };
+  source: { kind: "resource" | "group"; groupName?: string };
   plans: ResourcePlanRule[];
   /** How far each cap over these plans is used up now; only when asked for. */
   caps?: CapProgress;
 };
 
 export type ResourceBilling = {
-  /** The plan admission without a scanned resource starts (front desk, cashier, bot login). */
-  defaultPlanId(playerId: string): Promise<string>;
   /** The resource's plan, or null when it is free. */
   planOf(resourceId: string): Promise<string | null>;
   preview(input: BillingTarget): Promise<ResourceBillingPreview>;
@@ -89,8 +88,6 @@ export type ResourceBilling = {
 export function createResourceBilling(dependencies: {
   db: D1DatabaseLike;
   shopId: string;
-  /** The shop's default plan setting, as stored. */
-  defaultPlanIds: () => readonly string[];
   pricingCatalog(playerId: string): Promise<readonly PricingConfig[]>;
   sessions: Pick<SessionRepository, "findActiveByPlayerId">;
   pricingSessions: PricingSessionOrchestrator;
@@ -119,21 +116,14 @@ export function createResourceBilling(dependencies: {
     changed,
     at: dependencies.now(),
   });
-  const defaultOf = async (playerId: string) =>
-    shopDefaultPlanId(dependencies.defaultPlanIds(), await dependencies.pricingCatalog(playerId));
-
   async function bindingOf(resourceId: string) {
     const resource = await findBillableResource(dependencies.db, dependencies.shopId, resourceId);
     if (!resource) throw new PrismDomainError("没有找到这个资源", "DEVICE_NOT_FOUND");
-    const group = resource.groupId ? await findResourceGroup(dependencies.db, dependencies.shopId, resource.groupId) : null;
-    // The default plan is only needed, and only read, for the default group.
-    const defaultPlanId = resource.groupId || resource.pricingConfigOverrideId ? null : defaultGroupPlanId(dependencies.defaultPlanIds());
-    const planId = resolveResourcePlanId({ resource, group, defaultPlanId });
+    const group = await findResourceGroup(dependencies.db, dependencies.shopId, resourceGroupIdOf(resource));
+    const planId = resolveResourcePlanId({ resource, group });
     const source: ResourcePlanRules["source"] = resource.pricingConfigOverrideId
       ? { kind: "resource" }
-      : group
-        ? { kind: "group", groupName: group.name }
-        : { kind: "default" };
+      : { kind: "group", groupName: group!.name };
     return { planId, source };
   }
 
@@ -146,12 +136,6 @@ export function createResourceBilling(dependencies: {
     return planId;
   }
 
-  async function defaultPlanId(playerId: string) {
-    const planId = await defaultOf(playerId);
-    if (!planId) throw new PrismDomainError("请店家先设置默认计费方案", "ENTRY_PRICING_REQUIRED");
-    return planId;
-  }
-
   async function activeSession(input: { resourceId: string; playerId: string }) {
     const pricingConfigId = await planOf(input.resourceId);
     if (!pricingConfigId) return null;
@@ -160,21 +144,24 @@ export function createResourceBilling(dependencies: {
     return active.find((session) => session.pricingConfigId === pricingConfigId) ?? null;
   }
 
-  const targetPlanOf = (target: BillingTarget) =>
-    target.resourceId
-      ? billedPlanOf(target.resourceId)
-      : target.pricingConfigId
-        ? Promise.resolve(target.pricingConfigId)
-        : defaultPlanId(target.playerId);
+  /** A start names what it bills; a resource named must have a plan. */
+  async function assertTarget(target: BillingTarget) {
+    if (target.resourceId) await billedPlanOf(target.resourceId);
+    else if (!target.pricingConfigId) throw new PrismDomainError("请选择计费方案或资源", "PRICING_TARGET_REQUIRED");
+  }
+
+  const targetPlanOf = (target: BillingTarget) => {
+    if (target.resourceId) return billedPlanOf(target.resourceId);
+    if (target.pricingConfigId) return Promise.resolve(target.pricingConfigId);
+    throw new PrismDomainError("请选择计费方案或资源", "PRICING_TARGET_REQUIRED");
+  };
 
   return {
-    defaultPlanId,
-
     planOf,
 
     async preview(input) {
       const resource = input.resourceId ? { resourceId: input.resourceId } : {};
-      if (input.resourceId) await billedPlanOf(input.resourceId);
+      await assertTarget(input);
       if (await unpriced(input.playerId)) {
         return {
           ...resource,
@@ -200,7 +187,7 @@ export function createResourceBilling(dependencies: {
 
     activate(input) {
       return dependencies.withPlayerLock(input.playerId, async () => {
-        if (input.resourceId) await billedPlanOf(input.resourceId);
+        await assertTarget(input);
         if (await unpriced(input.playerId)) {
           const running = await placeholderOf(input.playerId);
           const session = running

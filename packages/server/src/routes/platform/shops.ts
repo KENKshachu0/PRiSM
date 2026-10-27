@@ -8,6 +8,8 @@ import { randomToken, sha256, sha256Hex } from "../../crypto.js";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { clampShopRadius } from "../../middleware/geo.js";
+import { DEFAULT_RESOURCE_GROUP_ID } from "../../resources/billing.js";
+import { ensureDefaultGroupStatement } from "../../resources/repository.js";
 
 export type ShopRow = {
   id: string;
@@ -101,7 +103,7 @@ export function shopTimeZoneStatement(
 export function billingSetupStatements(
   db: D1DatabaseLike,
   shopId: string,
-  setup: z.infer<typeof billingSetupSchema>,
+  setup: z.infer<typeof billingSetupSchema> & { cashierEnabled?: boolean },
 ) {
   const ruleId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -147,18 +149,64 @@ export function billingSetupStatements(
       ),
     db
       .prepare(
-        `INSERT INTO shop_billing_settings(shop_id,auto_register,entry_pricing_ids_json,bot_contact)
-      VALUES (?,?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,
-      entry_pricing_ids_json=excluded.entry_pricing_ids_json,bot_contact=excluded.bot_contact`,
+        `INSERT INTO shop_billing_settings(shop_id,auto_register,bot_contact)
+      VALUES (?,?,?) ON CONFLICT(shop_id) DO UPDATE SET auto_register=excluded.auto_register,
+      bot_contact=excluded.bot_contact`,
       )
-      .bind(
-        shopId,
-        +setup.autoRegister,
-        JSON.stringify([ruleId]),
-        setup.botContact,
-      ),
+      .bind(shopId, +setup.autoRegister, setup.botContact),
+    // The new plan bills the default group, where every resource starts out.
+    ensureDefaultGroupStatement(db, shopId, ruleId),
+    db
+      .prepare(
+        `UPDATE resource_groups SET default_pricing_config_id=?,updated_at=? WHERE shop_id=? AND id=?`,
+      )
+      .bind(ruleId, now, shopId, DEFAULT_RESOURCE_GROUP_ID),
+    ...(setup.cashierEnabled ? frontDeskStatements(db, shopId) : []),
   ];
   return { ruleId, statements };
+}
+
+/**
+ * The front desk as a resource: a check-in there bills like a scan, through the
+ * desk's group (the default group, unless moved). It is created once per shop
+ * and named in the cashier settings.
+ */
+/**
+ * A shop restored with the front desk on but no desk resource named (a backup
+ * from before the desk was a resource) gets one, as migration 0045 gave every
+ * such shop.
+ */
+export function missingFrontDeskStatements<T>(db: { prepare(sql: string): { bind(...values: unknown[]): T } }, shopId: string): T[] {
+  const lacksDesk = `EXISTS(SELECT 1 FROM app_settings WHERE shop_id=? AND key='cashier.settings'
+    AND json_extract(value_json,'$.enabled') AND json_extract(value_json,'$.resourceId') IS NULL)`;
+  return [
+    db.prepare(
+      `INSERT INTO machines(id,public_id,shop_id,name,enabled,kind,aliases_json,hinata_url_encrypted)
+       SELECT ?,lower(hex(randomblob(6))),?,'前台',1,'machine','[]','' WHERE ${lacksDesk}
+       ON CONFLICT(id) DO NOTHING`,
+    ).bind(`desk-${shopId}`, shopId, shopId),
+    db.prepare(
+      `UPDATE app_settings SET value_json=json_set(value_json,'$.resourceId',?)
+       WHERE shop_id=? AND key='cashier.settings' AND json_extract(value_json,'$.enabled')
+       AND json_extract(value_json,'$.resourceId') IS NULL
+       AND EXISTS(SELECT 1 FROM machines WHERE id=? AND shop_id=?)`,
+    ).bind(`desk-${shopId}`, shopId, `desk-${shopId}`, shopId),
+  ];
+}
+
+export function frontDeskStatements(db: D1DatabaseLike, shopId: string) {
+  const deskId = `desk-${shopId}`;
+  const now = new Date().toISOString();
+  return [
+    db.prepare(
+      `INSERT INTO machines(id,public_id,shop_id,name,enabled,kind,aliases_json,hinata_url_encrypted)
+       VALUES (?,?,?,'前台',1,'machine','[]','') ON CONFLICT(id) DO NOTHING`,
+    ).bind(deskId, randomToken(12), shopId),
+    db.prepare(
+      `INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,'cashier.settings',?,?)
+       ON CONFLICT(shop_id,key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`,
+    ).bind(shopId, JSON.stringify({ enabled: true, resourceId: deskId }), now),
+  ];
 }
 
 export async function canAccessShop(
@@ -259,13 +307,8 @@ shopsRouter.post("/", async (c) => {
       c.env.DB.prepare(
         "INSERT INTO shop_billing_settings(shop_id,auto_register,identity_binding_required) VALUES (?,1,1)",
       ).bind(shopId),
-    );
-  }
-  if (setup?.cashierEnabled) {
-    statements.push(
-      c.env.DB.prepare(
-        "INSERT INTO app_settings(shop_id,key,value_json,updated_at) VALUES (?,'cashier.settings','{\"enabled\":true}',?)",
-      ).bind(shopId, now),
+      // Every resource starts in the default group; without a plan it is free.
+      ensureDefaultGroupStatement(c.env.DB, shopId),
     );
   }
   if (setup) {

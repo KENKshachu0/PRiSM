@@ -104,11 +104,10 @@ describe("Local Server Entrypoint & Runtime", () => {
 
       // Verify billing settings exist
       // The default group bills the seeded plan.
-      const billing = db.query<{ shop_id: string; entry_pricing_ids_json: string }, [string]>(
-        "SELECT shop_id, entry_pricing_ids_json FROM shop_billing_settings WHERE shop_id = ? LIMIT 1;",
+      const group = db.query<{ plan: string | null }, [string]>(
+        "SELECT default_pricing_config_id AS plan FROM resource_groups WHERE shop_id = ? AND id = 'default';",
       ).get("test-shop");
-      expect(billing).toBeDefined();
-      expect(JSON.parse(billing!.entry_pricing_ids_json)).toHaveLength(1);
+      expect(group?.plan).toBeTruthy();
 
       // Verify idempotency on second run
       expect(() => initializeLocalDatabase(db, "test-shop")).not.toThrow();

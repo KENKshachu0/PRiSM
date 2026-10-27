@@ -36,7 +36,6 @@ import {
   withOperationLease,
   type StartPlayerSessionCommand,
 } from "@prism/application";
-import { shopDefaultPlanId } from "../resources/billing.js";
 import { createResourceBilling } from "../resources/activation.js";
 import { createOccupancy } from "../resources/occupancy/service.js";
 import { createRoster } from "../resources/roster.js";
@@ -72,16 +71,6 @@ function namedPlanOf(command: StartPlayerSessionCommand): string | null {
     throw new PrismDomainError("A session bills exactly one pricing plan.", "PRICING_CONFIG_SINGLE_PLAN_REQUIRED");
   }
   return named[0] ?? null;
-}
-
-/** The shop's default plan setting as stored; at most one id once saved. */
-function defaultPlanSetting(shop: TenantShop): string[] {
-  try {
-    const ids: unknown = JSON.parse(shop.entry_pricing_ids_json);
-    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
-  } catch {
-    return [];
-  }
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -266,12 +255,8 @@ export function createShopDependencies(input: {
         .bind(shopId, JSON.stringify(closed.map((session) => session.id)))
         .run();
     },
-    // Display only. The default plan keeps the `entry` label older bots look for.
-    labelOf: (planId, catalog) => {
-      let defaultPlanId: string | null = null;
-      try { defaultPlanId = shopDefaultPlanId(defaultPlanSetting(input.shop), catalog); } catch { /* ambiguous setting */ }
-      return planId === defaultPlanId ? "entry" : catalog.find((config) => config.id === planId)?.name;
-    },
+    // Display only: a session is labelled by its plan.
+    labelOf: (planId, catalog) => catalog.find((config) => config.id === planId)?.name,
     now,
     id,
   });
@@ -279,7 +264,6 @@ export function createShopDependencies(input: {
   const resourceBilling = createResourceBilling({
     db: input.db,
     shopId,
-    defaultPlanIds: () => defaultPlanSetting(input.shop),
     pricingCatalog,
     sessions: repos.sessions,
     pricingSessions,
@@ -491,7 +475,7 @@ export function createShopDependencies(input: {
 
   const staffPricingCommands = createStaffPricingService({
     pricingConfigs: repos.pricingConfigs,
-    planUsers: (planId) => resourcePlanUsers(input.db, shopId, defaultPlanSetting(input.shop), planId),
+    planUsers: (planId) => resourcePlanUsers(input.db, shopId, planId),
     async getDefaultTimeZone() {
       return input.shop.time_zone || "UTC";
     },
@@ -561,9 +545,10 @@ export function createShopDependencies(input: {
     now,
   });
 
-  // A bot admission (entry:true, or an older bot's admission label) starts the
-  // plan it names, otherwise the shop's default plan. Its own label is dropped
-  // so the default plan keeps the `entry` label bots look for.
+  // Kept for in-process callers only: the bot's HTTP entry starts the bot
+  // resource's plan (routes/shops/integration.ts). A start here must name its
+  // plan; there is no default plan. An older bot's admission label is dropped
+  // so the session is labelled by its plan.
   const origStartByIdentity = integrationCommands.startSessionByIdentity;
   integrationCommands = {
     ...integrationCommands,
@@ -737,7 +722,6 @@ export async function loadTenantShop(
       COALESCE(b.checkin_geo, 0) AS checkin_geo,
       COALESCE(b.checkout_geo, 0) AS checkout_geo,
       COALESCE(b.machine_geo, 0) AS machine_geo,
-      COALESCE(b.entry_pricing_ids_json, '[]') AS entry_pricing_ids_json,
       COALESCE(b.bot_contact, '') AS bot_contact,
       CASE WHEN s.hero_data IS NULL OR s.hero_data = '' THEN NULL ELSE '/api/v1/shops/' || s.public_id || '/hero?v=' || COALESCE(s.hero_hash, 'original') END AS hero_url,
       COALESCE((SELECT json_extract(value_json, '$.timeZone') FROM app_settings WHERE shop_id = s.id AND key = 'store.profile'), 'Asia/Shanghai') AS time_zone
