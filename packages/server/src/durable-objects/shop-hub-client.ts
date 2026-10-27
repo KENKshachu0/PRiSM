@@ -16,6 +16,7 @@ type ShopHubNamespace = {
     touch(shopId: string): Promise<void>;
     notifyUser(userId: string, frame: Record<string, unknown>): Promise<void>;
     botsChanged(): Promise<void>;
+    shopEvent(event: Record<string, unknown>): Promise<void>;
   };
 };
 
@@ -116,4 +117,13 @@ export function notifyBotsChangedAfter(c: { env: Env; executionCtx: { waitUntil(
     return;
   }
   notifyBotsChanged(c.env, shopId, ctx);
+}
+
+/** Hand a shop event to the hub for its bots to announce. Never throws: an event is best effort. */
+export async function sendShopEvent(env: Env, shopId: string, event: Record<string, unknown>): Promise<void> {
+  try {
+    await shopHub(env, shopId)?.shopEvent(event);
+  } catch (error) {
+    console.error("Shop hub event failed", error);
+  }
 }

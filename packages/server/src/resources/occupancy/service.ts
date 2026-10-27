@@ -142,10 +142,12 @@ export function createOccupancy(deps: { db: D1DatabaseLike; shopId: string; now?
 
   return {
     /** What an action or a device signal says about who is on a resource. */
-    async observe(input: { resourceId: string; event: OccupancyEvent; at?: Date }): Promise<void> {
+    /** Record what an action or signal says about who is on a resource; `started` is whoever it put on newly. */
+    async observe(input: { resourceId: string; event: OccupancyEvent; at?: Date }): Promise<{ started: { playerId: string } | null }> {
+      const none = { started: null };
       const at = input.at ?? now();
       const [resource] = await settings(input.resourceId);
-      if (!resource || resource.provider.held) return;
+      if (!resource || resource.provider.held) return none;
       const { provider } = resource;
       const observation = input.event.kind === "action"
         ? provider.fromAction?.({ action: input.event.action, playerId: input.event.playerId }) ?? null
@@ -154,7 +156,7 @@ export function createOccupancy(deps: { db: D1DatabaseLike; shopId: string; now?
             payload: input.event.payload,
             playerId: input.event.playerId,
           }) ?? null;
-      if (!observation) return;
+      if (!observation) return none;
       await closeTimedOut(at, resource.id);
       const open = (await db.prepare(
         "SELECT * FROM resource_occupancies WHERE shop_id = ? AND resource_id = ? AND source = ? AND ended_at IS NULL",
@@ -177,6 +179,7 @@ export function createOccupancy(deps: { db: D1DatabaseLike; shopId: string; now?
           : []),
       ];
       if (statements.length) await db.batch(statements);
+      return { started: plan.start ? { playerId: plan.start.playerId } : null };
     },
 
     /** A held occupant left on their own (got up from a seat). */

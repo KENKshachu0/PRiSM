@@ -113,8 +113,10 @@ export function ResourceEditor({
     caps.power && ac.connection === NEW_CONNECTION && power.connection === NEW_CONNECTION &&
     !!ac.url.trim() && ac.url.trim() === power.url.trim() && (!!value?.homeAssistant || !!power.token.trim());
 
+  // A HINATA IO connects straight to the platform unless it already runs through
+  // an external relay: direct is what a new card cabinet is set up with.
   const [embedded, setEmbedded] = useState(
-    value?.relayConnection === "embedded",
+    initial.hinata_io ? value?.relayConnection === "embedded" : true,
   );
   const [hinataUrl, setHinataUrl] = useState(value?.hinataUrl ?? "");
   const [password, setPassword] = useState("");
@@ -613,8 +615,8 @@ export function ResourceEditor({
             <Segmented
               label={t("连接方式")}
               options={[
-                ["external", t("外部中继")],
                 ["embedded", t("直连本平台")],
+                ["external", t("外部中继")],
               ]}
               value={embedded ? "embedded" : "external"}
               onChange={(next) => setEmbedded(next === "embedded")}
@@ -823,6 +825,32 @@ export function ResourceEditor({
                 />
               </Field>
             </div>
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium">{t("播报店内动态")}</legend>
+              {(
+                [
+                  ["announcePower", "开机、关机（含闲置自动关机）"],
+                  ["announceStarts", "上机（刷卡或投币后开始占用机台）"],
+                  ["announceCards", "刷卡"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={bot[key]} onChange={(e) => changeBot({ [key]: e.target.checked })} />
+                  {t(label)}
+                </label>
+              ))}
+              <p className="text-xs text-ink/55">
+                {t("刷卡同时上机时只发一条：开了「上机」就按上机播报，否则按刷卡播报。通过这个 Bot 自己的命令做的操作不会再播报一遍。")}
+              </p>
+              <Field label="播报群">
+                <textarea
+                  className={`${input} min-h-20`}
+                  value={bot.eventChannelIds.join("\n")}
+                  onChange={(e) => changeBot({ eventChannelIds: e.target.value.split("\n").map((line) => line.trim()).filter(Boolean) })}
+                />
+              </Field>
+              <p className="text-xs text-ink/55">{t("每行一个群号。")}</p>
+            </fieldset>
             {value?.bot && (
               <button type="submit" name="intent" value="rotate-bot" className={`${button} justify-self-start`}>
                 {t("重新签发 Bot 令牌")}
@@ -868,6 +896,10 @@ const defaultBotSettings: BotSettings = {
   receiptsToStaff: false,
   idleChannelIds: [],
   idleReminderMinutes: 5,
+  eventChannelIds: [],
+  announcePower: false,
+  announceCards: false,
+  announceStarts: false,
 };
 
 const capabilityList = ["power", "climate", "hinata_io", "door", "mahjong", "bot"] as const satisfies readonly CapabilityId[];

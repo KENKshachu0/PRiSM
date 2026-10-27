@@ -55,6 +55,8 @@ async function fixture() {
 
   const hub = {
     markDown: [] as Array<[string, string]>,
+    /** What the hub was asked to tell the shop's bots. */
+    events: [] as Array<Record<string, unknown>>,
     /** What the route handed the hub when a board connected. */
     boards: [] as Array<{ name: string; headers: Record<string, string | null> }>,
   };
@@ -66,6 +68,7 @@ async function fixture() {
     SHOP_HUB: {
       getByName: (name: string) => ({
         async markDown(shop: string, machine: string) { hub.markDown.push([shop, machine]); },
+        async shopEvent(event: Record<string, unknown>) { hub.events.push(event); },
         async fetch(request: Request) {
           const read = (header: string) => request.headers.get(header);
           hub.boards.push({ name, headers: { shop: read("x-prism-hub-shop"), board: read("x-prism-hub-board"), device: read("x-prism-hub-device"), authorization: read("authorization") } });
@@ -380,6 +383,26 @@ describe("board live channel", () => {
       expect((await call(WS, ADMIN, { headers: { ...upgrade, origin: "https://prism.test" } })).status).toBe(200);
       expect(hub.boards).toHaveLength(1);
     } finally { sqlite.close(); }
+  });
+});
+
+describe("telling bots what happened", () => {
+  it("announces a power action with who did it and the bot that asked, but leaves the hub's own idle power-off to the hub", async () => {
+    const { db, env, hub, sqlite } = await fixture();
+    const ha = homeAssistant();
+    try {
+      sqlite.run("INSERT INTO players(shop_id,id,display_name,status,created_at) VALUES ('shop-id','p1','Alice','active',?)", [new Date().toISOString()]);
+      const device = (await loadResource(db, "shop-id", "cab"))!;
+      const bus = createRuntimeBus({ db, env, shopId: "shop-id" });
+      await bus.perform({ device, action: "power.on", actor: { type: "player", playerId: "p1" }, payload: { viaBot: "bot-1" } });
+      expect(hub.events).toEqual([expect.objectContaining({
+        kind: "power", state: "on", by: "player", resourceId: "cab", resourceName: "Cabinet", botId: "bot-1",
+        player: { playerId: "p1", displayName: "Alice", identities: [] },
+      })]);
+      await createRuntimeBus({ db, env, shopId: "shop-id", notifyHub: false })
+        .perform({ device, action: "power.off", actor: { type: "system" } });
+      expect(hub.events).toHaveLength(1);
+    } finally { ha.spy.mockRestore(); sqlite.close(); }
   });
 });
 

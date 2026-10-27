@@ -178,6 +178,11 @@ export type BotSettings = {
   receiptsToStaff: boolean;
   idleChannelIds: string[];
   idleReminderMinutes: number;
+  /** Channels told what happens at the shop, and which of it. */
+  eventChannelIds: string[];
+  announcePower: boolean;
+  announceCards: boolean;
+  announceStarts: boolean;
 };
 
 /** A set of resources that bill the same default plan. The default group is the shop's own. */

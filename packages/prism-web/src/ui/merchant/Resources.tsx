@@ -208,6 +208,11 @@ export function ResourcesPage() {
     const timer = setTimeout(() => void readStates(), statesFailed ? 15_000 : 3_000);
     return () => clearTimeout(timer);
   }, [hasStateDevices, unread, statesFailed, readStates]);
+  // Card cabinets still behind an external relay: the page suggests moving them to a direct connection.
+  const relayed = useMemo(
+    () => (devices ?? []).filter((device) => resourceCapabilities(device).hinata_io && !isDirectConnect(device)),
+    [devices],
+  );
   const counts = useMemo(() => {
     const result: Record<string, number> = { all: devices?.length ?? 0 };
     for (const device of devices ?? []) {
@@ -265,6 +270,21 @@ export function ResourcesPage() {
           )}
         </div>
       </header>
+      {canWrite && relayed.length > 0 && (
+        <section className="grid gap-2 rounded-xl border border-mint/30 bg-mint/5 p-4 text-sm" aria-label={t("建议改为直连")}>
+          <p className="font-medium">{t("这些刷卡机台还在用外部中继，建议改为直连本平台")}</p>
+          <p className="text-ink/60">
+            {t("直连不用另外部署和维护中继服务，刷卡、投币和在线状态都由平台直接处理。在资源的「刷卡 · HINATA IO」里选「直连本平台」，签发设备令牌后把它填进机台。")}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {relayed.map((device) => (
+              <button key={device.id} type="button" className={`${button} min-h-9 px-3 py-1`} onClick={() => setEditing(device)}>
+                {device.name}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {hasStateDevices && watchers && (
         <HaWatchersPanel
           shopId={shopId}

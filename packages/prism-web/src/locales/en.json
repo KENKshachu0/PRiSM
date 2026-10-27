@@ -1810,5 +1810,13 @@
   "按前台资源所在资源组的方案开始计时。": "Timing starts on the plan of the front desk resource's group.",
   "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的方案，再加上它依赖的方案。": "When a player scans a resource it is timed on that resource's plan: its own, otherwise its resource group's, plus the plans it requires.",
   "支持 prism-neo 的 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照，上传前在浏览器转换为 PRiSM 备份。只导入玩家、余额、计费规则和历史记录；店铺资料、时区、设置、资源、资源组、Bot 与店员保留不变。旧计费规则按本店时区换算，成为默认资源组的方案。": "Accepts a prism-neo pg_dump backup (.sql) or a CLI JSON snapshot, converted to a PRiSM backup in your browser before upload. Only players, balances, pricing rules and history are imported; the shop's profile, time zone, settings, resources, resource groups, bot and staff stay as they are. Old pricing rules are converted from this shop's time zone and become the default resource group's plan.",
-  "将替换玩家、余额、计费方案和历史记录；店铺资料、设置、资源、资源组、Bot 与店员保留。": "Replaces players, balances, pricing plans and history; the shop's profile, settings, resources, resource groups, bot and staff are kept."
+  "将替换玩家、余额、计费方案和历史记录；店铺资料、设置、资源、资源组、Bot 与店员保留。": "Replaces players, balances, pricing plans and history; the shop's profile, settings, resources, resource groups, bot and staff are kept.",
+  "播报店内动态": "Announce what happens at the shop",
+  "开机、关机（含闲置自动关机）": "Power on and off (including idle power-offs)",
+  "上机（刷卡或投币后开始占用机台）": "Starting on a machine (after a card or a coin)",
+  "播报群": "Announcement channels",
+  "刷卡同时上机时只发一条：开了「上机」就按上机播报，否则按刷卡播报。通过这个 Bot 自己的命令做的操作不会再播报一遍。": "A swipe that also starts someone sends one message: a start when starts are announced, otherwise a swipe. What this bot's own commands did is not announced again.",
+  "建议改为直连": "Switch to a direct connection",
+  "这些刷卡机台还在用外部中继，建议改为直连本平台": "These card cabinets still use an external relay; switch them to connect directly to this platform",
+  "直连不用另外部署和维护中继服务，刷卡、投币和在线状态都由平台直接处理。在资源的「刷卡 · HINATA IO」里选「直连本平台」，签发设备令牌后把它填进机台。": "A direct connection needs no relay service to deploy or maintain: the platform handles cards, coins and online status itself. In the resource's HINATA IO card section choose the direct connection, issue a device token and enter it on the cabinet."
 }

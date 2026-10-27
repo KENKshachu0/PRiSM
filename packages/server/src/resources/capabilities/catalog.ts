@@ -231,6 +231,17 @@ const botConfig = z.object({
   /** Channels told when the shop goes idle, and how many minutes ahead. */
   idleChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   idleReminderMinutes: z.number().int().min(0).max(120).default(5),
+  /**
+   * Channels told what happens at the shop, and which of it: a device switched
+   * on or off through the platform (the idle rule's power-offs included), a
+   * card reaching a cabinet, someone starting on a resource (上机). A card that
+   * starts someone is one message, said as a start when starts are told. All
+   * off by default.
+   */
+  eventChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  announcePower: z.boolean().default(false),
+  announceCards: z.boolean().default(false),
+  announceStarts: z.boolean().default(false),
   /** Whether the bot may be given Home Assistant connections to watch. */
 });
 export type BotConfig = z.infer<typeof botConfig>;

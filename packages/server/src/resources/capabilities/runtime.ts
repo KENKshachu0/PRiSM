@@ -23,6 +23,7 @@ import type { HaEntityConfig } from "./catalog.js";
 import { doorConfigOf, hinataConfigOf, readSecret, type Resource } from "../resource.js";
 import { openHaConnection } from "./ha-connections.js";
 import { markWatcherDown } from "../../durable-objects/shop-hub-client.js";
+import { announceShopEvent, eventPlayer } from "../shop-events.js";
 import { readDeviceFacts } from "./state-view.js";
 
 const KEY_PRESS_TTL_MS = 30_000;
@@ -325,6 +326,23 @@ function doorRunner(runtime: DeviceRuntime): ActionRunner {
   };
 }
 
+/** What a successful platform action tells the shop's bots, if anything. */
+async function announceAction(runtime: DeviceRuntime, input: PerformInput, playerId: string | null, started: boolean) {
+  const viaBot = typeof input.payload?.viaBot === "string" ? input.payload.viaBot : null;
+  const place = { resourceId: input.device.id, resourceName: input.device.name, ...(viaBot ? { botId: viaBot } : {}) };
+  const player = () => eventPlayer(runtime.db, runtime.shopId, playerId);
+  if (input.action === "power.on" || input.action === "power.off") {
+    await announceShopEvent(runtime.env, runtime.shopId, {
+      kind: "power", ...place, state: input.action === "power.on" ? "on" : "off", by: input.actor.type, player: await player(),
+    });
+  } else if (input.action === "aime.scan") {
+    await announceShopEvent(runtime.env, runtime.shopId, { kind: "card", ...place, player: await player(), started });
+  } else if (started) {
+    const who = await player();
+    if (who) await announceShopEvent(runtime.env, runtime.shopId, { kind: "occupancy", ...place, player: who });
+  }
+}
+
 export function createRuntimeBus(runtime: DeviceRuntime) {
   const runners: Record<string, ActionRunner> = {
     "power.on": powerRunner(runtime, "turn_on"),
@@ -364,8 +382,13 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
         // Who a swipe or a coin was for may now occupy the resource. Losing
         // that must not fail the action the player already got.
         const playerId = input.actor.type === "player" ? input.actor.playerId : input.forPlayerId ?? null;
-        await occupancy.observe({ resourceId: input.device.id, event: { kind: "action", action: input.action, playerId } })
-          .catch((error) => console.error("Occupancy update failed", { shopId: runtime.shopId, deviceId: input.device.id, error }));
+        const observed = await occupancy.observe({ resourceId: input.device.id, event: { kind: "action", action: input.action, playerId } })
+          .catch((error) => {
+            console.error("Occupancy update failed", { shopId: runtime.shopId, deviceId: input.device.id, error });
+            return { started: null };
+          });
+        // The hub's own idle power-off (notifyHub false) is announced by the hub.
+        if (runtime.notifyHub !== false) await announceAction(runtime, input, playerId, !!observed.started);
       }
       // A HINATA IO that was just powered off will not report again; the hub
       // need not wait out its lease to hand the watch to another.

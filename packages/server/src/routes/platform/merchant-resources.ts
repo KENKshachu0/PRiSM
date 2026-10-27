@@ -419,6 +419,10 @@ const machineInput=z.object({
     receiptsToStaff:z.boolean().optional(),
     idleChannelIds:z.array(z.string().trim().min(1).max(80)).max(20).optional(),
     idleReminderMinutes:z.number().int().min(0).max(120).optional(),
+    eventChannelIds:z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+    announcePower:z.boolean().optional(),
+    announceCards:z.boolean().optional(),
+    announceStarts:z.boolean().optional(),
   }).strict().nullable().optional(),
   rotateBotToken:z.boolean().optional(),
   // Billing: the group whose default plan the resource bills (null or

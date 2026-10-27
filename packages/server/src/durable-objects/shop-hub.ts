@@ -353,6 +353,22 @@ export class ShopHub extends BaseDurableObject<Env> {
     }
   }
 
+  /**
+   * Something happened at the shop that bots may announce (a device switched on
+   * or off, a card, someone starting on a resource). Each bot decides from its
+   * own settings whether and where to say it.
+   */
+  async shopEvent(event: Record<string, unknown>): Promise<void> {
+    const frame = JSON.stringify({ type: "event", event: "shop.event", data: event });
+    for (const ws of this.bots()) {
+      try {
+        ws.send(frame);
+      } catch {
+        // A bot that left misses it.
+      }
+    }
+  }
+
   async notifyUser(userId: string, frame: Record<string, unknown>): Promise<void> {
     const encoded = JSON.stringify(frame);
     for (const ws of this.ctx.getWebSockets(`user:${userId}`)) {
@@ -777,6 +793,15 @@ export class ShopHub extends BaseDurableObject<Env> {
         await this.drop(id);
       }
       if (result.notices.length) await this.notify(result.notices);
+      // The idle rule's own power-offs: the device bus left them to the hub to tell.
+      for (const id of result.poweredOff) {
+        const resource = await this.env.DB.prepare("SELECT name FROM machines WHERE shop_id = ? AND id = ?")
+          .bind(shopId, id).first<{ name: string }>();
+        await this.shopEvent({
+          kind: "power", resourceId: id, resourceName: resource?.name ?? id, state: "off", by: "system", player: null,
+          at: new Date().toISOString(),
+        });
+      }
     } catch (error) {
       console.error("Idle check failed", error);
     }

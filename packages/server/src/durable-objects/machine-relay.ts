@@ -1,3 +1,4 @@
+import { announceShopEvent, eventPlayer } from "../resources/shop-events.js";
 import type { DurableObject } from "cloudflare:workers";
 import type { Env } from "../bindings.js";
 import { hinataIo } from "../resources/capabilities/catalog.js";
@@ -443,8 +444,21 @@ export class MachineRelay extends BaseDurableObject<Env> {
     const playerId = (accessCode ? await cards.playerOf(accessCode) : null)
       ?? (source ? await this.operationPlayer(channel.shopId, source) : null);
     await bus.signal({ device: { id: channel.machineId }, capability: "hinata_io", name, operationId: source, payload, playerId });
-    await createOccupancy({ db: this.env.DB, shopId: channel.shopId })
+    const observed = await createOccupancy({ db: this.env.DB, shopId: channel.shopId })
       .observe({ resourceId: channel.machineId, event: { kind: "signal", name, payload, playerId } });
+    // A card on the reader is told here; one the platform sent (it names its
+    // operation) was told when the platform sent it.
+    if (name === "card.consumed" && !source) {
+      const resource = await this.env.DB.prepare("SELECT name FROM machines WHERE shop_id = ? AND id = ?")
+        .bind(channel.shopId, channel.machineId).first<{ name: string }>();
+      await announceShopEvent(this.env, channel.shopId, {
+        kind: "card",
+        resourceId: channel.machineId,
+        resourceName: resource?.name ?? channel.machineId,
+        player: await eventPlayer(this.env.DB, channel.shopId, playerId),
+        started: !!observed.started,
+      });
+    }
   }
 
   /** The player a platform operation was requested by or for. */
