@@ -609,7 +609,19 @@ export const Api = {
     api<{ ok: true }>(`/api/v1/admin/bans/${id}`, { method: "DELETE" }),
 };
 
-/** Keep the request ID through network errors and page reloads. */
+/**
+ * Device actions: a swipe, a coin, power. The server keeps whatever it answered
+ * under the request ID, failures included, so a retry with the same ID only
+ * replays that answer; and the next action is a new request, not one to hold
+ * back until the last is settled.
+ */
+const isDeviceAction = (path: string) =>
+  /\/(merchant\/machines\/[^/]+|devices\/session)\/actions$/.test(path);
+
+/**
+ * Keep the request ID through network errors and page reloads. A device action
+ * keeps it only while no answer came back, and a different action replaces it.
+ */
 export async function playerOperation<T>(
   path: string,
   body: Record<string, unknown>,
@@ -617,9 +629,11 @@ export async function playerOperation<T>(
   const key = `prism.pending:${sessionStorage.getItem("prism.user") ?? ""}:${path}${path === "/api/v1/devices/session/actions" ? `:${body.ticket}:${body.action}` : path.endsWith("/player/session/start") ? `:${body.ticket}` : ""}`;
   const { location: _location, ...payload } = body;
   const fingerprint = JSON.stringify(payload);
+  const device = isDeviceAction(path);
   const stored = sessionStorage.getItem(key);
-  const pending = stored
-    ? (JSON.parse(stored) as { id: string; fingerprint: string })
+  const kept = stored ? (JSON.parse(stored) as { id: string; fingerprint: string }) : null;
+  const pending = kept && (kept.fingerprint === fingerprint || !device)
+    ? kept
     : { id: crypto.randomUUID(), fingerprint };
   if (pending.fingerprint !== fingerprint)
     throw new ApiError(
@@ -638,7 +652,7 @@ export async function playerOperation<T>(
   } catch (error) {
     if (
       error instanceof ApiError &&
-      error.status < 500 &&
+      (error.status < 500 || device) &&
       error.code !== "OPERATION_PENDING"
     )
       sessionStorage.removeItem(key);

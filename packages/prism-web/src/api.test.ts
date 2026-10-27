@@ -27,6 +27,33 @@ test("a lost checkout response reuses its operation ID",async()=>{
 });
 
 
+test("a failed device action never holds back the next one",async()=>{
+  const storage=new Map<string,string>();
+  const previous=Object.getOwnPropertyDescriptor(globalThis,"sessionStorage");
+  Object.defineProperty(globalThis,"sessionStorage",{configurable:true,value:{getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>storage.set(key,value),removeItem:(key:string)=>storage.delete(key)}});
+  const path="/api/v1/merchant/machines/m1/actions";
+  const ids:string[]=[];
+  let reply:"lost"|"failed"|"ok"="failed";
+  globalThis.fetch=Object.assign(async (_url:unknown,init?:RequestInit)=>{
+    ids.push(JSON.parse(String(init?.body)).operationId);
+    if(reply==="lost")throw new TypeError("Failed to fetch");
+    return reply==="ok"?Response.json({data:{ok:true}}):Response.json({error:{code:"DEVICE_UNAVAILABLE",message:"设备连接失败"}},{status:502});
+  },{preconnect:originalFetch.preconnect});
+  try{
+    // The server answered: a retry is a new request, not a replay of the failure.
+    await expect(playerOperation(path,{action:"aime.scan",accessCode:"1"})).rejects.toThrow("设备连接失败");
+    expect(storage.size).toBe(0);
+    reply="lost";
+    await expect(playerOperation(path,{action:"aime.scan",accessCode:"1"})).rejects.toThrow();
+    expect(storage.size).toBe(1);
+    // No answer came back, yet a different action goes ahead.
+    reply="ok";
+    expect(await playerOperation(path,{action:"power.on"})).toEqual({ok:true});
+    expect(new Set(ids).size).toBe(3);
+    expect(storage.size).toBe(0);
+  }finally{if(previous)Object.defineProperty(globalThis,"sessionStorage",previous);else Reflect.deleteProperty(globalThis,"sessionStorage");}
+});
+
 test("reads retry once on a lost connection; mutations never auto-retry", async () => {
   for (const [path, method, expected] of [
     ["/api/v1/shops/test/player/me", "GET", 2],

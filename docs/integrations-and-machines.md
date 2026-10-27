@@ -294,6 +294,8 @@ TTLock 账号是店铺级的，保存在 `app_settings` 的 `devices.ttlock_conn
 
 游戏服务器是否接受了这张卡不再判断：以前要再等最多 15 秒读卡器的结果灯（`event.ledSet`），等待期间操作一直显示「结果待确认」，现在 `event.ledSet` 一律忽略、不再记 `card.login`。设备日志里以前记下的 `card.login` 照常显示。
 
+**操作编号与重试**：网页的写操作带 UUID `operationId`，响应丢失时用原编号重试，服务器重放保存的结果、不会重复执行（`runPlayerOperation`）。设备操作（后台 `POST /api/v1/merchant/machines/:id/actions`、扫码页 `POST /api/v1/devices/session/actions`）放宽了两点：服务器只要给了回答（包括设备失败的 502），编号就作废，下次是新请求，否则用原编号重试只会一直重放那次失败；没收到回答时编号保留，但换一个操作或换一张卡会直接作为新请求发出，不再提示「上一笔操作尚未确认」。没确认的那一笔仍留在设备日志里。结账、充值等扣款操作不变：没收到回答时，换参数的请求仍会被拦下。
+
 响应的 `card` 字段：`read`、`not_read`；外部中继收不到任何回报，记为 `sent`。旧客户端忽略这个字段。开启「刷卡后自动投币」时，`not_read` 不投币，`coin` 返回 `skipped`，`reason` 为 `CARD_NOT_READ`。扫码页在卡片行的说明文字里显示「已刷卡」或「登录失败」（`not_read`），投币结果接在后面（如「已刷卡 · 已投币」）；结果停留几秒，期间其它卡片和投币按钮照常可用。
 
 ### 店铺 Hub：谁替店里盯着 Home Assistant，以及设备状态的两种模式
