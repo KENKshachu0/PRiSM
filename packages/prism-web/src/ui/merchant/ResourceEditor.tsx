@@ -803,16 +803,17 @@ export function ResourceEditor({
                 ))}
               </select>
             </Field>
-            <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
+            <fieldset className="grid gap-3">
+              <legend className="mb-1 text-sm font-medium">{t("播报与提醒")}</legend>
               <div className="grid gap-1">
-                <Field label="闲置提醒群">
+                <Field label="播报群">
                   <textarea
                     className={`${input} min-h-20`}
-                    value={bot.idleChannelIds.join("\n")}
-                    onChange={(e) => changeBot({ idleChannelIds: e.target.value.split("\n").map((line) => line.trim()).filter(Boolean) })}
+                    value={bot.announceChannelIds.join("\n")}
+                    onChange={(e) => changeBot({ announceChannelIds: e.target.value.split("\n").map((line) => line.trim()).filter(Boolean) })}
                   />
                 </Field>
-                <p className="text-xs text-ink/55">{t("每行一个群号。")}</p>
+                <p className="text-xs text-ink/55">{t("每行一个群号。闲置提醒和店内动态都发到这里。")}</p>
               </div>
               <Field label="提醒提前量" unit="分钟">
                 <input
@@ -824,38 +825,27 @@ export function ResourceEditor({
                   onChange={(e) => changeBot({ idleReminderMinutes: Number(e.target.value) || 0 })}
                 />
               </Field>
-            </div>
-            <fieldset className="grid gap-2">
-              <legend className="mb-1 text-sm font-medium">{t("播报店内动态")}</legend>
-              {(
-                [
-                  ["announcePower", "开机、关机（含闲置自动关机）"],
-                  ["announceStarts", "上机（刷卡或投币后开始占用机台）"],
-                  ["announceCards", "刷卡"],
-                ] as const
-              ).map(([key, label]) => (
-                <label key={key} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={bot[key]} onChange={(e) => changeBot({ [key]: e.target.checked })} />
-                  {t(label)}
-                </label>
-              ))}
+              <div className="grid gap-2">
+                <span className="text-sm">{t("播报这些")}</span>
+                {(
+                  [
+                    ["announceIdle", "设备闲置（关机前提醒）"],
+                    ["announcePower", "开机、关机（含闲置自动关机）"],
+                    ["announceStarts", "上机（刷卡或投币后开始占用机台）"],
+                    ["announceCards", "刷卡"],
+                    ["announceCoins", "投币"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={bot[key]} onChange={(e) => changeBot({ [key]: e.target.checked })} />
+                    {t(label)}
+                  </label>
+                ))}
+              </div>
               <p className="text-xs text-ink/55">
-                {t("刷卡同时上机时只发一条：开了「上机」就按上机播报，否则按刷卡播报。通过这个 Bot 自己的命令做的操作不会再播报一遍。")}
+                {t("刷卡或投币同时上机时只发一条：开了「上机」就按上机播报，否则按刷卡或投币播报。提前量为 0 时不做闲置提醒。通过这个 Bot 自己的命令做的操作不会再播报一遍。")}
               </p>
-              <Field label="播报群">
-                <textarea
-                  className={`${input} min-h-20`}
-                  value={bot.eventChannelIds.join("\n")}
-                  onChange={(e) => changeBot({ eventChannelIds: e.target.value.split("\n").map((line) => line.trim()).filter(Boolean) })}
-                />
-              </Field>
-              <p className="text-xs text-ink/55">{t("每行一个群号。")}</p>
             </fieldset>
-            {value?.bot && (
-              <button type="submit" name="intent" value="rotate-bot" className={`${button} justify-self-start`}>
-                {t("重新签发 Bot 令牌")}
-              </button>
-            )}
           </div>
         </CapabilityPane>
       )}
@@ -894,12 +884,13 @@ const defaultBotSettings: BotSettings = {
   powerOffStaffOnly: false,
   doorResourceId: null,
   receiptsToStaff: false,
-  idleChannelIds: [],
+  announceChannelIds: [],
   idleReminderMinutes: 5,
-  eventChannelIds: [],
+  announceIdle: false,
   announcePower: false,
-  announceCards: false,
   announceStarts: false,
+  announceCards: false,
+  announceCoins: false,
 };
 
 const capabilityList = ["power", "climate", "hinata_io", "door", "mahjong", "bot"] as const satisfies readonly CapabilityId[];

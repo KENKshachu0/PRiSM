@@ -76,10 +76,10 @@ describe("a bot credential names its shop", () => {
     // The announcement settings round-trip like the rest.
     const announcing = await call("PATCH", `/api/v1/merchant/machines/${id}`, {
       shopId: "shop", name: "店铺 Bot",
-      bot: { ...rotated.body.machine.bot, eventChannelIds: ["onebot:42"], announceStarts: true },
+      bot: { ...rotated.body.machine.bot, announceChannelIds: ["onebot:42"], announceStarts: true },
     });
     expect(announcing.status).toBe(200);
-    expect(announcing.body.machine.bot).toMatchObject({ eventChannelIds: ["onebot:42"], announceStarts: true, announcePower: false });
+    expect(announcing.body.machine.bot).toMatchObject({ announceChannelIds: ["onebot:42"], announceStarts: true, announcePower: false });
     expect(machines()).toHaveLength(1);
     expect((await readBot(rotated.body.botToken)).body.bot.id).toBe(id);
     expect((await readBot(created.body.botToken)).status).toBe(403);

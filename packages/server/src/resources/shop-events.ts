@@ -1,15 +1,15 @@
 /**
  * What happened at the shop, for bots to announce.
  *
- * Three things are told, each once:
+ * Four things are told, each once:
  *
  * - `power`: a device was switched on or off through the platform: by a
  *   player, staff, or the idle rule (`by: "system"`).
  * - `card`: a card reached a cabinet. `started` says it also put its owner on
  *   the cabinet (上机), so one swipe is one announcement, never a swipe and a
  *   start apart.
- * - `occupancy`: someone started on a resource without a card (a coin through
- *   the platform).
+ * - `coin`: a coin was pressed through the platform, with the same `started`.
+ * - `occupancy`: someone started on a resource without a card or a coin.
  *
  * A card the platform sent is told when the platform sends it; the cabinet's
  * report of the same card afterwards is not told again. Which of these a bot
@@ -32,6 +32,7 @@ type Place = { resourceId: string; resourceName: string; botId?: string };
 export type ShopEvent =
   | (Place & { kind: "power"; state: "on" | "off"; by: "player" | "staff" | "system"; player: EventPlayer | null })
   | (Place & { kind: "card"; player: EventPlayer | null; started: boolean })
+  | (Place & { kind: "coin"; player: EventPlayer | null; started: boolean })
   | (Place & { kind: "occupancy"; player: EventPlayer });
 
 /** Who a player is, as a bot names them: display name and platform identities. */

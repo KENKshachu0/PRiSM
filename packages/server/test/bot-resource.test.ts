@@ -84,7 +84,7 @@ describe("a bot is a resource", () => {
 
   it("issues its token once and tells it its settings and what the shop knows", async () => {
     const { bot, createBot, call } = await fixture();
-    const created = await createBot({ playerCommands: "readonly", idleChannelIds: ["group-1"] });
+    const created = await createBot({ playerCommands: "readonly", announceChannelIds: ["group-1"] });
     expect(created.token).toMatch(/^prism_integration_/);
     expect(created.machine.bot).toMatchObject({ playerCommands: "readonly" });
     expect(created.machine.bot).not.toHaveProperty("tokenId");
@@ -95,7 +95,7 @@ describe("a bot is a resource", () => {
     expect(config.status).toBe(200);
     expect(config.body).toMatchObject({
       bot: { id: created.id, name: "店铺 Bot" },
-      settings: { playerCommands: "readonly", idleChannelIds: ["group-1"], staffCommands: true },
+      settings: { playerCommands: "readonly", announceChannelIds: ["group-1"], staffCommands: true },
       currencyName: "猫粮",
       staff: [{ provider: "onebot", subject: "10001" }],
       // The only door, found without being chosen.
