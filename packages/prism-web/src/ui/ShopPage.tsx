@@ -57,7 +57,7 @@ function ShopSurface({ shopCode }: { shopCode: string }) {
       {!bill && info.shop.identityBindingRequired && !info.membership?.identityBound ? <PlatformBinding code={shopCode} />
         : bill ? <div className="grid gap-5"><BillTotal preview={bill} /><BillTimeline preview={bill} /></div>
         : receipt ? <SettledBill receipt={receipt} />
-        : !error && <p className="session-subtitle">{t("请碰一下 NFC 或扫描机台上的二维码入场")}</p>}
+        : !error && <p className="session-subtitle">{t("请碰一下 NFC 或扫描机台上的二维码")}</p>}
       {bill && <footer className="shop-checkout"><CheckoutButton info={info} onPendingChange={pending => { checkoutPending.current = pending; checkoutRevision.current++; }} onComplete={result => { checkoutPending.current = false; checkoutRevision.current++; setReceipt(result); setBill(null); setBillingActive(shopCode, false); }} /></footer>}
     </SessionPasskeySetup>}
   </section>;

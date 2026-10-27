@@ -151,7 +151,7 @@ bun test packages/server/test/shop-data-transfer.test.ts
 
 - 服务端所有入口（扫码页、设备动作、刷卡登录、门锁、麻将桌、玩家钱包与账单、前台收银、Bot 接口）只看资源是否解析到方案，不再返回 `BILLING_DISABLED`。前台收银只看「启用前台收银」设置。
 - 设置接口 `GET/PUT /settings` 不再含 `billingEnabled`；旧客户端提交该字段会被忽略。Bot 配置 `botConfigView` 的 `billingEnabled` 改为只描述这个 Bot：Bot 资源有专属方案或所在资源组有方案时为 `true`，即通过它入场会开始计费。新版 Koishi 插件只用它在本地拦截 `login`／`入场`，其他命令交给平台；旧版插件仍按它拦截所有计费类命令。修改资源组（含默认资源组）的方案、快速创建计费和导入店铺数据之后，平台都会通知在线 Bot 重新读取配置。
-- 设置接口也不再含 `entryPricingIds`（默认计费方案），`billingConfiguration` 只剩 `ready`／`balanceAssetsReady`（是否有有效余额货币），新增 `cashierResourceId`（前台资源）。店铺概览 `GET /api/v1/shops/:shopCode` 的 `entryPricing` 固定为空数组、`pricingSchedule.groups` 为空，只为已发布的 App Clip 解析保留字段；店铺页 `/t/:shopCode` 未入场时只提示扫码或碰 NFC 入场。
+- 设置接口也不再含 `entryPricingIds`（默认计费方案），`billingConfiguration` 只剩 `ready`／`balanceAssetsReady`（是否有有效余额货币），新增 `cashierResourceId`（前台资源）。店铺概览 `GET /api/v1/shops/:shopCode` 的 `entryPricing` 固定为空数组、`pricingSchedule.groups` 为空，只为已发布的 App Clip 解析保留字段；店铺页 `/t/:shopCode`（网页与 App Clip）没在计费时只显示「请碰一下 NFC 或扫描机台上的二维码」。
 - 迁移 `0045_default_group_and_front_desk.sql` 把每家店的默认计费方案搬到默认资源组这一行，清空 `entry_pricing_ids_json`（列保留但不再读写），并给已开前台收银的店铺建「前台」资源。
 - 扫码票据的资源视图新增 `billed`（该资源是否计费）。查询里的判定见 `packages/server/src/resources/billed-sql.ts`。
 - **App Clip 兼容字段**：已发布的 App Clip（`hinata_go/ios/PrismClip/Models.swift`）把店铺概览 `GET /api/v1/shops/:shopCode` 的 `shop.billingEnabled` 当作必填字段解码，缺失会导致整页读取失败；扫码资源视图的 `shop.billingEnabled` 用来区分「无硬件但需确认计费」和「无事可做」。因此这两处仍返回只读的 `billingEnabled`，背后没有开关：店铺概览里表示是否有任一资源计费（`shopBillsSql`），扫码资源视图里等于该资源的 `billed`。平台和网页不再据此做任何判断；App Clip 改用 `billed` 并发布后才能删除。

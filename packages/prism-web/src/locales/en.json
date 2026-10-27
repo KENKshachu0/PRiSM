@@ -712,7 +712,7 @@
   "在这里查看账单、兑换、记录与钱包。": "View your bill, redemptions, history and wallet here.",
   "店铺联系方式": "Shop contact",
   "账户": "Account",
-  "请碰一下 NFC 或扫描机台上的二维码入场": "Tap the NFC tag or scan the QR code on the machine to check in",
+  "请碰一下 NFC 或扫描机台上的二维码": "Tap the NFC tag or scan the QR code on the machine",
   "全部记录": "All records",
   "{count} 项计费": "{count} billing sessions",
   "结账金额": "Settled amount",
