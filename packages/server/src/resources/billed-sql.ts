@@ -1,8 +1,8 @@
 /**
- * Where a shop bills, for queries that list or load resources in one statement.
- * They follow `resolveResourcePlanId`: a resource's own override, otherwise its
- * group's plan, otherwise (in the default group) the shop's default plan. There
- * is no stored billing switch; these are the only shop-wide answers.
+ * Where a shop bills, for queries that load resources in one statement. They
+ * follow `resolveResourcePlanId`: a resource's own override, otherwise its
+ * group's plan, otherwise (in the default group) the shop's default plan.
+ * There is no stored billing switch.
  */
 
 /**
@@ -14,7 +14,11 @@ export const resourceBilledSql = (m = "m", b = "b") => `(COALESCE(${m}.pricing_c
     THEN (SELECT g.default_pricing_config_id FROM resource_groups g WHERE g.shop_id=${m}.shop_id AND g.id=${m}.resource_group_id)
     ELSE json_extract(COALESCE(${b}.entry_pricing_ids_json,'[]'),'$[0]') END) IS NOT NULL)`;
 
-/** Whether any resource of the shop `shopId` (an SQL expression) bills. */
+/**
+ * Whether any resource of the shop `shopId` (an SQL expression) bills. Only the
+ * retired `billingEnabled` field still answers this, for released App Clips
+ * that require it; nothing on the platform decides by it.
+ */
 export const shopBillsSql = (shopId: string) => `EXISTS(SELECT 1 FROM machines m
   LEFT JOIN shop_billing_settings b ON b.shop_id=m.shop_id
   WHERE m.shop_id=${shopId} AND ${resourceBilledSql("m", "b")})`;

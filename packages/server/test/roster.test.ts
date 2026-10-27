@@ -121,6 +121,21 @@ describe("one way to start a plan", () => {
     expect((await rhythmBot.post("players/by-identity/session/start", bob)).body.error.code).toBe("RESOURCE_GROUP_DISABLED");
   });
 
+  it("tells each bot whether entering through it bills, by its own resource group", async () => {
+    const { call, bot, rhythmBot, sqlite } = await fixture_();
+    const flag = async (target: typeof bot) => (await target.get("bot")).body.billingEnabled;
+    expect(await flag(bot)).toBe(true);
+    expect(await flag(rhythmBot)).toBe(true);
+    // The default group turns free: its bot no longer bills, the other group's still does.
+    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]'");
+    expect(await flag(bot)).toBe(false);
+    expect(await flag(rhythmBot)).toBe(true);
+    expect((await bot.post("players/by-identity/session/start", alice)).body.error.code).toBe("RESOURCE_NOT_BILLED");
+    // Its own plan bills even in a free group.
+    await call("PATCH", `/api/v1/merchant/machines/${bot.id}`, OWNER, { shopId: "shop", pricingConfigOverrideId: "night" });
+    expect(await flag(bot)).toBe(true);
+  });
+
   it("lets staff preview what a plan stops, and refuses a start previewed against another state", async () => {
     const { bot, staff } = await fixture_();
     const entered = await bot.post("players/by-identity/session/start", alice);

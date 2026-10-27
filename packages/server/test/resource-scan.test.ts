@@ -86,7 +86,7 @@ async function fixture() {
     const bootstrap = await call("GET", `/api/v1/devices/session/bootstrap?ticket=${encodeURIComponent(ticket)}`, PLAYER);
     const confirm = (extra: Record<string, unknown> = {}) =>
       call("POST", "/api/v1/shops/shop-code/player/session/start", PLAYER, { ticket, consent: true, operationId: crypto.randomUUID(), ...extra });
-    return { state: bootstrap.body.state, confirm };
+    return { state: bootstrap.body.state, machine: bootstrap.body.machine, confirm };
   };
   const active = () => (sqlite.query(
     "SELECT json_extract(pricing_config_ids_json,'$[0]') AS plan, started_at AS startedAt FROM sessions WHERE status='active' ORDER BY plan",
@@ -209,6 +209,20 @@ describe("scanning a resource", () => {
     expect(state.billing).toBeNull();
     expect((await confirm()).body.error.code).toBe("RESOURCE_NOT_BILLED");
     expect(active()).toEqual([]);
+  });
+
+  it("still answers billingEnabled for released App Clips, derived from the plans", async () => {
+    const { scan, call, sqlite } = await fixture();
+    // The App Clip decodes the shop overview's billingEnabled as a required field.
+    const overview = async () => (await call("GET", "/api/v1/shops/shop-code?pricing=raw", PLAYER)).body.shop.billingEnabled;
+    expect(await overview()).toBe(true);
+    // On a scanned resource it answers for that resource.
+    expect((await scan("cabinet")).machine).toMatchObject({ billed: true, shop: { billingEnabled: true } });
+    expect((await scan("loose")).machine).toMatchObject({ billed: false, shop: { billingEnabled: false } });
+    sqlite.run("UPDATE shop_billing_settings SET entry_pricing_ids_json='[]'");
+    sqlite.run("UPDATE resource_groups SET default_pricing_config_id=NULL");
+    sqlite.run("UPDATE machines SET pricing_config_override_id=NULL");
+    expect(await overview()).toBe(false);
   });
 
   it("leaves the default group free once the shop's default plan is cleared", async () => {

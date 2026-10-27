@@ -41,7 +41,7 @@
 规则只有一条：资源专属方案优先，否则用资源组的方案；默认资源组的方案只取店铺设置里的默认计费方案。代码见 `packages/server/src/resources/billing.ts`（`resolveResourcePlanId`、`defaultGroupPlanId`）。
 
 - 专属方案**替换**资源组的方案，不会把两者叠加。需要叠加时，在计费页让专属方案 `requires` 另一个方案。
-- 资源组（含默认资源组）没有设置方案、资源也没有专属方案时，资源**免费使用**：扫码页 `gate` 直接为 `ready`、`billing` 为 `null`，玩家无需确认，也不会开始任何计费。普通资源组不会退回店铺默认方案；默认资源组也不会自动挑选「唯一的计时方案」。对免费资源调用开始计费（`session/start` 等）返回 `RESOURCE_NOT_BILLED`。
+- 资源组（含默认资源组）没有设置方案、资源也没有专属方案时，资源**免费使用**：扫码页 `gate` 直接为 `ready`、`billing` 为 `null`，玩家无需确认，也不会开始任何计费。普通资源组不会退回店铺默认方案；默认资源组也不会自动挑选「唯一的计时方案」。对免费资源调用开始计费（`session/start`、Bot 的 `/login` 等）返回 `409 RESOURCE_NOT_BILLED`。
 - 给资源组或资源设置方案时（`assertBillablePlan`），方案须为有效的可开始方案，且店铺须有有效的余额货币，否则分别返回 `RESOURCE_PRICING_INVALID`、`BILLING_CONFIGURATION_REQUIRED`。清空方案总是允许，未结账单仍按已锁定的计费版本结账。
 - 资源所属的资源组已删除时返回 `RESOURCE_GROUP_NOT_FOUND`，停用时返回 `RESOURCE_GROUP_DISABLED`。
 - 方案必须属于玩家当前计费版本里的计时方案，由编排器校验。
@@ -145,8 +145,9 @@ bun test packages/server/test/shop-data-transfer.test.ts
 原来店铺有一个「启用入场计费」开关（`billingEnabled` / `shop_billing_settings.billing_enabled`），它决定整店是否计费。计费方案下放到资源组和资源后，这个开关被移除：
 
 - 服务端所有入口（扫码页、设备动作、刷卡登录、门锁、麻将桌、玩家钱包与账单、前台收银、Bot 接口）只看资源是否解析到方案，不再返回 `BILLING_DISABLED`。前台收银只看「启用前台收银」设置。
-- 设置接口 `GET/PUT /settings` 不再含 `billingEnabled`；旧客户端提交该字段会被忽略。Bot 配置 `botConfigView` 仍返回只读的 `billingEnabled`，表示是否有任一资源计费（`shopBillsSql`），供尚未更新的插件使用。
-- 扫码票据的资源视图新增 `billed`（该资源是否计费），`shop.billingEnabled` 已移除。查询里的判定见 `packages/server/src/resources/billed-sql.ts`。
+- 设置接口 `GET/PUT /settings` 不再含 `billingEnabled`；旧客户端提交该字段会被忽略。Bot 配置 `botConfigView` 的 `billingEnabled` 改为只描述这个 Bot：Bot 资源有专属方案或所在资源组有方案时为 `true`，即通过它入场会开始计费。新版 Koishi 插件不读它，交给平台判断；旧版插件仍按它拦截计费类命令。
+- 扫码票据的资源视图新增 `billed`（该资源是否计费）。查询里的判定见 `packages/server/src/resources/billed-sql.ts`。
+- **App Clip 兼容字段**：已发布的 App Clip（`hinata_go/ios/PrismClip/Models.swift`）把店铺概览 `GET /api/v1/shops/:shopCode` 的 `shop.billingEnabled` 当作必填字段解码，缺失会导致整页读取失败；扫码资源视图的 `shop.billingEnabled` 用来区分「无硬件但需确认计费」和「无事可做」。因此这两处仍返回只读的 `billingEnabled`，背后没有开关：店铺概览里表示是否有任一资源计费（`shopBillsSql`），扫码资源视图里等于该资源的 `billed`。平台和网页不再据此做任何判断；App Clip 改用 `billed` 并发布后才能删除。
 - 迁移 `0044_retire_shop_billing_switch.sql` 清空所有未启用计费店铺的默认方案、资源组方案和资源专属方案，让它们保持免费，而不会因残留的方案（例如以停用状态导入的 prism-neo 规则）突然开始计费。`billing_enabled` 列保留但不再读写，因为 D1 结构变更在 `deploy:beta` 中先于数据转换执行，不能简单删列。
 - 备份文件的 `settings.billingEnabled` 改为可选并已停用：新导出不再写入；导入旧文件时若为 `false`，会同样清空该店所有方案设置（`freeShopStatements`）。
 

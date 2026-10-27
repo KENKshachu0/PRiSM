@@ -119,7 +119,9 @@ export async function publicResource(c: Context<AppBindings>, m: ScannedResource
     shop: {
       name: m.shop_name, publicId: m.shop_public_id,
       locationEnabled: !!m.machine_geo, machineGeo: !!m.machine_geo,
-      heroUrl: m.shop_hero_url,
+      // Released App Clips read this to tell a resource without hardware that
+      // still needs confirming from an idle one; it answers for this resource.
+      billingEnabled: !!m.billed, heroUrl: m.shop_hero_url,
       latitude: m.latitude, longitude: m.longitude, radiusMeters: m.radius_meters,
     },
   };

@@ -8,7 +8,7 @@
  */
 import type { D1DatabaseLike } from "@prism/adapter-d1";
 import { randomToken } from "../crypto.js";
-import { shopBillsSql } from "./billed-sql.js";
+import { resourceBilledSql } from "./billed-sql.js";
 import { capabilities, type BotConfig } from "./capabilities/catalog.js";
 
 export type BotResource = { id: string; name: string; enabled: boolean; config: BotConfig };
@@ -60,7 +60,7 @@ export async function ensureBotResource(
 
 /** Everything a bot is told: its settings plus what the platform knows. */
 export async function botConfigView(db: D1DatabaseLike, shopId: string, bot: BotResource) {
-  const [staff, currency, tables, doors, shop] = await Promise.all([
+  const [staff, currency, tables, doors, own] = await Promise.all([
     // Staff are whoever works at the shop and bound a platform identity there.
     db.prepare(
       `SELECT DISTINCT b.provider, b.subject FROM shop_platform_bindings b
@@ -85,7 +85,10 @@ export async function botConfigView(db: D1DatabaseLike, shopId: string, bot: Bot
       `SELECT m.id, m.name FROM device_capabilities c JOIN machines m ON m.shop_id = c.shop_id AND m.id = c.device_id
        WHERE c.shop_id = ? AND c.capability = 'door' AND m.enabled = 1 ORDER BY m.name`,
     ).bind(shopId).all<{ id: string; name: string }>(),
-    db.prepare(`SELECT ${shopBillsSql("?")} AS billing`).bind(shopId).first<{ billing: number }>(),
+    db.prepare(
+      `SELECT ${resourceBilledSql("m", "b")} AS billed FROM machines m
+       LEFT JOIN shop_billing_settings b ON b.shop_id = m.shop_id WHERE m.shop_id = ? AND m.id = ?`,
+    ).bind(shopId, bot.id).first<{ billed: number }>(),
   ]);
   const { tokenId: _token, doorResourceId, ...settings } = bot.config;
   // The chosen door, or the only door the shop has.
@@ -93,8 +96,10 @@ export async function botConfigView(db: D1DatabaseLike, shopId: string, bot: Bot
   return {
     bot: { id: bot.id, name: bot.name },
     settings,
-    // Whether any resource bills; there is no shop-wide switch any more.
-    billingEnabled: !!shop?.billing,
+    // Whether entering through this bot bills: its own plan, otherwise its
+    // resource group's. It keeps the old shop-wide switch's name so released
+    // plugins still read it; the shop itself no longer has one.
+    billingEnabled: !!own?.billed,
     currencyName: currency?.name ?? "余额",
     staff: staff.results,
     door: door ? { id: door.id, name: door.name } : null,

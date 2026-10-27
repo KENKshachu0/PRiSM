@@ -38,6 +38,7 @@ import { legacyStaffRouter } from "../../legacy/handlers/staff.js";
 import { legacyIntegrationRouter } from "../../legacy/handlers/integration.js";
 import { refreshActivityBill } from "../../durable-objects/live-activity-billing.js";
 import { liveActivityConfig } from "../../durable-objects/live-activity-push.js";
+import { shopBillsSql } from "../../resources/billed-sql.js";
 import {
   extractSessionIds, playerIdsFromPayload, pushSessionEvent, sessionEventForPath,
 } from "./live-activity-events.js";
@@ -238,6 +239,11 @@ shopRouter.get("/", async (c) => {
         .first<{ playerId: string; identityBound: number }>()
     : null;
 
+  // Released App Clips decode `shop.billingEnabled` as a required field and use
+  // it to offer the bill and wallet. There is no switch behind it any more: it
+  // says whether any resource bills.
+  const billingEnabled = !!(await c.env.DB.prepare(`SELECT ${shopBillsSql("?")} AS bills`)
+    .bind(shop.id).first<{ bills: number }>())?.bills;
   const pricing = await c.env.DB.prepare(
     "SELECT id,name,kind,enabled,status,provider_json,created_at,updated_at FROM pricing_configs WHERE shop_id=? AND enabled=1 AND status='active' AND (id IN (SELECT value FROM json_each(?)) OR kind='time.cap')",
   )
@@ -280,7 +286,7 @@ shopRouter.get("/", async (c) => {
         : row,
     ),
     pricingSchedule: { localDate, timeZone: shop.time_zone, groups: [], clientCalculation: true },
-    shop: { publicId: shop.public_id, name: shop.name, timeZone: shop.time_zone, heroUrl: shop.hero_url, ...publicSettings(shop) },
+    shop: { publicId: shop.public_id, name: shop.name, timeZone: shop.time_zone, heroUrl: shop.hero_url, ...publicSettings(shop), billingEnabled },
     membership: membership ? { ...membership, identityBound: !!membership.identityBound } : null,
   });
 
@@ -381,6 +387,7 @@ shopRouter.get("/", async (c) => {
       timeZone: shop.time_zone,
       heroUrl: shop.hero_url,
       ...publicSettings(shop),
+      billingEnabled,
     },
     membership: membership
       ? { ...membership, identityBound: !!membership.identityBound }
