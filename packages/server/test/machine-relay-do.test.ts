@@ -455,3 +455,49 @@ describe("MachineRelay capabilities", () => {
     expect((await relay.getCapabilities()).online).toBe(false);
   });
 });
+
+describe("MachineRelay disconnect", () => {
+  it("closes the IO's sockets and records the link as offline", async () => {
+    const { relay, sockets, link } = fixture();
+    // An upgrade records the channel the link state is written against.
+    await relay.fetch(upgradeRequest());
+    const agent = sockets.at(-1)!;
+    attachAgent(sockets);
+    expect(await relay.disconnect("machine powered off")).toEqual({ closed: 2 });
+    // A normal close, so the IO's client reconnects on its next start rather
+    // than backing off as if the platform had failed.
+    expect(agent.closed?.code).toBe(1000);
+    // The upgrade said online; the power-off is what says offline, last.
+    expect(link().at(-1)).toBe("offline");
+  });
+
+  it("does nothing and says nothing when no IO is connected", async () => {
+    const { relay, link } = fixture();
+    expect(await relay.disconnect("machine powered off")).toEqual({ closed: 0 });
+    // Nothing to correct: no link change is invented for a machine that was
+    // never online.
+    expect(link()).toEqual([]);
+  });
+
+  it("reports the socket again when the IO reconnects", async () => {
+    const { relay, sockets } = fixture();
+    await relay.fetch(upgradeRequest());
+    attachAgent(sockets);
+    await relay.disconnect("machine powered off");
+    // The IO client reconnects on its own schedule; the relay has no say in
+    // that. Whether the machine counts as online is decided where the power
+    // state is known (`relayStatus`), not by suppressing the socket here.
+    attachAgent(sockets);
+    expect((await relay.getCapabilities()).online).toBe(true);
+  });
+
+  it("leaves a controller socket alone", async () => {
+    // Only the IO is a party to "the machine is off"; a controller is a viewer.
+    const { relay, sockets } = fixture();
+    const controller = new FakeSocket();
+    controller.serializeAttachment({ cardProtocol: 2, clientVersion: "1.2.0", role: "controller" });
+    sockets.push(controller);
+    expect(await relay.disconnect("machine powered off")).toEqual({ closed: 0 });
+    expect(controller.closed).toBeNull();
+  });
+});

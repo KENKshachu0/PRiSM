@@ -22,7 +22,7 @@ import { createDeviceBus, type ActionRunner, type PerformInput, type PerformResu
 import type { HaEntityConfig } from "./catalog.js";
 import { doorConfigOf, hinataConfigOf, readSecret, type Resource } from "../resource.js";
 import { openHaConnection } from "./ha-connections.js";
-import { markWatcherDown } from "../../durable-objects/shop-hub-client.js";
+import { disconnectMachineRelay, markWatcherDown } from "../../durable-objects/shop-hub-client.js";
 import { announceShopEvent, eventPlayer } from "../shop-events.js";
 import { readDeviceFacts } from "./state-view.js";
 
@@ -392,10 +392,15 @@ export function createRuntimeBus(runtime: DeviceRuntime) {
         if (runtime.notifyHub !== false) await announceAction(runtime, input, playerId, !!observed.started);
       }
       // A HINATA IO that was just powered off will not report again; the hub
-      // need not wait out its lease to hand the watch to another.
+      // need not wait out its lease to hand the watch to another. Its relay
+      // connection goes with it: a machine with no power cannot read a card or
+      // take a coin, so it must not read as online just because its IO box
+      // still holds a socket.
       if (runtime.notifyHub !== false && input.action === "power.off" && result.operation.status === "succeeded"
-        && input.device.capabilities.has("hinata_io"))
+        && input.device.capabilities.has("hinata_io")) {
         await markWatcherDown(runtime.env, runtime.shopId, input.device.id);
+        await disconnectMachineRelay(runtime.env, input.device.id, hinataConfigOf(input.device)?.channel, "machine powered off");
+      }
       return result;
     },
   };
