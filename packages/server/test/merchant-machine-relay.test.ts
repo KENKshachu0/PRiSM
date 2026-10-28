@@ -29,8 +29,9 @@ class SqliteD1 implements D1DatabaseLike {
     };
   }
   async batch(statements: readonly D1BoundStatementLike[]) {
+    // D1 answers a batched SELECT with `{ results }`, not with the write shape.
     const results = [];
-    for (const statement of statements) results.push(await statement.run());
+    for (const statement of statements) results.push(await statement.all());
     return results;
   }
 }
@@ -239,6 +240,60 @@ describe("embedded relay connection status", () => {
 
   it("reports a connected IO as online", async () => {
     expect((await listStatus({ relay: "online" })).relayOnline).toBe(true);
+  });
+
+  it("reports a machine as offline when its power is known off, even though its IO still holds a socket", async () => {
+    // The IO box can outlive the machine it serves; a machine with no power
+    // cannot read a card, so the socket alone must not call it online.
+    const { app, env, sqlite } = fixture({ relay: "online" });
+    const created = await create(app, env, { relayConnection: "embedded" });
+    const id = created.body.machine.id as string;
+    // The platform's own stored fact, as a watched power entity would leave it.
+    sqlite.run(
+      `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+       VALUES ('shop-1',?,'power',?,'{}','2026-01-01','2026-01-01')`,
+      [id, JSON.stringify({ connectionId: "ha_1", entityId: "switch.m" })],
+    );
+    sqlite.run(`INSERT INTO ha_event_connections(shop_id,connection_id,since) VALUES ('shop-1','ha_1','2026-01-01T00:00:00Z')`);
+    sqlite.run(
+      `INSERT INTO device_state(shop_id,device_id,capability,key,value_json,authority,changed_at)
+       VALUES ('shop-1',?,'power','power','"off"','observed','2026-01-01T00:00:00Z')`,
+      [id],
+    );
+    const listed = await app.fetch(new Request("https://prism.test/api/v1/merchant/machines?shopId=shop-1"), env);
+    const machine = ((await listed.json()) as any).machines[0];
+    expect(machine.relayOnline).toBe(false);
+    // The token is still known: it is the machine that is off, not its credential.
+    expect(machine.hasRelayToken).toBe(true);
+  });
+
+  it("reports it online again once its power is on, without any other action", async () => {
+    const { app, env, sqlite } = fixture({ relay: "online" });
+    const created = await create(app, env, { relayConnection: "embedded" });
+    const id = created.body.machine.id as string;
+    sqlite.run(
+      `INSERT INTO device_capabilities(shop_id,device_id,capability,config_json,secret_json,created_at,updated_at)
+       VALUES ('shop-1',?,'power',?,'{}','2026-01-01','2026-01-01')`,
+      [id, JSON.stringify({ connectionId: "ha_1", entityId: "switch.m" })],
+    );
+    sqlite.run(`INSERT INTO ha_event_connections(shop_id,connection_id,since) VALUES ('shop-1','ha_1','2026-01-01T00:00:00Z')`);
+    sqlite.run(
+      `INSERT INTO device_state(shop_id,device_id,capability,key,value_json,authority,changed_at)
+       VALUES ('shop-1',?,'power','power','"on"','observed','2026-01-01T00:00:00Z')`,
+      [id],
+    );
+    const listed = await app.fetch(new Request("https://prism.test/api/v1/merchant/machines?shopId=shop-1"), env);
+    expect(((await listed.json()) as any).machines[0].relayOnline).toBe(true);
+  });
+
+  it("judges on the socket alone when the power is unknown", async () => {
+    // Nothing watches this shop's power, so refusing to say online would hide
+    // every machine in a shop that never set watching up.
+    const { app, env, sqlite } = fixture({ relay: "online" });
+    await create(app, env, { relayConnection: "embedded" });
+    sqlite.run(`INSERT INTO ha_event_connections(shop_id,connection_id,since) VALUES ('shop-1','ha_1','2026-01-01T00:00:00Z')`);
+    const listed = await app.fetch(new Request("https://prism.test/api/v1/merchant/machines?shopId=shop-1"), env);
+    expect(((await listed.json()) as any).machines[0].relayOnline).toBe(true);
   });
 
   it("reports a disconnected IO as offline", async () => {
