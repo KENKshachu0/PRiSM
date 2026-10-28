@@ -191,45 +191,6 @@ export class MachineRelay extends BaseDurableObject<Env> {
     return stored as StoredCard;
   }
 
-  /**
-   * The platform switched this machine off, so its IO has nothing left to do:
-   * close the agent sockets it is holding.
-   *
-   * A socket alone is not evidence that the machine works: the IO box may
-   * outlive the machine it serves, and this is why the board also weighs the
-   * machine's power state before calling it online (see `relayStatus`). Closing
-   * here is what stops the platform holding a connection to a machine that
-   * cannot answer, and what lets the shop hub hand the Home Assistant watch on
-   * without waiting out a lease.
-   *
-   * Returns how many sockets it closed.
-   */
-  async disconnect(why: string): Promise<{ closed: number }> {
-    const agents = this.agents();
-    for (const ws of agents) {
-      try {
-        // 1000: an ordinary close, so the IO's client reconnects on its normal
-        // schedule rather than treating it as an error worth backing off for.
-        ws.close(1000, why.slice(0, 100));
-      } catch {
-        // Already closed; the rest still get their turn.
-      }
-    }
-    // `webSocketClose` runs for each socket the runtime drops, but a socket that
-    // is already gone would report nothing: record it here so the link state and
-    // the hub's watch are settled even if no close callback arrives.
-    if (agents.length) {
-      await this.setLink(false);
-      const channel = await this.channel();
-      if (channel) {
-        await shopHub(this.env, channel.shopId)
-          ?.relayOffline(channel.shopId, channel.machineId)
-          .catch((error) => console.error("Shop hub relayOffline failed", error));
-      }
-    }
-    return { closed: agents.length };
-  }
-
   /** What the connected IO reported about itself, for the device board. */
   async getCapabilities(): Promise<{
     online: boolean;

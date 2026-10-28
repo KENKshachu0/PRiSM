@@ -4,7 +4,6 @@
  */
 import type { Env } from "../bindings.js";
 import type { HaReport } from "../hardware/aimeio-relay.js";
-import { machineRelayNamespace } from "../gateway/machine-relay-gateway.js";
 
 type ShopHubNamespace = {
   getByName(name: string): {
@@ -53,26 +52,6 @@ export async function markWatcherDown(env: Env, shopId: string, machineId: strin
     console.error("Shop hub mark down failed", error);
   }
 }
-
-/**
- * The platform switched a directly-connected machine off, so its IO cannot do
- * anything until it is switched back on: the relay closes the IO's sockets and
- * keeps reporting the machine offline. The board reads "online" from the relay,
- * and a machine with no power must not read as one that works.
- *
- * Never throws: a machine whose relay cannot be reached keeps its last known
- * state, the same way any other unreachable relay does.
- */
-export async function disconnectMachineRelay(env: Env, machineId: string, channel: string | undefined, why: string): Promise<void> {
-  const relay = machineRelayNamespace(env);
-  if (!relay || !channel) return;
-  try {
-    await relay.getByName(channel).disconnect(why);
-  } catch (error) {
-    console.error("Machine relay disconnect failed", { machineId, error });
-  }
-}
-
 
 /**
  * Tell a user's open device pages that something they show changed (for

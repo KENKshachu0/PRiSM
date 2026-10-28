@@ -7,7 +7,6 @@ import { normalizeHinataUrl } from "../../hardware/hinata.js";
 import { machineRelayPath } from "../../gateway/relay-path.js";
 import { machineRelayNamespace } from "../../gateway/machine-relay-gateway.js";
 import { loadResource, loadResources, can, hinataConfigOf, doorConfigOf, mahjongConfigOf, readSecret, type Resource } from "../../resources/resource.js";
-import { readDeviceFacts } from "../../resources/capabilities/state-view.js";
 import { createOccupancy } from "../../resources/occupancy/service.js";
 import { capabilityWrites, storedCapabilities, type StoredCapability } from "../../resources/capabilities/configure.js";
 import { capabilities, type BotConfig, type CapabilityId, type HaEntityConfig, type HinataConfig } from "../../resources/capabilities/catalog.js";
@@ -148,26 +147,13 @@ async function presentResource(c: C, device: Resource, shopPublicId: string, can
 }
 
 /**
- * Whether each embedded machine is online.
+ * Whether each embedded machine currently has its IO connected.
  *
- * Two things must hold, because either alone would mislead the store:
- *
- * - the relay holds a socket from the machine's IO. Asked of the Durable Object
- *   rather than read from stored state: a deploy drops sockets without a close
- *   callback, so the stored link state can say online for a device that is gone.
- * - the machine is not known to be switched off. An IO box can outlive the
- *   machine it serves, and a machine with no power cannot read a card or take a
- *   coin; calling it "online" is exactly what a store would act on and be
- *   wrong about. The power state is the platform's own stored fact, so a
- *   machine switched on by hand recovers without anything else happening.
- *
- * A machine whose power is unknown (nothing watches it, or Home Assistant is
- * unreachable) is judged on its socket alone: refusing to call it online would
- * hide every machine in a shop that never set up watching.
- *
- * Every lookup is independent and failures are swallowed, so one unreachable
- * object does not blank the board and an unknown state is reported as unknown
- * rather than as offline.
+ * Asked of the relay Durable Object rather than read from stored state: a
+ * deploy drops sockets without a close callback, so the stored link state can
+ * say online for a device that is gone. Every lookup is independent and
+ * failures are swallowed, so one unreachable object does not blank the board
+ * and an unknown state is reported as unknown rather than as offline.
  */
 async function relayStatus(
   c: C,
@@ -182,20 +168,7 @@ async function relayStatus(
       if (hinata?.transport !== "embedded" || !hinata.channel) return;
       try {
         const capabilities = await relay.getByName(hinata.channel).getCapabilities();
-        if (!capabilities.online) {
-          status.set(device.id, { online: false, e2ee: capabilities.e2ee });
-          return;
-        }
-        // `readDeviceFacts` answers from stored facts and never asks Home
-        // Assistant, so this stays one read per device on a page that already
-        // reads a lot. A read that fails says nothing about the power, so it
-        // is treated as unknown (socket only) rather than as a reason to claim
-        // the machine is off.
-        const facts = await readDeviceFacts(c.env.DB, device.shopId, device).catch((error) => {
-          console.error("Reading device power for relay status failed", { deviceId: device.id, error });
-          return null;
-        });
-        status.set(device.id, { online: facts?.power !== "off", e2ee: capabilities.e2ee });
+        status.set(device.id, { online: capabilities.online, e2ee: capabilities.e2ee });
       } catch {
         // Leave it unreported; the board shows "unknown" instead of "offline".
       }

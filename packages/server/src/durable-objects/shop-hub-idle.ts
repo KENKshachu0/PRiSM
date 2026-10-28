@@ -4,8 +4,7 @@
  */
 import type { Env } from "../bindings.js";
 import { capabilities } from "../resources/capabilities/catalog.js";
-import { hinataConfigOf, loadResource } from "../resources/resource.js";
-import { disconnectMachineRelay } from "./shop-hub-client.js";
+import { loadResource } from "../resources/resource.js";
 import {
   IDLE_SETTINGS_KEY,
   parseIdleSettings,
@@ -188,15 +187,6 @@ export async function runIdleCheck(input: {
   for (const id of plan.powerOff) {
     memory.lastAutoOff[id] = now;
     if (await act(id, "power.off")) poweredOff.push(id);
-  }
-  // A machine this rule switched off has no power, so its IO cannot work: close
-  // the IO's relay sockets too, or the board keeps calling it online. `act` goes
-  // through a bus with `notifyHub: false`, which skips the runtime's own
-  // disconnect, so it is done here for the machines that did switch off.
-  for (const id of poweredOff) {
-    const target = await loadResource(db, shopId, id);
-    if (target?.capabilities.has("hinata_io"))
-      await disconnectMachineRelay(env, id, hinataConfigOf(target)?.channel, "machine powered off by the idle rule");
   }
   for (const id of plan.climateOff) await act(id, "climate.off");
   for (const [ids, value] of [[plan.markIdle, true], [plan.clearIdle, false]] as const) {
