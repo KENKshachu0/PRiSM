@@ -784,6 +784,7 @@ export function ResourceEditor({
                 ["staffCommands", "店员代为操作"],
                 ["powerOffStaffOnly", "仅店员可关机"],
                 ["receiptsToStaff", "结账回执发给店员"],
+                ["doorPasswordOnEntry", "入场后自动获取门锁密码"],
               ] as const).map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={bot[key]} onChange={(e) => changeBot({ [key]: e.target.checked })} />
@@ -803,6 +804,11 @@ export function ResourceEditor({
                 ))}
               </select>
             </Field>
+            {bot.doorPasswordOnEntry && (
+              <p className="text-xs text-ink/55">
+                {t("玩家用 login／入场 进来时，Bot 会顺带生成一个门锁临时密码并回复；不下场也会在 3 分钟后失效。没有门锁时不生效。")}
+              </p>
+            )}
             <fieldset className="grid gap-3">
               <legend className="mb-1 text-sm font-medium">{t("播报与提醒")}</legend>
               <div className="grid gap-1">
@@ -884,6 +890,7 @@ const defaultBotSettings: BotSettings = {
   powerOffStaffOnly: false,
   doorResourceId: null,
   receiptsToStaff: false,
+  doorPasswordOnEntry: false,
   announceChannelIds: [],
   idleReminderMinutes: 5,
   announceIdle: false,

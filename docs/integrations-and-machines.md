@@ -64,7 +64,7 @@ Koishi 插件（0.2 起）只用一条 WebSocket 和平台通信，不再发 HTT
 | 字段 | 来源 |
 | --- | --- |
 | `bot` | 资源 ID 与名称（名称也用于 Home Assistant 监听名单） |
-| `settings` | 在 Bot 资源上设置：玩家命令全部/只读及提示、店员命令、关机仅限店员、结账回执发给店员、播报与提醒（`announceChannelIds` 一处频道，`idleReminderMinutes` 提前分钟数，以及 `announceIdle`、`announcePower`、`announceStarts`、`announceCards`、`announceCoins` 五个开关） |
+| `settings` | 在 Bot 资源上设置：玩家命令全部/只读及提示、店员命令、关机仅限店员、结账回执发给店员、入场后自动获取门锁密码（`doorPasswordOnEntry`，默认关；开着且有门锁时 `login`／`入场` 成功后顺带回复 3 分钟临时密码，门锁失败不影响入场）、播报与提醒（`announceChannelIds` 一处频道，`idleReminderMinutes` 提前分钟数，以及 `announceIdle`、`announcePower`、`announceStarts`、`announceCards`、`announceCoins` 五个开关） |
 | `staff` | 自动推导：店铺负责人和在职员工的账号绑定的平台身份 `{provider, subject}` |
 | `currencyName` | 自动推导：店铺余额资产的名称 |
 | `door` | 资源上选择的门锁；没选时若店里只有一个门锁就用它 |

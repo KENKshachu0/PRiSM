@@ -176,6 +176,8 @@ export type BotSettings = {
   powerOffStaffOnly: boolean;
   doorResourceId: string | null;
   receiptsToStaff: boolean;
+  /** `login`/`入场` also hands out the door code. */
+  doorPasswordOnEntry: boolean;
   /** Channels the bot says everything in: idle warnings and what happens at the shop. */
   announceChannelIds: string[];
   idleReminderMinutes: number;

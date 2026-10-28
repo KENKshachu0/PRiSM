@@ -1809,6 +1809,8 @@
   "玩家扫到资源时按它的计费方案计时：资源自己的方案，否则是所在资源组的方案，再加上它依赖的方案。": "When a player scans a resource it is timed on that resource's plan: its own, otherwise its resource group's, plus the plans it requires.",
   "支持 prism-neo 的 pg_dump 备份（.sql）或 CLI 导出的 JSON 快照，上传前在浏览器转换为 PRiSM 备份。只导入玩家、余额、计费规则和历史记录；店铺资料、时区、设置、资源、资源组、Bot 与店员保留不变。旧计费规则按本店时区换算，成为默认资源组的方案。": "Accepts a prism-neo pg_dump backup (.sql) or a CLI JSON snapshot, converted to a PRiSM backup in your browser before upload. Only players, balances, pricing rules and history are imported; the shop's profile, time zone, settings, resources, resource groups, bot and staff stay as they are. Old pricing rules are converted from this shop's time zone and become the default resource group's plan.",
   "将替换玩家、余额、计费方案和历史记录；店铺资料、设置、资源、资源组、Bot 与店员保留。": "Replaces players, balances, pricing plans and history; the shop's profile, settings, resources, resource groups, bot and staff are kept.",
+  "入场后自动获取门锁密码": "Also get the door code when entering",
+  "玩家用 login／入场 进来时，Bot 会顺带生成一个门锁临时密码并回复；不下场也会在 3 分钟后失效。没有门锁时不生效。": "When a player enters with login／入场, the bot also issues a temporary door code and replies with it; it expires after 3 minutes even if they stay. Does nothing when the shop has no door.",
   "播报与提醒": "Announcements and reminders",
   "播报这些": "Announce",
   "设备闲置（关机前提醒）": "A device going idle (warned before it is switched off)",

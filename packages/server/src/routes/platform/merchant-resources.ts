@@ -422,6 +422,7 @@ const machineInput=z.object({
     powerOffStaffOnly:z.boolean().optional(),
     doorResourceId:z.string().min(1).nullable().optional(),
     receiptsToStaff:z.boolean().optional(),
+    doorPasswordOnEntry:z.boolean().optional(),
     announceChannelIds:z.array(z.string().trim().min(1).max(80)).max(20).optional(),
     idleReminderMinutes:z.number().int().min(0).max(120).optional(),
     announceIdle:z.boolean().optional(),

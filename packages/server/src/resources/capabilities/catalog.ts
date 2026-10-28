@@ -227,6 +227,12 @@ const botConfig = z.object({
   /** Staff receive checkout receipts privately. */
   receiptsToStaff: z.boolean().default(false),
   /**
+   * `login`/`入场` also hands out the door code, so a player who comes in
+   * through the bot needs one command. Off by default: a code lives three
+   * minutes, and a player who does not need the door should not cost one.
+   */
+  doorPasswordOnEntry: z.boolean().default(false),
+  /**
    * Where everything the shop's bot has to say goes: the idle warning and what
    * happens at the shop share one list. Which is said is decided per kind
    * below, not by channel.
