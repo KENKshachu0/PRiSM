@@ -19,6 +19,7 @@ import { useI18n } from "../../i18n";
 import { ActionForm, Field, button, buttonQuiet, input, primary, useMerchant, useResource } from "./shared";
 import { useBillablePlans, useResourceGroups } from "./ResourceGroups";
 import { resourceCapabilities, type CapabilityId } from "./resource-capabilities";
+import { RotateTokenConfirm } from "./RotateTokenConfirm";
 import { HaEntityFields, NEW_CONNECTION, haBody, useHaConnections, type HaDraft } from "./HaEntityFields";
 import { idlePath, useIdleSettings } from "./IdlePowerSettings";
 
@@ -981,13 +982,19 @@ function BotTokenPanel({
       <p className="text-xs leading-relaxed text-ink/60">
         {t("凭据自己指明店铺，Koishi 里只需要接口地址和凭据。")}
       </p>
-      <button type="submit" name="intent" value="rotate-bot" className={`${button} justify-self-start`}>
-        {t(hasBotToken ? "轮换 Bot 凭据" : "签发 Bot 凭据")}
-      </button>
-      {hasBotToken && (
-        <p className="text-xs leading-relaxed text-coral">
-          {t("轮换后旧凭据立即失效，需要把新凭据重新填入 Koishi。")}
-        </p>
+      {hasBotToken ? (
+        <RotateTokenConfirm
+          label="轮换 Bot 凭据"
+          warn="轮换后旧凭据立即失效，正在用它的 Koishi 会断线，需要把新凭据重新填进去才能连上。"
+        >
+          <button type="submit" name="intent" value="rotate-bot" className={`${primary} justify-self-start`}>
+            {t("确认轮换 Bot 凭据")}
+          </button>
+        </RotateTokenConfirm>
+      ) : (
+        <button type="submit" name="intent" value="rotate-bot" className={`${button} justify-self-start`}>
+          {t("签发 Bot 凭据")}
+        </button>
       )}
     </div>
   );
@@ -1024,18 +1031,19 @@ function DirectConnectPanel({
       {live?.relayUrl && (
         <p className="break-all text-xs text-ink/60">{`serverUrl=${live.relayUrl}`}</p>
       )}
-      <button
-        type="submit"
-        name="intent"
-        value="issue"
-        className={`${button} justify-self-start`}
-      >
-        {t(hasRelayToken ? "轮换设备令牌" : "签发设备令牌")}
-      </button>
-      {hasRelayToken && (
-        <p className="text-xs leading-relaxed text-coral">
-          {t("轮换后机台上的旧令牌立即失效，需要把新令牌重新写入 INI。")}
-        </p>
+      {hasRelayToken ? (
+        <RotateTokenConfirm
+          label="轮换设备令牌"
+          warn="轮换后机台上的旧令牌立即失效，机台会掉线，需要把新令牌重新写进 INI 并重启才能连上。"
+        >
+          <button type="submit" name="intent" value="issue" className={`${primary} justify-self-start`}>
+            {t("确认轮换设备令牌")}
+          </button>
+        </RotateTokenConfirm>
+      ) : (
+        <button type="submit" name="intent" value="issue" className={`${button} justify-self-start`}>
+          {t("签发设备令牌")}
+        </button>
       )}
       {live?.relayE2ee === true && (
         <p className="text-sm text-coral">
