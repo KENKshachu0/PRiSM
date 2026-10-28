@@ -226,20 +226,32 @@ const botConfig = z.object({
   doorResourceId: z.string().min(1).nullable().default(null),
   /** Staff receive checkout receipts privately. */
   receiptsToStaff: z.boolean().default(false),
-  /** Channels told when the shop goes idle, and how many minutes ahead. */
-  idleChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  /**
+   * `login`/`入场` also hands out the door code, so a player who comes in
+   * through the bot needs one command. Off by default: a code lives three
+   * minutes, and a player who does not need the door should not cost one.
+   */
+  doorPasswordOnEntry: z.boolean().default(false),
+  /**
+   * Where everything the shop's bot has to say goes: the idle warning and what
+   * happens at the shop share one list. Which is said is decided per kind
+   * below, not by channel.
+   */
+  announceChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  /** How many minutes before an idle power-off the channels are warned; 0 for never. */
   idleReminderMinutes: z.number().int().min(0).max(120).default(5),
   /**
-   * Channels told what happens at the shop, and which of it: a device switched
-   * on or off through the platform (the idle rule's power-offs included), a
-   * card reaching a cabinet, someone starting on a resource (上机). A card that
-   * starts someone is one message, said as a start when starts are told. All
-   * off by default.
+   * Which news is told, each on its own: a device idling towards a power-off,
+   * a device switched on or off through the platform (the idle rule's
+   * power-offs included), someone starting on a resource (上机), a card
+   * reaching a cabinet, a coin. A card or a coin that starts someone is one
+   * message, said as a start when starts are told. All off by default.
    */
-  eventChannelIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  announceIdle: z.boolean().default(false),
   announcePower: z.boolean().default(false),
-  announceCards: z.boolean().default(false),
   announceStarts: z.boolean().default(false),
+  announceCards: z.boolean().default(false),
+  announceCoins: z.boolean().default(false),
   /** Whether the bot may be given Home Assistant connections to watch. */
 });
 export type BotConfig = z.infer<typeof botConfig>;

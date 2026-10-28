@@ -176,13 +176,17 @@ export type BotSettings = {
   powerOffStaffOnly: boolean;
   doorResourceId: string | null;
   receiptsToStaff: boolean;
-  idleChannelIds: string[];
+  /** `login`/`入场` also hands out the door code. */
+  doorPasswordOnEntry: boolean;
+  /** Channels the bot says everything in: idle warnings and what happens at the shop. */
+  announceChannelIds: string[];
   idleReminderMinutes: number;
-  /** Channels told what happens at the shop, and which of it. */
-  eventChannelIds: string[];
+  /** Which news is told, each on its own. */
+  announceIdle: boolean;
   announcePower: boolean;
-  announceCards: boolean;
   announceStarts: boolean;
+  announceCards: boolean;
+  announceCoins: boolean;
 };
 
 /** A set of resources that bill the same default plan. The default group is the shop's own. */

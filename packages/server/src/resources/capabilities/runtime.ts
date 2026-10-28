@@ -336,6 +336,8 @@ async function announceAction(runtime: DeviceRuntime, input: PerformInput, playe
     });
   } else if (input.action === "aime.scan") {
     await announceShopEvent(runtime.env, runtime.shopId, { kind: "card", ...place, player: await player(), started });
+  } else if (input.action === "coin") {
+    await announceShopEvent(runtime.env, runtime.shopId, { kind: "coin", ...place, player: await player(), started });
   } else if (started) {
     const who = await player();
     if (who) await announceShopEvent(runtime.env, runtime.shopId, { kind: "occupancy", ...place, player: who });
