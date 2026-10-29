@@ -31,7 +31,7 @@ export function useResourceGroups(shopId: string) {
     () => Api.resourceGroups(shopId)
       .then((r) => { setGroups(r.resourceGroups); setError(""); })
       .catch((e: unknown) => {
-        setGroups([{ id: "default", name: "默认资源组", enabled: true, isDefault: true, defaultPricingConfigId: null, resourceCount: 0 }]);
+        setGroups([{ id: "default", name: "默认资源组", enabled: true, isDefault: true, defaultPricingConfigId: null, memberPricingConfigId: null, resourceCount: 0 }]);
         setError(e instanceof Error ? e.message : "资源组读取失败");
       }),
     [shopId],
@@ -51,6 +51,7 @@ export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; do
   const plans = useBillablePlans(shopCode);
   const [name, setName] = useState(group?.name ?? "");
   const [planId, setPlanId] = useState(group?.defaultPricingConfigId ?? "");
+  const [memberPlanId, setMemberPlanId] = useState(group?.memberPricingConfigId ?? "");
   const [enabled, setEnabled] = useState(group?.enabled ?? true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,8 +81,14 @@ export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; do
                 name: name.trim(),
                 enabled,
                 defaultPricingConfigId: planId || null,
+                memberPricingConfigId: memberPlanId || null,
               })
-            : Api.createResourceGroup({ shopId, name: name.trim(), defaultPricingConfigId: planId || null }),
+            : Api.createResourceGroup({
+                shopId,
+                name: name.trim(),
+                defaultPricingConfigId: planId || null,
+                memberPricingConfigId: memberPlanId || null,
+              }),
         );
       }}
     >
@@ -98,6 +105,16 @@ export function ResourceGroupEditor({ group, done }: { group?: ResourceGroup; do
       <Field label="计费方案">
         <select className={input} value={planId} onChange={(e) => setPlanId(e.target.value)}>
           <option value="">{t("不计费")}</option>
+          {plans.map((plan) => (
+            <option key={plan.id} value={plan.id}>
+              {plan.name}{plan.enabled ? "" : ` (${t("已停用")})`}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="会员方案">
+        <select className={input} value={memberPlanId} onChange={(e) => setMemberPlanId(e.target.value)}>
+          <option value="">{t("跟随普通方案")}</option>
           {plans.map((plan) => (
             <option key={plan.id} value={plan.id}>
               {plan.name}{plan.enabled ? "" : ` (${t("已停用")})`}

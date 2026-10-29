@@ -29,6 +29,9 @@ import {
   toDeviceCommandView,
   toBusinessItemOrderView,
   toBillingChangeView,
+  toMemberProgramView,
+  toMemberPurchaseView,
+  toMemberStatusView,
 } from "./views.js";
 
 export async function hasPlatformBinding(
@@ -382,6 +385,44 @@ playerRouter.post("/redeem", async (c) => {
       code: body.code.trim(),
     });
     return c.json(toRedeemGiftView(result));
+  });
+});
+
+// Membership programme and self-service purchase
+playerRouter.get("/member", async (c) => {
+  const shop = getShop(c);
+  const player = await requireShopPlayer(c, shop);
+  const deps = getShopDeps(c);
+  const [program, status] = await Promise.all([
+    deps.memberCommands.getProgram(),
+    deps.memberCommands.getStatus(player.id),
+  ]);
+  return c.json({
+    ...toMemberProgramView({
+      ...program,
+      plans: program.plans.filter((plan) => plan.status === "active"),
+    }),
+    member: toMemberStatusView(status),
+  });
+});
+
+playerRouter.post("/member/purchase", async (c) => {
+  const shop = getShop(c);
+  const player = await requireShopPlayer(c, shop);
+  const deps = getShopDeps(c);
+  const body = (await c.req.json<{ planId?: unknown; operationId?: unknown }>().catch(() => ({}))) as {
+    planId?: unknown;
+    operationId?: unknown;
+  };
+  const planId = String(body.planId ?? "");
+  if (!planId) jsonError(400, "请选择会员方案", "MEMBER_PLAN_REQUIRED");
+  if (player.status !== "active") jsonError(403, "店铺玩家资格已停用", "PLAYER_DISABLED");
+  return runPlayerOperation(c, shop.id, "member/purchase", body as Record<string, unknown>, async () => {
+    const result = await deps.memberCommands.purchase({
+      playerId: player.id,
+      planId,
+    });
+    return c.json(toMemberPurchaseView(result));
   });
 });
 

@@ -102,6 +102,10 @@ API 由 `packages/server-hono` 提供实现，本文档和服务端路由是客�
 | `POST` | `/rpc/player/redeem` | 输入 CDK 兑换码兑换礼物。 |
 | `POST` | `/rpc/player/business-items/:businessItemId/purchase` | 购买前台发布的非计时服务商品（如门票、预约费等），要求处于活跃会话内，并即时扣减余额。 |
 | `GET` | `/rpc/player/business-item-orders` | 列出该玩家本人的非计时服务购买履约订单。 |
+| `GET` | `/api/v1/shops/:shopCode/player/member` | 查询会员设置、在售方案和当前玩家的会员状态。 |
+| `POST` | `/api/v1/shops/:shopCode/player/member/purchase` | 用余额购买/续费会员 `{planId, operationId}`。 |
+
+会员卡是资产页里的 `membership` 资产，方案只售卖它的时长；资源组/资源的「会员方案」会在会员开始计费时替代普通方案。完整规则见 [会员卡与会员方案](membership.md)。
 
 ### 玩家接口调用示例
 
@@ -242,6 +246,8 @@ curl -X POST http://localhost:8787/rpc/player/redeem \
 | `GET` | `/rpc/staff/reports/checkouts/:checkoutId` | 店铺范围完整历史账单，返回 record 与玩家同源的 receipt/时间轴。 |
 | `POST` | `/rpc/staff/reports/checkouts/:checkoutId/archive` | 店主/manager 输入 archived 布尔值归档或恢复；同步调整营业额，其他统计、玩家历史和余额不变。 |
 | `GET` | `/rpc/staff/reports/players?from=<iso>&to=<iso>&limit=20&offset=0` | 分页查询特定时段内玩家消费贡献榜；返回 `players` 和 `{ limit, offset, hasMore }`。 |
+
+会员接口使用店铺前缀 `/api/v1/shops/:shopCode`：`GET /staff/member`、`PUT /staff/member`、`POST/PUT /staff/member/plans`、`POST /staff/member/plans/:planId/archive|restore`、`GET /staff/players/:playerId/member`、`POST /staff/players/:playerId/member/grant|revoke`。读取允许 viewer，写入要求 manager/owner。会员方案和资源方案映射保存在 `app_settings`，不新增表。
 
 已归档的资产定义、计费效果、礼物、商品项目和计费配置都会保留供历史账单与审计视图查阅。新员工赠送和新礼物不能使用已归档或不在有效期内的资产定义；已归档或过期的礼物不能被兑换；兑换码过期也会拒绝兑换。礼物过期但兑换码没过期、礼物没过期但兑换码过期，都会无法兑换；礼物和兑换码都有效但礼物内容过期时，兑换会成功记录，但过期内容不会到账。礼物可重复兑换（`oncePerPlayer` 为否）时，带 `maxPerPlayer` 的内容只在该玩家兑换此礼物的次数未超过上限时到账，超过后兑换仍然成功并记录，只是跳过该内容，可用于首充类优惠；如果所有有效内容都已达到上限，兑换会以 `PRESENT_GRANT_LIMIT_REACHED` 拒绝，不消耗兑换码次数。现有的兑换码、商品项目、插件和账本历史流水保持可读。已归档的资产定义、计费效果、礼物、商品项目和计费配置可以从 Staff Web 还原；已归档计费方案允许编辑并保存到原记录，但会继续保持归档和禁用，直到员工显式还原并开启。错误的草稿规则会从当前编辑列表中物理移除。导入的礼物授予日期会在仓储层恢复为 `Date | null`，避免旧 JSON 字符串破坏员工接口。导入的提供商有效负载可能仍包含退役的时间规则行或整段日期时间范围，以供迁移上下文使用；结算报价、会话启动营业时间验证、已启用配置验证和时间轴渲染会按领域规则处理这些历史行。
 

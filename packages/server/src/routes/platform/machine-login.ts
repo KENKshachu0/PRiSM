@@ -101,7 +101,7 @@ export async function requireShopPlayer(c:C,shop:TenantShop):Promise<{id:string,
  */
 export async function requireResourcePlan(c:C,shop:TenantShop,resourceId:string):Promise<{playerId:string;session:Session}|null> {
   const deps=getOrCreateShopDependencies(c.env.DB,shop,c.env.URL_ENCRYPTION_KEY,c.env);
-  if(!await deps.resourceBilling.planOf(resourceId))return null;
+  if(!await deps.resourceBilling.hasPlan(resourceId))return null;
   const player=await requireShopPlayer(c,shop);
   const session=await deps.resourceBilling.activeSession({resourceId,playerId:player.id});
   if(!session)jsonError(403,"请先确认开始计费","CHECKIN_REQUIRED");

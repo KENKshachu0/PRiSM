@@ -552,6 +552,7 @@ export function AssetsPage() {
                       [
                         ["currency", "余额", "玩家充值得到的钱，结账时扣除"],
                         ["coupon", "优惠券", "券或次数，可关联优惠在结账时抵扣"],
+                        ["membership", "会员卡", "按方案售卖的会员卡，可绑定折扣或免单效果"],
                       ] as const
                     ).map(([value, label, hint]) => (
                       <label

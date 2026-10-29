@@ -38,14 +38,24 @@ export type BillableResource = {
 export const resourceGroupIdOf = (resource: Pick<BillableResource, "groupId">) =>
   resource.groupId ?? DEFAULT_RESOURCE_GROUP_ID;
 
-/** The resource's plan, or null when the resource is free. */
+/**
+ * The resource's plan, or null when the resource is free.
+ *
+ * A member plan, when one is configured for the resource or its group,
+ * replaces the normal plan for a member; the membership card's own pricing
+ * effect still applies at settlement. A non-member always gets the normal
+ * plan. A resource is billable when either plan exists.
+ */
 export function resolveResourcePlanId(input: {
   resource: BillableResource;
   /** The resource's group, as `resourceGroupIdOf` names it; null when it is gone. */
   group: ResourceGroup | null;
+  /** The plan members bill here; null or absent for the normal plan. */
+  memberPlanId?: string | null;
 }): string | null {
-  const { resource, group } = input;
+  const { resource, group, memberPlanId } = input;
   if (!group) throw new PrismDomainError("所属的资源组不存在，请联系店员", "RESOURCE_GROUP_NOT_FOUND");
   if (!group.enabled) throw new PrismDomainError("该区域暂停使用，请联系店员", "RESOURCE_GROUP_DISABLED");
+  if (memberPlanId) return memberPlanId;
   return resource.pricingConfigOverrideId ?? group.defaultPricingConfigId;
 }

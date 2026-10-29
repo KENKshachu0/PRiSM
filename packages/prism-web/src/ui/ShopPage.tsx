@@ -11,6 +11,7 @@ import { shopApi, type ShopInfo, type Summary, type Preview } from "./BillingPag
 import { ShopHero, SessionSignIn, PlatformBinding } from "./SessionContent";
 import { BillTotal, BillTimeline } from "./BillTimeline";
 import { CheckoutButton, SettledBill, type Receipt } from "./Checkout";
+import { MemberCard } from "./MemberCard";
 
 export default function ShopPage() {
   const { shopCode = "" } = useParams();
@@ -52,6 +53,7 @@ function ShopSurface({ shopCode }: { shopCode: string }) {
     && info.shop.identityBindingRequired && !info.membership?.identityBound && !bill);
   return <section className={`machine-session shop-session ${bill ? "has-checkout" : ""}`}>
     {info && <ShopHero name={info.shop.name || shopCode} heroUrl={info.shop.heroUrl} subtitle={!user ? "" : bill ? t("计费中") : receipt ? t("结账成功") : busy ? t("正在加载") : t("未入场")} />}
+    {user && info?.membership && <MemberCard shopCode={shopCode} />}
     {error && <div role="alert" className="text-coral">{error}<button className="ml-3 underline" onClick={() => setAttempt(value => value + 1)}>{t("重试")}</button></div>}
     {loading || (busy && !info) ? <Loader2 className="mx-auto animate-spin" /> : info && !user ? <SessionSignIn /> : busy && !bill && !receipt ? <Loader2 className="mx-auto animate-spin" /> : info && user && <SessionPasskeySetup>
       {!bill && info.shop.identityBindingRequired && !info.membership?.identityBound ? <PlatformBinding code={shopCode} />

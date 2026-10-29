@@ -66,6 +66,29 @@ export type ShopInfo = {
   };
   membership: { playerId: string; identityBound: boolean } | null;
 };
+export type MemberPlan = {
+  id: string;
+  name: string;
+  assetCode: string;
+  /** Yuan, as the API boundary reports it. */
+  price: number;
+  durationDays: number;
+  status: string;
+};
+
+export type MemberInfo = {
+  enabled: boolean;
+  plans: MemberPlan[];
+  member: {
+    active: boolean;
+    enabled: boolean;
+    assetCode: string | null;
+    cardName: string | null;
+    discountPercent: number | null;
+    expiresAt: string | null;
+  };
+};
+
 export type Summary = {
   player: { displayName: string };
   wallet: { assetCode: string; quantity: number }[];

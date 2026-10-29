@@ -9,6 +9,8 @@ import type {
   BusinessItem,
   BusinessItemOrder,
   GrantAssetsResult,
+  MemberPlan,
+  MemberStatus,
   Player,
   PlayerIdentity,
   PricingConfig,
@@ -21,6 +23,7 @@ import type {
 } from "@prism/core";
 import { assetQuantityToNatural, yuanOf } from "@prism/core";
 import type {
+  MemberPurchaseResult,
   PlayerAssets,
   RedeemCodeResult,
   SessionHistoryDetail,
@@ -735,6 +738,51 @@ function toRosterMemberView(member: import("../../resources/roster.js").RosterMe
     displayName: member.displayName,
     identities: member.identities,
     startedAt: member.since.toISOString(),
+  };
+}
+
+export function toMemberPlanView(plan: MemberPlan): Record<string, unknown> {
+  return {
+    id: plan.id,
+    name: plan.name,
+    assetCode: plan.assetCode,
+    price: yuanOf(plan.price),
+    durationDays: plan.durationDays,
+    status: plan.status,
+    createdAt: plan.createdAt.toISOString(),
+    updatedAt: plan.updatedAt.toISOString(),
+  };
+}
+
+export function toMemberProgramView(program: {
+  enabled: boolean;
+  plans: readonly MemberPlan[];
+}): Record<string, unknown> {
+  return {
+    enabled: program.enabled,
+    plans: program.plans.map(toMemberPlanView),
+  };
+}
+
+export function toMemberStatusView(status: MemberStatus): Record<string, unknown> {
+  return {
+    active: status.active,
+    enabled: status.enabled,
+    assetCode: status.assetCode,
+    cardName: status.cardName,
+    discountPercent: status.discountPercent,
+    expiresAt: status.expiresAt?.toISOString() ?? null,
+  };
+}
+
+export function toMemberPurchaseView(result: MemberPurchaseResult): Record<string, unknown> {
+  return {
+    member: toMemberStatusView(result.status),
+    price: yuanOf(result.price),
+    wallet: {
+      before: yuanOf(result.walletBefore),
+      after: yuanOf(result.walletAfter),
+    },
   };
 }
 

@@ -24,6 +24,7 @@ import type {
 import { buildPricingRelationGraph, isStartablePricingKind, PLACEHOLDER_PRICING_CONFIG_ID, PrismDomainError, type PricingConfig, type Session, type SessionRepository } from "@prism/core";
 import { resolveResourcePlanId, resourceGroupIdOf } from "./billing.js";
 import { findBillableResource, findResourceGroup } from "./repository.js";
+import { memberPlanForResource, readMemberResourcePlans } from "./member-plans.js";
 
 /** What a start names: a resource's plan, or a plan. */
 export type BillingTarget = {
@@ -68,8 +69,10 @@ export type ResourcePlanRules = {
 };
 
 export type ResourceBilling = {
-  /** The resource's plan, or null when it is free. */
-  planOf(resourceId: string): Promise<string | null>;
+  /** The resource's plan for this player, or null when it is free. */
+  planOf(resourceId: string, playerId?: string): Promise<string | null>;
+  /** Whether any plan (normal or member) is configured for the resource. */
+  hasPlan(resourceId: string): Promise<boolean>;
   preview(input: BillingTarget): Promise<ResourceBillingPreview>;
   activate(input: BillingTarget & {
     expectedRevision?: string;
@@ -96,6 +99,8 @@ export function createResourceBilling(dependencies: {
    * session per visit, as it always has; this starts or reuses it.
    */
   startPlaceholder(input: { playerId: string; label?: string; metadata?: Record<string, unknown> }): Promise<Session & { status: "active" }>;
+  /** Whether the player currently holds a valid membership card. */
+  isMember(playerId: string): Promise<boolean>;
   /** Runs under the player's billing lock, so the target is resolved against the state it changes. */
   withPlayerLock<T>(playerId: string, action: () => Promise<T>): Promise<T>;
   /** The caps over some plans of the player's release, counting what was charged in their windows so far. */
@@ -116,48 +121,73 @@ export function createResourceBilling(dependencies: {
     changed,
     at: dependencies.now(),
   });
-  async function bindingOf(resourceId: string) {
+  async function loadBinding(resourceId: string) {
     const resource = await findBillableResource(dependencies.db, dependencies.shopId, resourceId);
     if (!resource) throw new PrismDomainError("没有找到这个资源", "DEVICE_NOT_FOUND");
     const group = await findResourceGroup(dependencies.db, dependencies.shopId, resourceGroupIdOf(resource));
-    const planId = resolveResourcePlanId({ resource, group });
-    const source: ResourcePlanRules["source"] = resource.pricingConfigOverrideId
-      ? { kind: "resource" }
-      : { kind: "group", groupName: group!.name };
+    const memberPlans = await readMemberResourcePlans(dependencies.db, dependencies.shopId);
+    return { resource, group, memberPlans };
+  }
+
+  async function bindingOf(resourceId: string, playerId?: string) {
+    const { resource, group, memberPlans } = await loadBinding(resourceId);
+    const member = playerId ? await dependencies.isMember(playerId) : false;
+    const memberPlanId = member ? memberPlanForResource(memberPlans, resource) : null;
+    const planId = resolveResourcePlanId({ resource, group, memberPlanId });
+    const source: ResourcePlanRules["source"] = memberPlanId
+      ? memberPlans.resources[resource.id]
+        ? { kind: "resource" }
+        : { kind: "group", groupName: group!.name }
+      : resource.pricingConfigOverrideId
+        ? { kind: "resource" }
+        : { kind: "group", groupName: group!.name };
     return { planId, source };
   }
 
-  const planOf = async (resourceId: string) => (await bindingOf(resourceId)).planId;
+  const planOf = async (resourceId: string, playerId?: string) =>
+    (await bindingOf(resourceId, playerId)).planId;
+
+  async function hasPlan(resourceId: string): Promise<boolean> {
+    const { resource, group, memberPlans } = await loadBinding(resourceId);
+    return !!(memberPlanForResource(memberPlans, resource)
+      ?? resource.pricingConfigOverrideId
+      ?? group?.defaultPricingConfigId);
+  }
 
   /** Starting or previewing a free resource is a caller's mistake: it has nothing to start. */
-  async function billedPlanOf(resourceId: string) {
-    const planId = await planOf(resourceId);
+  async function billedPlanOf(resourceId: string, playerId?: string) {
+    const planId = await planOf(resourceId, playerId);
     if (!planId) throw new PrismDomainError("这里不计费，无需确认", "RESOURCE_NOT_BILLED");
     return planId;
   }
 
   async function activeSession(input: { resourceId: string; playerId: string }) {
-    const pricingConfigId = await planOf(input.resourceId);
+    const pricingConfigId = await planOf(input.resourceId, input.playerId);
     if (!pricingConfigId) return null;
     if (await unpriced(input.playerId)) return placeholderOf(input.playerId);
     const active = await dependencies.sessions.findActiveByPlayerId(input.playerId);
-    return active.find((session) => session.pricingConfigId === pricingConfigId) ?? null;
+    // A membership bought mid-visit must not start a second plan for the same
+    // resource; the session remembers the resource that opened it.
+    return active.find((session) => session.metadata?.resourceId === input.resourceId)
+      ?? active.find((session) => session.pricingConfigId === pricingConfigId)
+      ?? null;
   }
 
   /** A start names what it bills; a resource named must have a plan. */
   async function assertTarget(target: BillingTarget) {
-    if (target.resourceId) await billedPlanOf(target.resourceId);
+    if (target.resourceId) await billedPlanOf(target.resourceId, target.playerId);
     else if (!target.pricingConfigId) throw new PrismDomainError("请选择计费方案或资源", "PRICING_TARGET_REQUIRED");
   }
 
   const targetPlanOf = (target: BillingTarget) => {
-    if (target.resourceId) return billedPlanOf(target.resourceId);
+    if (target.resourceId) return billedPlanOf(target.resourceId, target.playerId);
     if (target.pricingConfigId) return Promise.resolve(target.pricingConfigId);
     throw new PrismDomainError("请选择计费方案或资源", "PRICING_TARGET_REQUIRED");
   };
 
   return {
     planOf,
+    hasPlan,
 
     async preview(input) {
       const resource = input.resourceId ? { resourceId: input.resourceId } : {};
@@ -215,7 +245,7 @@ export function createResourceBilling(dependencies: {
     },
 
     async rulesOf(input) {
-      const { planId, source } = await bindingOf(input.resourceId);
+      const { planId, source } = await bindingOf(input.resourceId, input.playerId);
       if (!planId || await unpriced(input.playerId)) return null;
       const catalog = await dependencies.pricingCatalog(input.playerId);
       const graph = buildPricingRelationGraph(catalog.filter((config) => isStartablePricingKind(config.kind)));
@@ -242,7 +272,7 @@ export function createResourceBilling(dependencies: {
     activeSession,
 
     async admits(input) {
-      return !(await planOf(input.resourceId)) || !!(await activeSession(input));
+      return !(await planOf(input.resourceId, input.playerId)) || !!(await activeSession(input));
     },
   };
 }

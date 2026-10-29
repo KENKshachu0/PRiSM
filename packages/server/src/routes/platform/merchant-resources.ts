@@ -24,6 +24,7 @@ import { z } from "zod";
 import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { DEFAULT_RESOURCE_GROUP_ID } from "../../resources/billing.js";
+import { readMemberResourcePlans, setMemberResourcePlan } from "../../resources/member-plans.js";
 import { findResourceGroup } from "../../resources/repository.js";
 import { assertBillablePlan } from "./merchant-resource-groups.js";
 
@@ -187,6 +188,7 @@ async function presentWithStatus(c: C, devices: readonly Resource[], shopPublicI
       ...presented,
       resourceGroupId: binding?.groupId ?? DEFAULT_RESOURCE_GROUP_ID,
       pricingConfigOverrideId: binding?.overrideId ?? null,
+      memberPricingConfigOverrideId: binding?.memberOverrideId ?? null,
       // How many can use it at once (a mahjong table's size), and how long
       // someone counts as on it after the last sign of them.
       capacity: binding?.capacity ?? 0,
@@ -199,16 +201,19 @@ async function presentWithStatus(c: C, devices: readonly Resource[], shopPublicI
 
 /** Which group each resource bills from, and its own plan when it has one. */
 async function billingBindings(c: C, devices: readonly Resource[]) {
-  const bindings = new Map<string, { groupId: string | null; overrideId: string | null; capacity: number; occupancyMinutes: number }>();
+  const bindings = new Map<string, { groupId: string | null; overrideId: string | null; memberOverrideId: string | null; capacity: number; occupancyMinutes: number }>();
   const shopId = devices[0]?.shopId;
   if (!shopId) return bindings;
-  const rows = await c.env.DB.prepare(
-    `SELECT id, resource_group_id AS groupId, pricing_config_override_id AS overrideId,
-       capacity, occupancy_minutes AS occupancyMinutes FROM machines
-     WHERE shop_id = ? AND id IN (SELECT value FROM json_each(?))`,
-  ).bind(shopId, JSON.stringify(devices.map((device) => device.id)))
-    .all<{ id: string; groupId: string | null; overrideId: string | null; capacity: number; occupancyMinutes: number }>();
-  for (const row of rows.results) bindings.set(row.id, row);
+  const [rows, memberPlans] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, resource_group_id AS groupId, pricing_config_override_id AS overrideId,
+         capacity, occupancy_minutes AS occupancyMinutes FROM machines
+       WHERE shop_id = ? AND id IN (SELECT value FROM json_each(?))`,
+    ).bind(shopId, JSON.stringify(devices.map((device) => device.id)))
+      .all<{ id: string; groupId: string | null; overrideId: string | null; capacity: number; occupancyMinutes: number }>(),
+    readMemberResourcePlans(c.env.DB, shopId),
+  ]);
+  for (const row of rows.results) bindings.set(row.id, { ...row, memberOverrideId: memberPlans.resources[row.id] ?? null });
   return bindings;
 }
 
@@ -437,6 +442,7 @@ const machineInput=z.object({
   // that replaces the group's.
   resourceGroupId:z.string().min(1).nullable().optional(),
   pricingConfigOverrideId:z.string().min(1).nullable().optional(),
+  memberPricingConfigOverrideId:z.string().min(1).nullable().optional(),
   // How many people can use it at once; 0 for one nobody occupies (an air
   // conditioner). A mahjong table's is its table size.
   capacity:z.number().int().min(0).max(16).optional(),
@@ -633,19 +639,27 @@ async function nextBot(
 
 /** The billing binding after this edit; a field left out keeps what is stored. */
 async function nextBinding(c:C,shopId:string,machineId:string|null,body:MachineInput){
-  const stored=machineId
-    ?await c.env.DB.prepare(
-      "SELECT resource_group_id AS groupId,pricing_config_override_id AS overrideId,capacity,occupancy_minutes AS occupancyMinutes FROM machines WHERE id=? AND shop_id=?",
-    ).bind(machineId,shopId).first<{groupId:string|null;overrideId:string|null;capacity:number;occupancyMinutes:number}>()
-    :null;
+  const [stored, memberPlans] = await Promise.all([
+    machineId
+      ? c.env.DB.prepare(
+        "SELECT resource_group_id AS groupId,pricing_config_override_id AS overrideId,capacity,occupancy_minutes AS occupancyMinutes FROM machines WHERE id=? AND shop_id=?",
+      ).bind(machineId,shopId).first<{groupId:string|null;overrideId:string|null;capacity:number;occupancyMinutes:number}>()
+      : Promise.resolve(null),
+    readMemberResourcePlans(c.env.DB, shopId),
+  ]);
+  const storedMemberOverride = machineId ? memberPlans.resources[machineId] ?? null : null;
   const requested=body.resourceGroupId===DEFAULT_RESOURCE_GROUP_ID?null:body.resourceGroupId;
   const groupId=requested===undefined?stored?.groupId??null:requested;
   const overrideId=body.pricingConfigOverrideId===undefined?stored?.overrideId??null:body.pricingConfigOverrideId;
   if(requested&&!await findResourceGroup(c.env.DB,shopId,requested))
     jsonError(400,"请选择有效的资源组","RESOURCE_GROUP_NOT_FOUND");
   if(body.pricingConfigOverrideId)await assertBillablePlan(c,shopId,body.pricingConfigOverrideId);
+  const memberOverrideId = body.memberPricingConfigOverrideId === undefined
+    ? storedMemberOverride
+    : body.memberPricingConfigOverrideId;
+  if(body.memberPricingConfigOverrideId)await assertBillablePlan(c,shopId,body.memberPricingConfigOverrideId);
   return {
-    groupId,overrideId,
+    groupId,overrideId,memberOverrideId,
     capacity:body.capacity??stored?.capacity??null,
     occupancyMinutes:body.occupancyMinutes??stored?.occupancyMinutes??15,
   };
@@ -706,6 +720,7 @@ async function changeResource(c:C, machineId?:string) {
     ...capabilityWrites(c.env.DB,{shopId,deviceId:id,next,now:new Date()}),
     ...bot.statements,
   ]);
+  await setMemberResourcePlan(c.env.DB, shopId, "resource", id, binding.memberOverrideId);
   // Bots are told the shop's tables and doors, and each its own settings.
   notifyBotsChangedAfter(c,shopId);
   // A new Home Assistant gets its read-only account in the background; a failure
@@ -754,5 +769,6 @@ merchantResourceRouter.delete("/machines/:id",async(c)=>{
     c.env.DB.prepare("DELETE FROM device_state WHERE shop_id=? AND device_id=?").bind(machine.shop_id,id),
     c.env.DB.prepare("DELETE FROM machines WHERE id=? AND shop_id=?").bind(id,machine.shop_id),
   ]);
+  await setMemberResourcePlan(c.env.DB, machine.shop_id, "resource", id, null);
   return c.json({ok:true});
 });

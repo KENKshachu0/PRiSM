@@ -166,6 +166,8 @@ export type Resource = {
   resourceGroupId?: string;
   /** A plan of its own that replaces the group's; null to follow the group. */
   pricingConfigOverrideId?: string | null;
+  /** The plan this resource uses for members; null to fall back to the normal plan. */
+  memberPricingConfigOverrideId?: string | null;
 };
 
 /** What a shop bot offers players and staff; everything else it is told comes from the platform. */
@@ -196,6 +198,7 @@ export type ResourceGroup = {
   enabled: boolean;
   isDefault: boolean;
   defaultPricingConfigId: string | null;
+  memberPricingConfigId: string | null;
   resourceCount: number;
 };
 
@@ -513,14 +516,14 @@ export const Api = {
     api<{ resourceGroups: ResourceGroup[] }>(
       `/api/v1/merchant/resource-groups?shopId=${encodeURIComponent(shopId)}`,
     ),
-  createResourceGroup: (input: { shopId: string; name: string; defaultPricingConfigId: string | null }) =>
+  createResourceGroup: (input: { shopId: string; name: string; defaultPricingConfigId: string | null; memberPricingConfigId: string | null }) =>
     api<{ resourceGroup: ResourceGroup }>("/api/v1/merchant/resource-groups", {
       method: "POST",
       body: JSON.stringify(input),
     }),
   updateResourceGroup: (
     id: string,
-    input: { shopId: string; name?: string; enabled?: boolean; defaultPricingConfigId?: string | null },
+    input: { shopId: string; name?: string; enabled?: boolean; defaultPricingConfigId?: string | null; memberPricingConfigId?: string | null },
   ) =>
     api<{ resourceGroup: ResourceGroup }>(`/api/v1/merchant/resource-groups/${encodeURIComponent(id)}`, {
       method: "PATCH",

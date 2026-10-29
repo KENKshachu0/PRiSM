@@ -1,5 +1,6 @@
 import type { D1DatabaseLike } from "@prism/adapter-d1";
 import { DEFAULT_RESOURCE_GROUP_ID, type BillableResource, type ResourceGroup } from "./billing.js";
+import { readMemberResourcePlans } from "./member-plans.js";
 
 type GroupRow = {
   shop_id: string;
@@ -79,7 +80,14 @@ export async function findBillableResource(db: D1DatabaseLike, shopId: string, r
 
 /** Everything that bills through `planId`, by display name, for refusing to archive it. */
 export async function resourcePlanUsers(db: D1DatabaseLike, shopId: string, planId: string): Promise<string[]> {
-  const [groups, resources, tables] = await Promise.all([
+  const memberPlans = await readMemberResourcePlans(db, shopId);
+  const memberGroupIds = Object.entries(memberPlans.groups)
+    .filter(([, id]) => id === planId)
+    .map(([id]) => id);
+  const memberResourceIds = Object.entries(memberPlans.resources)
+    .filter(([, id]) => id === planId)
+    .map(([id]) => id);
+  const [groups, resources, tables, memberGroups, memberResources] = await Promise.all([
     db.prepare("SELECT name FROM resource_groups WHERE shop_id = ? AND default_pricing_config_id = ? ORDER BY name")
       .bind(shopId, planId).all<{ name: string }>(),
     db.prepare("SELECT name FROM machines WHERE shop_id = ? AND pricing_config_override_id = ? ORDER BY name")
@@ -90,10 +98,20 @@ export async function resourcePlanUsers(db: D1DatabaseLike, shopId: string, plan
        AND EXISTS (SELECT 1 FROM json_each(json_extract(c.config_json, '$.pricingConfigIds')) WHERE value = ?)
        ORDER BY m.name`,
     ).bind(shopId, planId).all<{ name: string }>(),
+    memberGroupIds.length
+      ? db.prepare(`SELECT name FROM resource_groups WHERE shop_id = ? AND id IN (${memberGroupIds.map(() => "?").join(",")}) ORDER BY name`)
+        .bind(shopId, ...memberGroupIds).all<{ name: string }>()
+      : Promise.resolve({ results: [] as { name: string }[] }),
+    memberResourceIds.length
+      ? db.prepare(`SELECT name FROM machines WHERE shop_id = ? AND id IN (${memberResourceIds.map(() => "?").join(",")}) ORDER BY name`)
+        .bind(shopId, ...memberResourceIds).all<{ name: string }>()
+      : Promise.resolve({ results: [] as { name: string }[] }),
   ]);
-  return [
+  return [...new Set([
     ...groups.results.map((row) => `资源组「${row.name}」`),
+    ...memberGroups.results.map((row) => `资源组「${row.name}」的会员方案`),
     ...resources.results.map((row) => `资源「${row.name}」`),
+    ...memberResources.results.map((row) => `资源「${row.name}」的会员方案`),
     ...tables.results.map((row) => `麻将桌「${row.name}」`),
-  ];
+  ])];
 }

@@ -13,6 +13,7 @@ import {
   createAvailableAssetReader,
   createBusinessItemOrderService,
   createIntegrationService,
+  createMemberService,
   createPlayerAuthService,
   createPlayerCommandService,
   createRedeemService,
@@ -177,6 +178,16 @@ export function createShopDependencies(input: {
     createAssetDefinitionEffectProvider(repos.assetDefinitions),
   ];
 
+  const memberCommands = createMemberService({
+    system: repos.system,
+    assets: repos.assets,
+    availableAssets,
+    assetDefinitions: repos.assetDefinitions,
+    operationLocks: repos.operationLocks,
+    id,
+    now,
+  });
+
   const sessionPricing = async (session: Session) => {
     if (!session.pricingReleaseId) {
       return {
@@ -268,6 +279,7 @@ export function createShopDependencies(input: {
     sessions: repos.sessions,
     pricingSessions,
     startPlaceholder: (command) => startPlaceholder(command),
+    isMember: (playerId) => memberCommands.isMember(playerId),
     withPlayerLock: (playerId, action) =>
       withOperationLease({ repository: repos.operationLocks, scope: PLAYER_BILLING_LOCK_SCOPE, resourceId: playerId, id, now }, action),
     capProgress: async ({ playerId, configs, planIds }) => {
@@ -628,6 +640,7 @@ export function createShopDependencies(input: {
     staffPlayerCommands,
     staffAssetDefinitionCommands,
     staffPricingEffectCommands,
+    memberCommands,
     staffAssetCommands,
     staffRedeemCommands,
     staffRedeemQueries: queries.staffRedeemQueries,

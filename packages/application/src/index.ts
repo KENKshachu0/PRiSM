@@ -3,6 +3,7 @@ export * from "./asset-definition-effects";
 export * from "./business-item-orders";
 export * from "./device-actions";
 export * from "./integration";
+export * from "./member-service";
 export * from "./operation-lock";
 export * from "./player-auth";
 export * from "./player-commands";

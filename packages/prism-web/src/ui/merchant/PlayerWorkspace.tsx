@@ -738,9 +738,13 @@ function PlayerPanel({
   const plans = useResource<{ pricingConfigs: EntryPlan[] }>(
     "pricing-configs",
   );
+  const member = useResource<{ member: MemberStatus }>(`${base}/member`);
+  const memberProgram = useResource<MemberProgram>("member");
   const [action, setAction] = useState<
     "wallet" | "entry" | "checkout" | "override" | "recharge" | "grant" | null
   >(null);
+  const [grantAsset, setGrantAsset] = useState("");
+  const [grantPlanId, setGrantPlanId] = useState("");
   const [overrideTotal, setOverrideTotal] = useState("");
   const [rechargeAmount, setRechargeAmount] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -753,9 +757,20 @@ function PlayerPanel({
     setPreview(null);
     assets.reload();
     history.reload();
+    member.reload();
     onChanged();
   };
   const billing = !!player.activeSessionId || !!livePlayer;
+  const grantableAssets = (definitions.data?.assetDefinitions ?? []).filter(
+    (asset) => asset.status !== "archived",
+  );
+  const grantAssetKey = grantAsset
+    || (grantableAssets[0] ? `${grantableAssets[0].type}|${grantableAssets[0].code}` : "");
+  const grantingMembership = grantAssetKey.startsWith("membership|");
+  const grantingCardCode = grantingMembership ? grantAssetKey.split("|")[1] ?? "" : "";
+  const grantPlans = (memberProgram.data?.plans ?? []).filter(
+    (plan) => plan.status !== "archived" && plan.assetCode === grantingCardCode,
+  );
   const entryPlans = (plans.data?.pricingConfigs ?? []).filter(
     // Time plans and fixed charges run as sessions; a cap never does.
     (plan) => plan.enabled && plan.status !== "archived" && (plan.kind === "time.priority" || plan.kind === "charge.fixed"),
@@ -791,7 +806,14 @@ function PlayerPanel({
     >
       <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-ink/10 px-4 py-3">
         <div className="min-w-0">
-          <h3 className="truncate font-semibold">{player.displayName}</h3>
+          <h3 className="flex items-center gap-2 truncate font-semibold">
+            {player.displayName}
+            {member.data?.member.active && (
+              <span className="rounded-full bg-mint/15 px-2 py-0.5 text-xs font-medium text-mint">
+                {t("会员")}
+              </span>
+            )}
+          </h3>
           <p className="mt-0.5 truncate text-xs text-ink/50">
             {player.identities?.map((i) => i.displayName || i.subject).join(" · ") ||
               t("无绑定身份")}
@@ -876,7 +898,11 @@ function PlayerPanel({
               <button
                 type="button"
                 className={button}
-                onClick={() => setAction("grant")}
+                onClick={() => {
+                  setGrantAsset("");
+                  setGrantPlanId("");
+                  setAction("grant");
+                }}
               >
                 {t("发放资产")}
               </button>
@@ -1036,8 +1062,14 @@ function PlayerPanel({
         {action === "grant" && (
           <ActionForm
             done={done}
-            label="确认发放"
+            label={grantingMembership ? "设为会员" : "确认发放"}
+            submitDisabled={grantingMembership && (!memberProgram.data?.enabled || !grantPlans.length)}
             submit={(f) => {
+              if (grantingMembership) {
+                return request(`${base}/member/grant`, "POST", {
+                  planId: f.get("planId"),
+                });
+              }
               const [assetType, assetCode] = String(f.get("asset")).split("|");
               return request(`${base}/assets/grants`, "POST", {
                 reason: f.get("reason"),
@@ -1055,30 +1087,91 @@ function PlayerPanel({
             }}
           >
             <Field label="资产">
-              <select name="asset" className={input} required>
-                {(definitions.data?.assetDefinitions ?? [])
-                  .filter((a) => a.status !== "archived")
-                  .map((a) => (
-                    <option key={`${a.type}:${a.code}`} value={`${a.type}|${a.code}`}>
-                      {a.name}
-                    </option>
-                  ))}
+              <select
+                name="asset"
+                className={input}
+                required
+                value={grantAssetKey}
+                onChange={(e) => {
+                  setGrantAsset(e.target.value);
+                  setGrantPlanId("");
+                }}
+              >
+                {grantableAssets.map((a) => (
+                  <option key={`${a.type}:${a.code}`} value={`${a.type}|${a.code}`}>
+                    {a.name}
+                  </option>
+                ))}
               </select>
             </Field>
-            <Field label="数量">
-              <input
-                className={input}
-                type="number"
-                name="amount"
-                min="0.01"
-                step="0.01"
-                required
-                defaultValue="1"
-              />
-            </Field>
-            <Field label="备注">
-              <input className={input} name="reason" required />
-            </Field>
+            {grantingMembership ? (
+              memberProgram.data?.enabled ? (
+                <>
+                  <p className="text-sm text-ink/65">
+                    {member.data?.member.active
+                      ? t("会员生效中 · {card} · 至 {date}", {
+                          card: member.data.member.cardName ?? t("会员卡"),
+                          date: member.data.member.expiresAt
+                            ? new Date(member.data.member.expiresAt).toLocaleDateString()
+                            : "—",
+                        })
+                      : t("当前不是会员")}
+                  </p>
+                  {grantPlans.length ? (
+                    <Field label="会员方案">
+                      <select
+                        className={input}
+                        name="planId"
+                        value={grantPlanId || grantPlans[0]?.id || ""}
+                        onChange={(e) => setGrantPlanId(e.target.value)}
+                      >
+                        {grantPlans.map((plan) => (
+                          <option key={plan.id} value={plan.id}>
+                            {plan.name} · ¥{plan.price.toFixed(2)} · {plan.durationDays}
+                            {t("天")}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : (
+                    <p className="text-sm text-ink/55">{t("这张会员卡还没有售卖方案")}</p>
+                  )}
+                  {member.data?.member.active && (
+                    <button
+                      type="button"
+                      className={button}
+                      onClick={() => void request(`${base}/member/revoke`, "POST", {}).then(done)}
+                    >
+                      {t("取消会员")}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="grid gap-2 text-sm">
+                  <p>{t("会员体系还没有启用。")}</p>
+                  <Link className={primary} to={`/merchant/${encodeURIComponent(shopCode)}/member`}>
+                    {t("去会员页启用")}
+                  </Link>
+                </div>
+              )
+            ) : (
+              <>
+                <Field label="数量">
+                  <input
+                    className={input}
+                    type="number"
+                    name="amount"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    defaultValue="1"
+                  />
+                </Field>
+                <Field label="备注">
+                  <input className={input} name="reason" required />
+                </Field>
+              </>
+            )}
           </ActionForm>
         )}
         {action && (
@@ -1360,3 +1453,25 @@ function PlanStart({ base, plans, done }: { base: string; plans: readonly { id: 
     </ActionForm>
   );
 }
+
+
+type MemberStatus = {
+  active: boolean;
+  enabled: boolean;
+  assetCode: string | null;
+  cardName: string | null;
+  discountPercent: number | null;
+  expiresAt: string | null;
+};
+
+type MemberProgram = {
+  enabled: boolean;
+  plans: {
+    id: string;
+    name: string;
+    assetCode: string;
+    price: number;
+    durationDays: number;
+    status: string;
+  }[];
+};

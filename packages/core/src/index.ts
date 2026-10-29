@@ -6,6 +6,7 @@ export * from "./device-legacy";
 export * from "./errors";
 export * from "./identity";
 export * from "./location-time-zone";
+export * from "./member";
 export * from "./money";
 export * from "./pricing-config";
 export * from "./pricing-relations";

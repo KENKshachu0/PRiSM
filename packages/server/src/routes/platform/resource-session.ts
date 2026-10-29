@@ -80,8 +80,7 @@ async function sessionState(c:C,machine:ScannedResource,options:{includePower:bo
     }
   };
   // Undefined when the resource's binding cannot be read; `billing.error` says why.
-  const planId=await billingRead(()=>resourceBilling.planOf(machine.id));
-  const bills=planId!==null;
+  const bills=await billingRead(()=>resourceBilling.hasPlan(machine.id))??false;
   if(bills||bound("door")||bound("mahjong")){
     const player=await c.env.DB.prepare(
       `SELECT a.player_id AS playerId,p.status,
@@ -106,7 +105,7 @@ async function sessionState(c:C,machine:ScannedResource,options:{includePower:bo
     }
     // What the page shows as this resource's pricing: its own plan and every
     // plan that bills with it, as the player's locked release defines them.
-    if(planId&&gate!=="binding"&&!billing?.error){
+    if(bills&&gate!=="binding"&&!billing?.error){
       // Caps only matter where the rules are read before confirming.
       const rules=await billingRead(()=>resourceBilling.rulesOf({resourceId:machine.id,playerId:player?.playerId??"",withCaps:gate==="entry"}));
       if(rules)billing={...billing,rules:{

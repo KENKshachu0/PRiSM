@@ -6,6 +6,7 @@ import { jsonError } from "../../http.js";
 import { requireUser } from "../../middleware/auth.js";
 import { DEFAULT_RESOURCE_GROUP_ID } from "../../resources/billing.js";
 import { ensureDefaultGroupStatement, findResourceGroup, listResourceGroups } from "../../resources/repository.js";
+import { readMemberResourcePlans, setMemberResourcePlan } from "../../resources/member-plans.js";
 import { assertResourceShop, canConfigureResource } from "./merchant-resources.js";
 import { notifyBotsChangedAfter } from "../../durable-objects/shop-hub-client.js";
 
@@ -23,12 +24,14 @@ const createInput = z.object({
   name: z.string().trim().min(1).max(40),
   enabled: z.boolean().default(true),
   defaultPricingConfigId: planInput.default(null),
+  memberPricingConfigId: planInput.default(null),
 }).strict();
 const patchInput = z.object({
   shopId: z.string().min(1),
   name: z.string().trim().min(1).max(40).optional(),
   enabled: z.boolean().optional(),
   defaultPricingConfigId: planInput.optional(),
+  memberPricingConfigId: planInput.optional(),
 }).strict();
 
 async function configurable(c: C, shopId: string) {
@@ -57,10 +60,11 @@ export async function assertBillablePlan(c: C, shopId: string, planId: string | 
 }
 
 async function view(c: C, shopId: string) {
-  const [groups, counts] = await Promise.all([
+  const [groups, counts, memberPlans] = await Promise.all([
     listResourceGroups(c.env.DB, shopId),
     c.env.DB.prepare("SELECT COALESCE(resource_group_id, ?) AS id, COUNT(*) AS n FROM machines WHERE shop_id = ? GROUP BY 1")
       .bind(DEFAULT_RESOURCE_GROUP_ID, shopId).all<{ id: string; n: number }>(),
+    readMemberResourcePlans(c.env.DB, shopId),
   ]);
   const count = new Map(counts.results.map((row) => [row.id, row.n]));
   return groups.map((group) => ({
@@ -69,6 +73,7 @@ async function view(c: C, shopId: string) {
     enabled: group.enabled,
     isDefault: group.isDefault,
     defaultPricingConfigId: group.defaultPricingConfigId,
+    memberPricingConfigId: memberPlans.groups[group.id] ?? null,
     resourceCount: count.get(group.id) ?? 0,
   }));
 }
@@ -85,12 +90,14 @@ merchantResourceGroupRouter.post("/resource-groups", async (c) => {
   const body = createInput.parse(await c.req.json());
   await configurable(c, body.shopId);
   await assertBillablePlan(c, body.shopId, body.defaultPricingConfigId);
+  await assertBillablePlan(c, body.shopId, body.memberPricingConfigId);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   await c.env.DB.prepare(
     `INSERT INTO resource_groups(shop_id, id, name, enabled, default_pricing_config_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).bind(body.shopId, id, body.name, +body.enabled, body.defaultPricingConfigId, now, now).run();
+  await setMemberResourcePlan(c.env.DB, body.shopId, "group", id, body.memberPricingConfigId);
   return c.json({ resourceGroup: (await view(c, body.shopId)).find((group) => group.id === id) }, 201);
 });
 
@@ -99,6 +106,7 @@ merchantResourceGroupRouter.patch("/resource-groups/:id", async (c) => {
   const id = c.req.param("id");
   await configurable(c, body.shopId);
   await assertBillablePlan(c, body.shopId, body.defaultPricingConfigId);
+  await assertBillablePlan(c, body.shopId, body.memberPricingConfigId);
   // The default group is edited like any other; a shop missing its row gets one.
   if (id === DEFAULT_RESOURCE_GROUP_ID) await ensureDefaultGroupStatement(c.env.DB, body.shopId).run();
   const group = await findResourceGroup(c.env.DB, body.shopId, id);
@@ -114,6 +122,9 @@ merchantResourceGroupRouter.patch("/resource-groups/:id", async (c) => {
     body.shopId,
     id,
   ).run();
+  if (body.memberPricingConfigId !== undefined) {
+    await setMemberResourcePlan(c.env.DB, body.shopId, "group", id, body.memberPricingConfigId);
+  }
   // A bot in this group may now bill on entry, or no longer.
   notifyBotsChangedAfter(c, body.shopId);
   return c.json({ resourceGroup: (await view(c, body.shopId)).find((group) => group.id === id) });
@@ -130,5 +141,6 @@ merchantResourceGroupRouter.delete("/resource-groups/:id", async (c) => {
     .bind(shopId, id).first();
   if (used) jsonError(409, "请先把组内资源移到其他资源组", "RESOURCE_GROUP_IN_USE");
   await c.env.DB.prepare("DELETE FROM resource_groups WHERE shop_id = ? AND id = ?").bind(shopId, id).run();
+  await setMemberResourcePlan(c.env.DB, shopId, "group", id, null);
   return c.json({ ok: true });
 });

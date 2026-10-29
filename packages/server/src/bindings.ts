@@ -11,6 +11,7 @@ import type {
   StaffPlayerService,
   StaffAssetDefinitionService,
   StaffPricingEffectService,
+  MemberService,
   StaffAssetService,
   StaffRedeemService,
   StaffPricingService,
@@ -91,6 +92,7 @@ export type PrismAppDependencies = {
   staffPlayerCommands: StaffPlayerService;
   staffAssetDefinitionCommands: StaffAssetDefinitionService;
   staffPricingEffectCommands: StaffPricingEffectService;
+  memberCommands: MemberService;
   staffAssetCommands: StaffAssetService;
   staffRedeemCommands: StaffRedeemService;
   staffRedeemQueries?: StaffRedeemQueries;

@@ -89,7 +89,7 @@ export async function operateMahjong(
   let entryId:string|null = null;
   let entryOwned = false;
   // A table without a plan seats players for free.
-  const billed = !!(await deps.resourceBilling.planOf(machine.id));
+  const billed = await deps.resourceBilling.hasPlan(machine.id);
   if (joining && billed) {
     // Sitting at the table needs the table's own plan running, as using any
     // resource does: that plan is what a seat bills while the table waits to

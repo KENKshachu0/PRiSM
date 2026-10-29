@@ -140,6 +140,7 @@ export function ResourceEditor({
   // Which plan scanning this resource starts: its group's, or one of its own.
   const [groupId, setGroupId] = useState(value?.resourceGroupId ?? initialGroupId ?? "default");
   const [overrideId, setOverrideId] = useState(value?.pricingConfigOverrideId ?? "");
+  const [memberOverrideId, setMemberOverrideId] = useState(value?.memberPricingConfigOverrideId ?? "");
   const { groups } = useResourceGroups(shopId);
   const billablePlans = useBillablePlans(shopCode);
   const groupPlanId = groups?.find((group) => group.id === groupId)?.defaultPricingConfigId ?? null;
@@ -384,6 +385,7 @@ export function ResourceEditor({
             ...(caps.bot && f.get("intent") === "rotate-bot" ? { rotateBotToken: true } : {}),
             resourceGroupId: groupId,
             pricingConfigOverrideId: overrideId || null,
+            memberPricingConfigOverrideId: memberOverrideId || null,
             mahjong: caps.mahjong ? { pricingConfigIds: mahjongPricing } : null,
             // A capability that is switched off is removed, which the server
             // expresses as `null` for the bound fields.
@@ -526,6 +528,14 @@ export function ResourceEditor({
                   <option value="">
                     {groupPlanName ? t("跟随资源组（{plan}）", { plan: groupPlanName }) : t("跟随资源组（不计费）")}
                   </option>
+                  {billablePlans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>{plan.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="会员方案">
+                <select className={input} value={memberOverrideId} onChange={(e) => setMemberOverrideId(e.target.value)}>
+                  <option value="">{t("跟随资源组会员方案")}</option>
                   {billablePlans.map((plan) => (
                     <option key={plan.id} value={plan.id}>{plan.name}</option>
                   ))}

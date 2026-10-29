@@ -20,6 +20,7 @@ export function assetTypeName(type: string, t: Translate): string {
         coupon: "优惠券",
         pass: "通行证",
         ticket: "票券",
+        membership: "会员卡",
       } as Record<string, string>
     )[type] ?? type,
   );

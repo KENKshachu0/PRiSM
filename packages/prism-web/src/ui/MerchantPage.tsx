@@ -24,6 +24,7 @@ import {
 import { PlayerWorkspace } from "./merchant/PlayerWorkspace";
 import { PricingPage } from "./merchant/Pricing";
 import { AssetsPage } from "./merchant/Assets";
+import { MemberPage } from "./merchant/Member";
 import { ReportsPage } from "./merchant/Reports";
 import { SettingsPage } from "./merchant/Settings";
 import { BillingSetupFields, defaultBillingSetup } from "./merchant/BillingSetup";
@@ -176,6 +177,7 @@ function Workspace({
       : []),
     ["live", "在店"],
     ["players", "玩家"],
+    ["member", "会员"],
     ["resources", "资源"],
     ["pricing", "计费"],
     ["assets", "资产"],
@@ -253,6 +255,8 @@ function Workspace({
           <PlayerWorkspace live />
         ) : section === "players" ? (
           <PlayerWorkspace />
+        ) : section === "member" ? (
+          <MemberPage />
         ) : section === "pricing" ? (
           <PricingPage />
         ) : section === "assets" ? (

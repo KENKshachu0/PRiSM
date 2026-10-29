@@ -10,6 +10,7 @@ The current implementation covers the planned replacement scope:
 
 - Player identity, multiple flat active billing sessions per player, player-level checkout preview/confirm, explicit session stop, and staff checkout override.
 - Asset catalog, holdings, transactions, immutable ledger entries, paid/free currency priority, active/expiry windows, grants, adjustments, revocation, hidden player assets, and archive semantics for referenced definitions.
+- Membership cards are ordinary assets with a pricing effect; fixed-duration sale plans grant them, and resource groups/resources may bill members a different pricing plan.
 - CDK/present redemption with active/expiry windows, max use count, and once-per-player behavior.
 - Priority time pricing with weekdays, specific dates, absolute ranges, cross-day ranges matched by rule start day, rounding grace, caps, paid-history cap behavior, and a Staff Web visual day timeline plus rule-impact summary.
 - Persisted fixed-charge pricing and store-managed business items for non-time products such as entry tickets, event fees, reservations, room packages, and service charges, plus runtime plugin registration that can read active Staff Web business items for more complex pricing and asset-effect products.
@@ -126,6 +127,7 @@ The root `package.json` owns the release SemVer. `bun run version:bump patch|min
 - [计费状态编排：会话、依赖与冲突](docs/pricing-sessions.md)
 - [卡片、占用与查人](docs/occupancy.md)
 - [计费流程、封顶与账单显示](docs/billing-flow.md)
+- [会员卡与会员方案](docs/membership.md)
 - [实时活动推送](docs/live-activity-push.md)
 - [Deployment](docs/deployment.md)
 - [Integrations And Machines](docs/integrations-and-machines.md)
